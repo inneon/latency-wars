@@ -17,6 +17,7 @@ pnpm affected     # what CI runs: lint, typecheck, test, build on changed projec
 apps/
   api/      Fastify. Composition root only: wires plugins/routes, no logic.
   web/      React + Vite. Composition root only.
+  playtest/ CLI that play-tests the rules with LLM agents (players + GM). See its README.
 libs/
   shared/contracts/   Wire types shared across the boundary (HealthResponse, paths).
 ```

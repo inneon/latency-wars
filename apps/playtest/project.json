@@ -1,0 +1,25 @@
+{
+  "name": "playtest",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/playtest/src",
+  "projectType": "application",
+  "tags": [
+    "type:app",
+    "scope:playtest"
+  ],
+  "targets": {
+    "run": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx apps/playtest/src/main.ts",
+        "forwardAllArgs": true
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p apps/playtest/tsconfig.app.json --noEmit && tsc -p apps/playtest/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}

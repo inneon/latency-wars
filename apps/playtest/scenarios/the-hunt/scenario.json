@@ -1,0 +1,22 @@
+{
+  "title": "The Hunt",
+  "description": "A small two-player skirmish testing light delay, orders, feedback and doctrine. Each side has a flagship, two fleets and a two-node web. Contested magnetosphere zones in the middle tempt both sides to over-extend.",
+  "rules": ["design-doc.md", "docs/game-mechanics.md"],
+  "maxRounds": 10,
+  "common": "common.md",
+  "gm": "gm.md",
+  "players": [
+    {
+      "id": "blue",
+      "name": "Blue",
+      "persona": "Bold and aggressive. You like decisive plays and big risks, and you get impatient with bookkeeping.",
+      "briefing": "blue.md"
+    },
+    {
+      "id": "red",
+      "name": "Red",
+      "persona": "Careful and analytical. You read the rules closely, want to know exactly what each rule permits, and plan several turns ahead.",
+      "briefing": "red.md"
+    }
+  ]
+}
