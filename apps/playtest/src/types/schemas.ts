@@ -34,7 +34,7 @@ export const PlayerTurn = z.object({
   rules_confusions: z
     .array(z.string())
     .describe('Anything in the rules you found unclear, missing or contradictory this turn. Cite rule IDs where possible.'),
-});
+}).meta({ title: 'PlayerTurn' });
 export type PlayerTurn = z.infer<typeof PlayerTurn>;
 
 export const Ruling = z.object({
@@ -76,14 +76,14 @@ export const GmResolution = z.object({
   rulings: z.array(Ruling).describe('Every ruling you had to make this turn. Include routine explicit ones only if notable.'),
   game_over: z.boolean(),
   outcome: z.string().describe('If the game is over, who won and why. Otherwise an empty string.'),
-});
+}).meta({ title: 'GmResolution' });
 export type GmResolution = z.infer<typeof GmResolution>;
 
 export const GmIntel = z.object({
   private_notes: z.string().describe('Your working: what the request reveals, what it costs, and the qBit balance afterwards.'),
   response: z.string().describe('What the player learns. Only what the request legitimately reveals.'),
   rulings: z.array(Ruling),
-});
+}).meta({ title: 'GmIntel' });
 export type GmIntel = z.infer<typeof GmIntel>;
 
 const Rating = z.number().int().min(1).max(5).describe('1 (very poor) to 5 (excellent).');
@@ -112,12 +112,12 @@ export const Feedback = z.object({
   missing_rules: z.array(z.string()).describe('Situations the rules did not cover at all.'),
   top_suggestion: z.string().describe('If the designer changes one thing, what should it be?'),
   anything_else: z.string(),
-});
+}).meta({ title: 'Feedback' });
 export type Feedback = z.infer<typeof Feedback>;
 
 export const GmFeedback = Feedback.extend({
   adjudication_difficulties: z
     .array(z.string())
     .describe('Where running the game was hardest: bookkeeping, calculations, or rulings you were unsure of.'),
-});
+}).meta({ title: 'GmFeedback' });
 export type GmFeedback = z.infer<typeof GmFeedback>;

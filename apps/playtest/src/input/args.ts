@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { EFFORTS, type Effort } from '../types/agent';
+import { BACKENDS } from '../types/run-config';
 
 export const USAGE = `Run an LLM play-test of a scenario.
 
@@ -7,6 +8,12 @@ Usage: pnpm playtest --scenario <name|dir> [options]
 
   --scenario       Scenario name (under apps/playtest/scenarios) or directory   (required)
   --rounds         Maximum turns to play (default: the scenario's maxRounds)
+  --backend        Where replies come from                                       (default: api)
+                     api          Anthropic API; needs ANTHROPIC_API_KEY
+                     claude-code  The claude CLI in headless mode, on your Claude Code login
+                     clipboard    You copy each prompt into a chat window and the reply back
+  --claude-bin     Path to the claude CLI (claude-code backend; default: found automatically)
+  --paste-limit    Most characters your chat app accepts per message (clipboard backend; default: no limit)
   --model          Model for every agent                                         (default: claude-opus-5-5)
   --gm-model       Model for the GM                                              (default: --model)
   --player-model   Model for the players                                         (default: --model)
@@ -20,6 +27,9 @@ export type CliArgs =
       help: false;
       scenario: string;
       rounds?: number;
+      backend: (typeof BACKENDS)[number];
+      claudeBin?: string;
+      pasteLimit?: number;
       gm: { model: string; effort: Effort };
       players: { model: string; effort: Effort };
       out?: string;
@@ -32,6 +42,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
     options: {
       scenario: { type: 'string' },
       rounds: { type: 'string' },
+      backend: { type: 'string', default: 'api' },
+      'claude-bin': { type: 'string' },
+      'paste-limit': { type: 'string' },
       model: { type: 'string', default: 'claude-opus-5-5' },
       'gm-model': { type: 'string' },
       'player-model': { type: 'string' },
@@ -44,20 +57,30 @@ export function parseCliArgs(argv: string[]): CliArgs {
   if (values.help) return { help: true };
   if (!values.scenario) throw new Error(`--scenario is required.\n\n${USAGE}`);
 
-  let rounds: number | undefined;
-  if (values.rounds !== undefined) {
-    rounds = Number(values.rounds);
-    if (!Number.isInteger(rounds) || rounds < 1) throw new Error(`Invalid --rounds "${values.rounds}"`);
-  }
+  const rounds = positiveInt('--rounds', values.rounds);
+  const pasteLimit = positiveInt('--paste-limit', values['paste-limit']);
+
+  const backend = values.backend as (typeof BACKENDS)[number];
+  if (!BACKENDS.includes(backend)) throw new Error(`Invalid --backend "${values.backend}". Use one of: ${BACKENDS.join(', ')}`);
 
   return {
     help: false,
     scenario: values.scenario,
     rounds,
+    backend,
+    claudeBin: values['claude-bin'],
+    pasteLimit,
     gm: { model: values['gm-model'] ?? values.model, effort: effort(values['gm-effort'], 'high') },
     players: { model: values['player-model'] ?? values.model, effort: effort(values['player-effort'], 'medium') },
     out: values.out,
   };
+}
+
+function positiveInt(flag: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`Invalid ${flag} "${value}"`);
+  return n;
 }
 
 function effort(value: string | undefined, fallback: Effort): Effort {

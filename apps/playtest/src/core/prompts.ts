@@ -1,28 +1,31 @@
-import type { SystemPrompt } from '../types/agent';
+import type { AgentDocument, SystemPrompt } from '../types/agent';
 import type { Scenario, ScenarioPlayer } from '../types/scenario';
 import type { GmResolution, PlayerTurn } from '../types/schemas';
 
-// The rules are byte-identical for every agent, so they go in the shared part of the system prompt.
-function rulesText(scenario: Scenario): string {
-  const docs = scenario.rules
-    .map((r) => `<rules_document path="${r.path}">\n${r.content}\n</rules_document>`)
-    .join('\n\n');
-  return `These are the rules of Latency Wars, a prototype strategy game under active design.\n\n${docs}`;
-}
+// Rules documents are byte-identical for every agent, so they're marked shared and listed first.
+const ruleDocuments = (scenario: Scenario): AgentDocument[] =>
+  scenario.rules.map((r) => ({ name: r.path.split('/').pop() ?? r.path, content: r.content, shared: true }));
 
-const scenarioText = (scenario: Scenario) =>
-  `<scenario title="${scenario.title}">\n${scenario.description}\n\n${scenario.common}\n</scenario>`;
+const scenarioDocument = (scenario: Scenario): AgentDocument => ({
+  name: 'scenario.md',
+  content: `# ${scenario.title}\n\n${scenario.description}\n\n${scenario.common}`,
+  shared: false,
+});
+
+const names = (docs: AgentDocument[]) => docs.map((d) => `\`${d.name}\``).join(', ');
 
 const playerList = (scenario: Scenario) =>
   scenario.players.map((p) => `- ${p.name} (id: ${p.id})`).join('\n');
 
 export function playerSystem(scenario: Scenario, player: ScenarioPlayer): SystemPrompt {
+  const rules = ruleDocuments(scenario);
+  const briefing: AgentDocument = { name: `${player.id}-briefing.md`, content: player.briefing, shared: false };
   return {
-    shared: rulesText(scenario),
-    specific: `${scenarioText(scenario)}
-
-You are play-testing Latency Wars as ${player.name} (id: ${player.id}). The players are:
+    documents: [...rules, scenarioDocument(scenario), briefing],
+    instructions: `You are play-testing Latency Wars, a prototype strategy game under active design, as ${player.name} (id: ${player.id}). The players are:
 ${playerList(scenario)}
+
+Your documents: the rules are in ${names(rules)}. The scenario, including its map and house rules, is in \`scenario.md\`. Your private briefing is in \`${briefing.name}\`.
 
 How play works: a game master (GM) holds the true game state. At the start of each turn the GM tells you your knowledge state for the Planning phase, and you reply with your actions for that turn. Everyone submits simultaneously and nobody sees anyone else's submission.
 
@@ -30,21 +33,19 @@ Play to win, within the rules. Your play style: ${player.persona}
 
 You know only what the GM has told you. Don't assume anything about the present beyond what your knowledge state supports. Reason about how stale it is.
 
-The rules are a work in progress, and you are helping the designer find out what works. When a rule is unclear, missing or contradicts another, note it in rules_confusions (cite rule IDs), pick the most reasonable reading, and carry on. Ask the GM in questions_for_gm if you need a ruling. After the game there is a debrief asking for honest feedback, so notice what is fun, tedious and confusing as you play.
-
-<your_briefing>
-${player.briefing}
-</your_briefing>`,
+The rules are a work in progress, and you are helping the designer find out what works. When a rule is unclear, missing or contradicts another, note it in rules_confusions (cite rule IDs), pick the most reasonable reading, and carry on. Ask the GM in questions_for_gm if you need a ruling. After the game there is a debrief asking for honest feedback, so notice what is fun, tedious and confusing as you play.`,
   };
 }
 
 export function gmSystem(scenario: Scenario): SystemPrompt {
+  const rules = ruleDocuments(scenario);
+  const briefing: AgentDocument = { name: 'gm-briefing.md', content: scenario.gmBriefing, shared: false };
   return {
-    shared: rulesText(scenario),
-    specific: `${scenarioText(scenario)}
-
-You are the game master (GM) for a play-test of Latency Wars. The players are:
+    documents: [...rules, scenarioDocument(scenario), briefing],
+    instructions: `You are the game master (GM) for a play-test of Latency Wars, a prototype strategy game under active design. The players are:
 ${playerList(scenario)}
+
+Your documents: the rules are in ${names(rules)}. The scenario, including its map and house rules, is in \`scenario.md\`. The true starting state and other GM-only information are in \`${briefing.name}\`.
 
 You are the arbiter and the game engine. You alone hold the true game state. Your duties:
 
@@ -55,11 +56,7 @@ You are the arbiter and the game engine. You alone hold the true game state. You
 5. Be impartial. Don't steer the game, and don't help or hinder any player.
 6. Declare game_over when a victory condition is met.
 
-Use axial hex coordinates (q, r). distance((q1, r1), (q2, r2)) = (|q1 − q2| + |r1 − r2| + |q1 + r1 − q2 − r2|) / 2.
-
-<gm_briefing>
-${scenario.gmBriefing}
-</gm_briefing>`,
+Use axial hex coordinates (q, r). distance((q1, r1), (q2, r2)) = (|q1 − q2| + |r1 − r2| + |q1 + r1 − q2 − r2|) / 2.`,
   };
 }
 
@@ -125,10 +122,13 @@ Debrief time. Step out of character and give the designer honest, specific feedb
 
 export const gmDebriefPrompt = `The game is over. Debrief time: give the designer honest, specific feedback, both as someone who watched this game unfold and as the person who had to run it. Refer to concrete moments and to the rulings you logged. Did the game play the way the design doc intends? Criticism is more useful than praise.`;
 
-export const synthesisSystem = (scenario: Scenario): SystemPrompt => ({
-  shared: rulesText(scenario),
-  specific: `You are helping the designer of Latency Wars make sense of a play-test. LLM agents played the scenario "${scenario.title}": a GM and ${scenario.players.length} players. You will get their debrief feedback and the logs of rulings and rules confusions from the game.`,
-});
+export function synthesisSystem(scenario: Scenario): SystemPrompt {
+  const rules = ruleDocuments(scenario);
+  return {
+    documents: rules,
+    instructions: `You are helping the designer of Latency Wars, a prototype strategy game, make sense of a play-test. The rules are in ${names(rules)}. LLM agents played the scenario "${scenario.title}": a GM and ${scenario.players.length} players. You will get their debrief feedback and the logs of rulings and rules confusions from the game.`,
+  };
+}
 
 export const synthesisPrompt = (material: string) =>
   `${material}

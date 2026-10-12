@@ -1,6 +1,5 @@
-import type { z } from 'zod';
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
-import type { Agent } from '../types/agent';
+import type { Agent, JsonSchema } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import type { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '../types/schemas';
@@ -12,13 +11,10 @@ class ScriptedAgent implements Agent {
     readonly id: string,
     private readonly reply: (label: string, prompt: string) => unknown,
   ) {}
-  async ask<S extends z.ZodType>(label: string, prompt: string, schema: S): Promise<z.infer<S>> {
+  async send(label: string, prompt: string, responseSchema?: JsonSchema): Promise<string> {
     this.prompts.push({ label, prompt });
-    return schema.parse(this.reply(label, prompt));
-  }
-  async write(label: string, prompt: string): Promise<string> {
-    this.prompts.push({ label, prompt });
-    return String(this.reply(label, prompt));
+    const reply = this.reply(label, prompt);
+    return responseSchema ? JSON.stringify(reply) : String(reply);
   }
 }
 

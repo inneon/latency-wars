@@ -117,18 +117,21 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
   const gaps = allRulings.filter((r) => r.basis !== 'explicit');
   out.push(`# Rulings the rules didn't settle (${gaps.length})`, rulingsTable(gaps));
 
-  const total = usage.reduce((sum, u) => sum + (u.costUsd ?? 0), 0);
-  out.push(
-    '# Usage',
-    [
-      '| Agent | Model | Calls | Input | Cache write | Cache read | Output | Est. cost |',
-      '|---|---|---|---|---|---|---|---|',
-      ...usage.map(
-        (u) =>
-          `| ${u.agent} | ${u.model} | ${u.calls} | ${u.usage.input_tokens} | ${u.usage.cache_creation_input_tokens} | ${u.usage.cache_read_input_tokens} | ${u.usage.output_tokens} | ${u.costUsd == null ? 'n/a' : `$${u.costUsd.toFixed(2)}`} |`,
-      ),
-      `| **Total** | | | | | | | **$${total.toFixed(2)}** |`,
-    ].join('\n'),
-  );
+  if (usage.length > 0) {
+    const priced = usage.some((u) => u.costUsd != null);
+    const total = usage.reduce((sum, u) => sum + (u.costUsd ?? 0), 0);
+    out.push(
+      '# Usage',
+      [
+        '| Agent | Model | Calls | Input | Cache write | Cache read | Output | Est. cost |',
+        '|---|---|---|---|---|---|---|---|',
+        ...usage.map(
+          (u) =>
+            `| ${u.agent} | ${u.model} | ${u.calls} | ${u.usage.input_tokens} | ${u.usage.cache_creation_input_tokens} | ${u.usage.cache_read_input_tokens} | ${u.usage.output_tokens} | ${u.costUsd == null ? 'n/a' : `$${u.costUsd.toFixed(2)}`} |`,
+        ),
+        `| **Total** | | | | | | | **${priced ? `$${total.toFixed(2)}` : 'n/a'}** |`,
+      ].join('\n'),
+    );
+  }
   return out.join('\n\n') + '\n';
 }

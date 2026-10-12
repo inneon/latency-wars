@@ -2,6 +2,7 @@ import type { PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '../types/schemas';
+import { askFor } from './ask';
 import * as prompts from './prompts';
 
 export interface PlaytestOptions {
@@ -28,7 +29,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     return agent;
   };
 
-  let latest = await gm.ask('setup', prompts.gmSetupPrompt(scenario), GmResolution);
+  let latest = await askFor(gm, 'setup', prompts.gmSetupPrompt(scenario), GmResolution);
   record({ type: 'setup', resolution: latest });
 
   for (let turn = 1; turn <= maxRounds && !latest.game_over; turn++) {
@@ -38,7 +39,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     const submissions = new Map<string, PlayerTurn>();
     await Promise.all(
       scenario.players.map(async (p) => {
-        const submission = await player(p.id).ask(
+        const submission = await askFor(
+          player(p.id),
           `turn ${turn}`,
           prompts.playerTurnPrompt(turn, reports.get(p.id) ?? ''),
           PlayerTurn,
@@ -54,13 +56,14 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     for (const p of scenario.players) {
       const requests = submissions.get(p.id)?.instant_intel_requests ?? [];
       if (requests.length === 0) continue;
-      const result = await gm.ask(`turn ${turn} intel ${p.id}`, prompts.gmIntelPrompt(turn, p, requests), GmIntel);
+      const result = await askFor(gm, `turn ${turn} intel ${p.id}`, prompts.gmIntelPrompt(turn, p, requests), GmIntel);
       intel.set(p.id, result);
       record({ type: 'gm_intel', turn, player: p.id, intel: result });
     }
     await Promise.all(
       [...intel].map(async ([id, result]) => {
-        const submission = await player(id).ask(
+        const submission = await askFor(
+          player(id),
           `turn ${turn} after intel`,
           prompts.playerAfterIntelPrompt(turn, result.response),
           PlayerTurn,
@@ -73,7 +76,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       }),
     );
 
-    latest = await gm.ask(
+    latest = await askFor(
+      gm,
       `turn ${turn} resolve`,
       prompts.gmResolvePrompt(turn, scenario, submissions, turn === maxRounds),
       GmResolution,
@@ -87,18 +91,18 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
 
   // Debrief: everyone answers in their own conversation, so they remember the game they played.
   const [gmFeedback, playerFeedback] = await Promise.all([
-    gm.ask('debrief', prompts.gmDebriefPrompt, GmFeedback),
+    askFor(gm, 'debrief', prompts.gmDebriefPrompt, GmFeedback),
     Promise.all(
       scenario.players.map(async (p) => ({
         player: p.id,
-        feedback: await player(p.id).ask('debrief', prompts.playerDebriefPrompt(latest), Feedback),
+        feedback: await askFor(player(p.id), 'debrief', prompts.playerDebriefPrompt(latest), Feedback),
       })),
     ),
   ]);
   record({ type: 'gm_feedback', feedback: gmFeedback });
   for (const f of playerFeedback) record({ type: 'player_feedback', ...f });
 
-  const report = await agents.analyst.write('synthesis', prompts.synthesisPrompt(synthesisMaterial(events)));
+  const report = await agents.analyst.send('synthesis', prompts.synthesisPrompt(synthesisMaterial(events)));
   record({ type: 'synthesis', report });
 
   return events;

@@ -33,7 +33,8 @@ export class RunWriter {
     writeFileSync(report, renderReport(scenario, this.events, usage));
 
     const cost = usage.reduce((sum, u) => sum + (u.costUsd ?? 0), 0);
-    console.log(`\nEstimated cost $${cost.toFixed(2)}. Output:`);
+    const priced = usage.some((u) => u.costUsd != null);
+    console.log(`\n${priced ? `Estimated cost $${cost.toFixed(2)}. ` : ''}Output:`);
     console.log(`  ${this.relative(report)}`);
     console.log(`  ${this.relative(transcript)}`);
   }

@@ -5,19 +5,39 @@ Play-tests the rules in `design-doc.md` and `docs/game-mechanics.md` with LLM ag
 ## Running
 
 ```sh
-export ANTHROPIC_API_KEY=...        # or `ant auth login`
-pnpm playtest --scenario the-hunt
-pnpm playtest --scenario the-hunt --rounds 4 --player-model claude-sonnet-5-5   # cheaper, shorter
-pnpm nx run playtest:run --scenario=the-hunt                                    # same thing via Nx
+pnpm playtest --scenario the-hunt --backend claude-code    # on your Claude Code login
+pnpm playtest --scenario the-hunt --backend clipboard      # you relay messages to chat windows
+pnpm playtest --scenario the-hunt                          # Anthropic API; needs ANTHROPIC_API_KEY
+pnpm playtest --scenario the-hunt --rounds 2 --player-model claude-sonnet-5-5   # a cheap smoke test
+pnpm nx run playtest:run --scenario=the-hunt               # same thing via Nx
 ```
 
 `pnpm playtest --help` lists all options. Each run writes to `apps/playtest/runs/<timestamp>-<scenario>/` (gitignored):
 
 | File | Contents |
 |---|---|
-| `report.md` | The analyst's synthesis, every participant's raw feedback, every ruling the rules didn't settle, and token usage and cost. Start here. |
+| `report.md` | The analyst's synthesis, every participant's raw feedback, every ruling the rules didn't settle, and token usage. Start here. |
 | `transcript.md` | The game turn by turn: each player's submission, the GM's private working and true state (collapsed), and what each player was told. |
 | `events.jsonl` | Raw structured events, written as they happen. A crashed run still leaves this behind. |
+| `relay/` | Clipboard backend only: every prompt and reply you relayed, and `attachments/<chat>/`, the files to attach to each chat. |
+
+## Backends
+
+Every backend implements the same `Agent` interface, so the game plays the same on each. Each agent's standing context is a set of named documents (the rule files, `scenario.md`, and a private briefing) plus instructions that refer to them by name; each backend decides how to deliver the documents. The API and Claude Code put them in the system prompt; the clipboard backend has you attach them as files. Only where the replies come from changes. Whatever the backend, the core validates every reply and asks for up to two corrections before failing the run.
+
+| `--backend` | Replies come from | Structured output | Notes |
+|---|---|---|---|
+| `api` (default) | The Anthropic API | Native structured output | Needs an API key. Prompt caching and refusal fallbacks are on. The report shows dollar estimates. |
+| `claude-code` | The `claude` CLI in headless mode, one CLI session per agent | Requested with `--json-schema`, plus instructions in the prompt | Uses your Claude Code login and counts against its usage limits, so the report shows tokens, not dollars. Runs with `--safe-mode`, no tools, and an empty working directory, so an agent can't read your CLAUDE.md, MCP servers or the run files. Finds the CLI on PATH or inside the VS Code extension; `--claude-bin` overrides. |
+| `clipboard` | You, relaying between the terminal and one chat window per participant | Requested in the prompt: the full schema the first time each chat needs a format, then by name | No model access needed. The documents are written out as files for you to attach when you start each chat. `--paste-limit` splits longer messages into parts for chat apps with a message size cap. Use a fresh chat with memory off for each participant, or chats can leak information to each other. |
+
+For example, for a chat app that accepts at most 8,000 characters per message:
+
+```sh
+pnpm playtest --scenario the-hunt --backend clipboard --rounds 3 --paste-limit 8000
+```
+
+With the clipboard backend, a 10-turn game takes about 35 exchanges (each one paste into a chat and one copy back): 1 to set up, 3 per turn, 3 debriefs and 1 report, plus 2 more each time a player buys instant intel, plus any correction requests, plus one extra paste for each part of a split message. You see every hidden state while relaying, so you can't also be a player.
 
 ## How a run works
 
@@ -48,12 +68,16 @@ Design points:
 src/
   types/    Shared shapes, no logic: scenario format, agent output schemas, events, run config, usage
   input/    Reads the outside world (argv, scenario files, clock) and validates it → RunConfig
-  core/     The game loop and prompt text. No file, console or network access, and no SDK imports
-  llm/      The Claude implementation of the Agent interface, and usage/cost tracking
+  core/     The game loop, prompt text, and askFor (reply validation). No file, console or network access
+  llm/      The Agent implementations (API, Claude Code CLI, clipboard) and usage tracking
   output/   Pure Markdown renderers, and RunWriter, which writes them and logs progress
 ```
 
-`core/` doesn't call the network itself. It talks to whatever `Agent` it's given, which in a real run is the `llm/` adapter and in tests is a scripted fake. Events stream to the output layer as they happen, rather than only at the end, so a run that crashes partway still leaves `events.jsonl` and a partial transcript.
+`core/` doesn't call the network itself. It talks to whatever `Agent` it's given: one of the `llm/` backends in a real run, and a scripted fake in tests.
+
+An `Agent` is a transport: `send(label, prompt, responseSchema?)` returns the reply as a string. When a JSON Schema is passed, the agent asks for a matching reply in whatever way its transport supports, but doesn't check it. `core/ask.ts` owns the contract. It turns the Zod schemas in `types/schemas.ts` into JSON Schema, validates each reply, and sends a malformed one back to the same agent to be fixed (up to two times). So Zod stays in `types/` and `core/`, and a new backend only has to move text.
+
+Events stream to the output layer as they happen, rather than only at the end, so a run that crashes partway still leaves `events.jsonl` and a partial transcript.
 
 ## Scenarios
 
@@ -77,4 +101,4 @@ Ideas for scenarios that isolate one mechanic:
 
 ## Cost
 
-A 10-turn run of `the-hunt` makes about 30–40 model calls. Every agent defaults to Claude Opus 5.5 (GM at `high` effort, players at `medium`). The cost is printed at the end of each run and broken down in `report.md`. To cut it, use `--player-model claude-sonnet-5-5` and fewer `--rounds`. Keep the GM on the strongest model you can: a GM that gets light delay wrong produces feedback about its mistakes rather than about the rules.
+A 10-turn run of `the-hunt` makes about 30–40 model calls. Every agent defaults to Claude Opus 5.5 (GM at `high` effort, players at `medium`). On the `api` backend the cost is printed at the end of each run and broken down in `report.md`; on `claude-code` the run draws on your plan's usage limits instead. To cut either, use `--player-model claude-sonnet-5-5` and fewer `--rounds`. Keep the GM on the strongest model you can: a GM that gets light delay wrong produces feedback about its mistakes rather than about the rules.

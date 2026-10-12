@@ -6,6 +6,9 @@ describe('parseCliArgs', () => {
       help: false,
       scenario: 'the-hunt',
       rounds: undefined,
+      backend: 'api',
+      claudeBin: undefined,
+      pasteLimit: undefined,
       gm: { model: 'claude-opus-5-5', effort: 'high' },
       players: { model: 'claude-sonnet-5-5', effort: 'medium' },
       out: undefined,
@@ -16,6 +19,8 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs([])).toThrow('--scenario is required');
     expect(() => parseCliArgs(['--scenario', 'x', '--rounds', '0'])).toThrow('Invalid --rounds');
     expect(() => parseCliArgs(['--scenario', 'x', '--gm-effort', 'huge'])).toThrow('Invalid effort');
+    expect(() => parseCliArgs(['--scenario', 'x', '--backend', 'carrier-pigeon'])).toThrow('Invalid --backend');
+    expect(() => parseCliArgs(['--scenario', 'x', '--paste-limit', 'lots'])).toThrow('Invalid --paste-limit');
   });
 
   it('short-circuits on --help', () => {
