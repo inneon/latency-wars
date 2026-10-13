@@ -8,7 +8,7 @@ The [design doc](design-doc.md) says *what* the game is and *why*. This document
 Over time, the **Agreed** rules here will be extracted into a **rulebook**: the canonical record of domain rules that the engine, AI and UI are built against.
 
 ### 0.2 Conventions
-- **Rule IDs** (e.g. `TURN-03`) are stable. Don't renumber them; retire them instead.
+- **Rule IDs** (e.g. `TURN-03`) are stable. Don't renumber them; retire them instead, by moving them to section 13. A retired ID is never reused. Code that cites a retired or unknown ID fails the `rule-refs` test.
 - **MUST / MAY** mark rule text. Everything else (the "Why" lines, examples, presentation notes) explains the rules and isn't part of them.
 - **Status** is set per section:
   - **Agreed:** decided, ready for the rulebook.
@@ -342,6 +342,15 @@ From observation to seeing the response takes 11 turns: roughly `3d/C + 2`.
 | `OPEN-06` | **Interception.** How does a fleet catch a moving target? Options: units whose paths cross in the same turn fight; zones of control (moving next to an enemy stops you); or attack moves resolve after other moves. | **Priority.** Without one of these, pursuit never connects under simultaneous movement (see `RES-06` note). |
 | `OPEN-07` | Flagship movement: any limits beyond speed (fuel, cooldown, signature when moving)? | Design doc open question 5. |
 | `OPEN-08` | Does hex distance distort link-length production enough to matter? | See `SPACE-03`. |
+
+---
+
+## 13. Retired Rule IDs
+
+Rules taken out of the mechanics. Their IDs stay reserved here so they aren't reused. Code still citing one fails the `rule-refs` test.
+
+| ID | Retired in | Replaced by | Reason |
+|---|---|---|---|
 
 ---
 

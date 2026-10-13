@@ -1,0 +1,8 @@
+{
+  "name": "rule-refs",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "tools/rule-refs/src",
+  "projectType": "library",
+  "tags": ["scope:tooling"],
+  "targets": {}
+}

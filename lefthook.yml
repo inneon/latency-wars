@@ -1,0 +1,5 @@
+# Installed by `pnpm install` (the `prepare` script).
+pre-commit:
+  commands:
+    rule-refs:
+      run: pnpm exec vitest run --config tools/rule-refs/vitest.config.mts
