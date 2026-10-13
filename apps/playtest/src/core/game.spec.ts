@@ -32,12 +32,17 @@ const feedback: Feedback = {
 };
 const gmFeedback: GmFeedback = { ...feedback, adjudication_difficulties: ['bookkeeping'] };
 
-const resolution = (turn: number, over = false): GmResolution => ({
+const unitStates = (scenario: Scenario) =>
+  scenario.units.map((u) => ({ id: u.id, owner: u.owner, class: u.class, q: u.hex.q, r: u.hex.r, strength: u.strength }));
+
+const resolution = (scenario: Scenario, turn: number, over = false, redMentions: GmResolution['player_reports'][number]['mentions'] = []): GmResolution => ({
   resolution_log: `log ${turn}`,
   true_state: `state ${turn}`,
+  // Nobody moves.
+  units: unitStates(scenario),
   player_reports: [
-    { player_id: 'blue', report: `SECRET-BLUE-${turn}` },
-    { player_id: 'red', report: `SECRET-RED-${turn}` },
+    { player_id: 'blue', report: `SECRET-BLUE-${turn}`, mentions: [{ unit_id: 'blue-line', observed_turn: turn - 1 }] },
+    { player_id: 'red', report: `SECRET-RED-${turn}`, mentions: redMentions },
   ],
   rulings: [{ situation: 'pass-through', ruling: 'they fight', rule_ids: ['OPEN-06'], basis: 'invented' }],
   game_over: over,
@@ -53,13 +58,17 @@ const turn = (intel: string[] = []): PlayerTurn => ({
   rules_confusions: ['what is age?'],
 });
 
-function setup(gameOverOnTurn: number) {
+function setup(scenario: Scenario, gameOverOnTurn: number, { leakOnTurn = 0 } = {}) {
   const gm = new ScriptedAgent('gm', (label) => {
-    if (label === 'setup') return resolution(0);
+    if (label === 'setup') return resolution(scenario, 0);
     if (label === 'debrief') return gmFeedback;
-    if (label.includes('intel')) return { private_notes: '', response: 'INTEL-FOR-RED', rulings: [] } satisfies GmIntel;
+    if (label.includes('intel')) {
+      return { private_notes: '', snapshot: true, pings: [], response: 'INTEL-FOR-RED', mentions: [], rulings: [] } satisfies GmIntel;
+    }
     const n = Number(label.split(' ')[1]);
-    return resolution(n, n === gameOverOnTurn);
+    // On the leak turn, the first resolution tells Red where Blue's flagship is.
+    const leak = n === leakOnTurn && !label.includes('correction') ? [{ unit_id: 'blue-flagship', observed_turn: n }] : [];
+    return resolution(scenario, n, n === gameOverOnTurn, leak);
   });
   const player = (id: string) =>
     new ScriptedAgent(id, (label) => {
@@ -81,7 +90,7 @@ describe('runPlaytest', () => {
   });
 
   it('only ever shows each player their own reports', async () => {
-    const { blue, red, agents } = setup(99);
+    const { blue, red, agents } = setup(scenario, 99);
     await runPlaytest({ scenario, agents, maxRounds: 3, emit: () => undefined });
 
     const blueSaw = blue.prompts.map((p) => p.prompt).join('\n');
@@ -94,7 +103,7 @@ describe('runPlaytest', () => {
   });
 
   it('resolves instant intel before the player commits orders', async () => {
-    const { gm, red, agents } = setup(99);
+    const { gm, red, agents } = setup(scenario, 99);
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario, agents, maxRounds: 1, emit: (e) => events.push(e) });
 
@@ -105,7 +114,7 @@ describe('runPlaytest', () => {
   });
 
   it('stops when the GM declares game over, then debriefs everyone and writes a synthesis', async () => {
-    const { gm, analyst, agents } = setup(2);
+    const { gm, analyst, agents } = setup(scenario, 2);
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario, agents, maxRounds: 10, emit: (e) => events.push(e) });
 
@@ -115,5 +124,35 @@ describe('runPlaytest', () => {
     expect(analyst.prompts[0]?.prompt).toContain('[invented] (OPEN-06) pass-through → they fight');
     expect(analyst.prompts[0]?.prompt).toContain('Turn 1, blue: what is age?');
     expect(events.at(-1)).toEqual({ type: 'synthesis', report: 'REPORT' });
+  });
+
+  it("appends the engine's sensor picture to each player's report", async () => {
+    const { blue, agents } = setup(scenario, 99);
+    await runPlaytest({ scenario, agents, maxRounds: 1, emit: () => undefined });
+
+    const report = blue.prompts[0]?.prompt ?? '';
+    expect(report).toContain('SECRET-BLUE-0');
+    expect(report).toContain('## Sensor picture (Planning phase, turn 1)');
+    // Blue Line is 3 hexes from Blue's flagship, so its latest report is a turn old (LIGHT-06).
+    expect(report).toContain('Blue Line (`blue-line`, fleet, strength 4) at (-2, 1) at the end of turn -1 (age 1)');
+    expect(report).toContain('Contacts:\n- None.');
+    expect(report).not.toContain('red-line');
+  });
+
+  it("sends a report that leaks hidden information back to the GM, and the player never sees it", async () => {
+    const { gm, red, agents } = setup(scenario, 99, { leakOnTurn: 1 });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents, maxRounds: 2, emit: (e) => events.push(e) });
+
+    const corrections = events.filter((e) => e.type === 'correction');
+    expect(corrections).toEqual([
+      expect.objectContaining({
+        agent: 'gm',
+        label: 'turn 1 resolve',
+        problems: expect.stringContaining('refers to blue-flagship, but red has no information about it in turn 2'),
+      }),
+    ]);
+    expect(gm.prompts.map((p) => p.label)).toContain('turn 1 resolve (correction 1)');
+    expect(red.prompts.map((p) => p.prompt).join('\n')).not.toContain('blue-flagship');
   });
 });

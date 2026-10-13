@@ -1,19 +1,6 @@
 ## Starting state (end of turn 0)
 
-All units have held these positions since long before turn 1. No unit has any enemy within sensor range, so neither player has any contacts.
-
-| Unit | Owner | Class | Hex | Strength | Speed | Doctrine |
-|---|---|---|---|---|---|---|
-| Blue Flagship | Blue | Flagship | (−5, 2) | 3 | 1 | — |
-| Blue Line | Blue | Line fleet | (−2, 1) | 4 | 1 | Balanced, home (−2, 1) |
-| Blue Raider | Blue | Fast fleet | (−3, 4) | 2 | 2 | Balanced, home (−3, 4) |
-| Blue Node West | Blue | Node | (−4, −1) | 2 | — | — |
-| Blue Node North | Blue | Node | (−1, 4) | 2 | — | — |
-| Red Flagship | Red | Flagship | (5, −2) | 3 | 1 | — |
-| Red Line | Red | Line fleet | (2, −1) | 4 | 1 | Balanced, home (2, −1) |
-| Red Raider | Red | Fast fleet | (3, −4) | 2 | 2 | Balanced, home (3, −4) |
-| Red Node East | Red | Node | (4, 1) | 2 | — | — |
-| Red Node South | Red | Node | (1, −4) | 2 | — | — |
+All units have held their starting positions (listed under "Starting units" below) since long before turn 1. No unit has any enemy within sensor range, so neither player has any contacts. Doctrines are Balanced, with each fleet's home at its starting hex.
 
 Links: Blue Node West ↔ Blue Node North (length 8). Red Node East ↔ Red Node South (length 8). Each player produces floor(64 ÷ 16) = 4 qBits per turn and starts with 8 qBits banked.
 

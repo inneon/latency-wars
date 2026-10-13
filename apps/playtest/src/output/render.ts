@@ -30,13 +30,16 @@ function playerTurn(name: string, step: string, s: PlayerTurn): string {
   return parts.join('\n\n');
 }
 
-function gmResolution(scenario: Scenario, r: GmResolution): string {
-  const name = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
+function gmResolution(r: GmResolution): string {
+  const units = [
+    '| Unit | Owner | Hex | Strength |',
+    '|---|---|---|---|',
+    ...r.units.map((u) => `| ${u.id} | ${u.owner} | (${u.q}, ${u.r}) | ${u.strength} |`),
+  ].join('\n');
   return [
-    ...r.player_reports.map((p) => `#### Report to ${name(p.player_id)}\n\n${p.report}`),
     `#### Rulings\n\n${rulingsTable(r.rulings)}`,
     details('GM working', r.resolution_log),
-    details('True state', r.true_state),
+    details('True state', `${units}\n\n${r.true_state}`),
     r.game_over ? `**Game over:** ${r.outcome}` : '',
   ]
     .filter(Boolean)
@@ -49,22 +52,25 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
   let currentTurn = -1;
   for (const e of events) {
     if (e.type === 'setup') {
-      out.push('## Setup', gmResolution(scenario, e.resolution));
-    } else if (e.type === 'player_turn' || e.type === 'gm_intel' || e.type === 'gm_resolution') {
+      out.push('## Setup', gmResolution(e.resolution));
+    } else if (e.type === 'report' || e.type === 'player_turn' || e.type === 'gm_intel' || e.type === 'gm_resolution') {
       if (e.turn !== currentTurn) {
         currentTurn = e.turn;
         out.push(`## Turn ${e.turn}`);
       }
+      if (e.type === 'report') out.push(details(`Report to ${name(e.player)}`, e.text));
       if (e.type === 'player_turn') out.push(playerTurn(name(e.player), e.step, e.submission));
       if (e.type === 'gm_intel') {
         out.push(
           `#### GM: instant intel for ${name(e.player)}`,
-          e.intel.response,
+          e.delivered,
           rulingsTable(e.intel.rulings),
           details('GM working', e.intel.private_notes),
         );
       }
-      if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(scenario, e.resolution));
+      if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(e.resolution));
+    } else if (e.type === 'correction') {
+      out.push(`> 🔁 **${e.agent}** (${e.label}): reply sent back to be fixed.\n>\n${e.problems.replace(/^/gm, '> ')}`);
     } else if (e.type === 'warning') {
       out.push(`> ⚠️ ${e.message}`);
     }
@@ -115,6 +121,13 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
         : [],
   );
   const gaps = allRulings.filter((r) => r.basis !== 'explicit');
+  const corrections = events.filter((e) => e.type === 'correction');
+  if (corrections.length) {
+    out.push(
+      `# Replies sent back to be fixed (${corrections.length})`,
+      corrections.map((c) => `- **${c.agent}** (${c.label}):\n${c.problems.replace(/^/gm, '  ')}`).join('\n'),
+    );
+  }
   out.push(`# Rulings the rules didn't settle (${gaps.length})`, rulingsTable(gaps));
 
   if (usage.length > 0) {

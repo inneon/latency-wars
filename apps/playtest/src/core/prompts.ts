@@ -1,3 +1,4 @@
+import { formatHex } from '@latency-wars/domain';
 import type { AgentDocument, SystemPrompt } from '../types/agent';
 import type { Scenario, ScenarioPlayer } from '../types/scenario';
 import type { GmResolution, PlayerTurn } from '../types/schemas';
@@ -11,6 +12,17 @@ const scenarioDocument = (scenario: Scenario): AgentDocument => ({
   content: `# ${scenario.title}\n\n${scenario.description}\n\n${scenario.common}`,
   shared: false,
 });
+
+const startingUnitsTable = (scenario: Scenario) =>
+  [
+    '## Starting units',
+    '',
+    '| Id | Name | Owner | Class | Hex | Strength | Speed | Sensor range |',
+    '|---|---|---|---|---|---|---|---|',
+    ...scenario.units.map(
+      (u) => `| \`${u.id}\` | ${u.name} | ${u.owner} | ${u.class} | ${formatHex(u.hex)} | ${u.strength} | ${u.speed} | ${u.sensorRange} |`,
+    ),
+  ].join('\n');
 
 const names = (docs: AgentDocument[]) => docs.map((d) => `\`${d.name}\``).join(', ');
 
@@ -27,7 +39,7 @@ ${playerList(scenario)}
 
 Your documents: the rules are in ${names(rules)}. The scenario, including its map and house rules, is in \`scenario.md\`. Your private briefing is in \`${briefing.name}\`.
 
-How play works: a game master (GM) holds the true game state. At the start of each turn the GM tells you your knowledge state for the Planning phase, and you reply with your actions for that turn. Everyone submits simultaneously and nobody sees anyone else's submission.
+How play works: a game master (GM) holds the true game state. At the start of each turn you get your knowledge state for the Planning phase: messages from the GM (acks and reports from your fleets, your qBit balance, rules answers) and a sensor picture of every unit you know about, with how old that information is. You reply with your actions for that turn. Everyone submits simultaneously and nobody sees anyone else's submission.
 
 Play to win, within the rules. Your play style: ${player.persona}
 
@@ -39,7 +51,11 @@ The rules are a work in progress, and you are helping the designer find out what
 
 export function gmSystem(scenario: Scenario): SystemPrompt {
   const rules = ruleDocuments(scenario);
-  const briefing: AgentDocument = { name: 'gm-briefing.md', content: scenario.gmBriefing, shared: false };
+  const briefing: AgentDocument = {
+    name: 'gm-briefing.md',
+    content: `${scenario.gmBriefing.trim()}\n\n${startingUnitsTable(scenario)}\n`,
+    shared: false,
+  };
   return {
     documents: [...rules, scenarioDocument(scenario), briefing],
     instructions: `You are the game master (GM) for a play-test of Latency Wars, a prototype strategy game under active design. The players are:
@@ -49,9 +65,9 @@ Your documents: the rules are in ${names(rules)}. The scenario, including its ma
 
 You are the arbiter and the game engine. You alone hold the true game state. Your duties:
 
-1. Resolve each turn faithfully, through every phase of TURN-03 in order. Show your working in resolution_log: hex distances, the ORD-04 delivery check for each order in transit, the LIGHT-03 visibility check for each observation, and combat.
-2. Keep a complete ledger in true_state, so you can resolve later turns from it: every unit's position, strength, active order and doctrine; qBit balances; every order in transit (send turn, emission hex, sequence, recipient); and the log of observations with their observation turns and hexes, so you know when each becomes visible to each player.
-3. Write each player's report as their knowledge state for the next Planning phase. Include only what has become visible to that player under the rules, each item with its observation turn and age. Include their own units' status reports, acks and execution reports exactly as the rules deliver them, and their current qBit balance. Answer their rules questions there too, without revealing hidden information. Information leaking to a player who should not have it ruins the test, so check every item against LIGHT-03.
+1. Resolve each turn faithfully, through every phase of TURN-03 in order. Show your working in resolution_log: hex distances, the ORD-04 delivery check for each order in transit, and combat.
+2. Report every surviving unit's true end-of-turn position and strength in \`units\`, using the ids in your briefing. A game engine tracks positions and light delay from these, and works out what each player can see. Keep everything else in true_state, so you can resolve later turns from it: active orders and doctrines, qBit balances, and every order in transit (send turn, emission hex, sequence, recipient).
+3. Write each player's report as messages for their next Planning phase: the acks, queries and execution reports that have reached them under the FB rules, what they know of any combat, their qBit balance, and answers to their rules questions. The engine appends each player's sensor picture (the positions, ages and silences they know of), so don't list positions yourself. In \`mentions\`, list every unit your report refers to and the turn the information is from: an ack or report from a fleet is from the turn the fleet sent it. The engine checks these against what the player can know, and sends back anything that leaks. Information reaching a player who shouldn't have it ruins the test.
 4. Apply the rules as written. The scenario's house rules fill the gaps the rules leave as placeholders. Where the rules are still ambiguous or silent, make a reasonable ruling, apply it consistently from then on, and log it in rulings with an honest basis. Those logs are the most valuable output of this play-test.
 5. Be impartial. Don't steer the game, and don't help or hinder any player.
 6. Declare game_over when a victory condition is met.
@@ -61,14 +77,14 @@ Use axial hex coordinates (q, r). distance((q1, r1), (q2, r2)) = (|q1 − q2| + 
 }
 
 export const gmSetupPrompt = (scenario: Scenario) =>
-  `Set up the game. Record the starting true state from your briefing, then write each player's knowledge state for the Planning phase of turn 1.
+  `Set up the game. Record the starting true state from your briefing, and copy the starting units into \`units\` exactly. Then write each player's messages for the Planning phase of turn 1: at least their qBit balance. The engine adds their sensor picture.
 
-Treat the game as having run before turn 1 with every unit holding its starting position, so each player already has the status reports and observations that light delay would have delivered by then. This is turn 0, so make no rulings unless setup itself needs one, and set game_over to false.
+Treat the game as having run before turn 1 with every unit holding its starting position. This is turn 0, so make no rulings unless setup itself needs one, and set game_over to false.
 
 Player ids: ${scenario.players.map((p) => p.id).join(', ')}.`;
 
 export const playerTurnPrompt = (turn: number, report: string) =>
-  `Turn ${turn}: Planning phase. Your knowledge state from the GM:
+  `Turn ${turn}: Planning phase. Your knowledge state:
 
 ${report}
 
@@ -86,7 +102,7 @@ export const gmIntelPrompt = (turn: number, player: ScenarioPlayer, requests: st
 
 ${requests.map((r) => `- ${r}`).join('\n')}
 
-Resolve these now under the rules: deduct the qBit cost, refuse what they can't afford, and reveal only what each request legitimately shows. The player will then submit final orders.`;
+Rule on these now: deduct the qBit cost, and refuse what they can't afford. Set \`snapshot\` and \`pings\` to what they get; the engine appends what that shows, as of the end of turn ${turn - 1}. Your response covers the cost, the new balance and anything refused. The player will then submit final orders.`;
 
 export function gmResolvePrompt(turn: number, scenario: Scenario, submissions: Map<string, PlayerTurn>, isLastTurn: boolean) {
   const sections = scenario.players.map((p) => {

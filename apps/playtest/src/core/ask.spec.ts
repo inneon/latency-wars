@@ -56,7 +56,20 @@ describe('askFor', () => {
 
   it('gives up after the allowed corrections', async () => {
     const agent = new CannedAgent(['Four.', 'Four!', 'FOUR.']);
-    await expect(askFor(agent, 'q', 'What is 2 + 2?', Schema)).rejects.toThrow("red (q): reply didn't match the schema");
+    await expect(askFor(agent, 'q', 'What is 2 + 2?', Schema)).rejects.toThrow('red (q): reply still failed after 2 corrections');
     expect(agent.sent).toHaveLength(3);
+  });
+
+  it('sends a well-formed reply that fails the check back with the problems', async () => {
+    const agent = new CannedAgent(['{"answer": 5}', '{"answer": 4}']);
+    const corrections: string[] = [];
+    const value = await askFor(agent, 'q', 'What is 2 + 2?', Schema, {
+      check: (v) => (v.answer === 4 ? [] : [`${v.answer} is not 2 + 2`]),
+      onCorrection: (problems) => corrections.push(problems),
+    });
+    expect(value).toEqual({ answer: 4 });
+    expect(agent.sent[1]?.prompt).toContain('- 5 is not 2 + 2');
+    expect(agent.sent[1]?.prompt).toContain('checks against the game state');
+    expect(corrections).toEqual(['- 5 is not 2 + 2']);
   });
 });

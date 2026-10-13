@@ -20,6 +20,12 @@
     "paths": {
       "@latency-wars/contracts": [
         "./libs/shared/contracts/src/index.ts"
+      ],
+      "@latency-wars/domain": [
+        "./libs/shared/domain/src/index.ts"
+      ],
+      "@latency-wars/visibility": [
+        "./libs/core/visibility/src/index.ts"
       ]
     },
     "noUncheckedIndexedAccess": true,

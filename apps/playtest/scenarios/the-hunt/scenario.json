@@ -3,6 +3,112 @@
   "description": "A small two-player skirmish testing light delay, orders, feedback and doctrine. Each side has a flagship, two fleets and a two-node web. Contested magnetosphere zones in the middle tempt both sides to over-extend.",
   "rules": ["design-doc.md", "docs/game-mechanics.md"],
   "maxRounds": 10,
+  "parameters": {
+    "c": 3,
+    "trackDecay": 8
+  },
+  "units": [
+    {
+      "id": "blue-flagship",
+      "name": "Blue Flagship",
+      "owner": "blue",
+      "class": "flagship",
+      "hex": [-5, 2],
+      "speed": 1,
+      "sensorRange": 3,
+      "strength": 3
+    },
+    {
+      "id": "blue-line",
+      "name": "Blue Line",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-2, 1],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "blue-raider",
+      "name": "Blue Raider",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-3, 4],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "blue-node-west",
+      "name": "Blue Node West",
+      "owner": "blue",
+      "class": "node",
+      "hex": [-4, -1],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "blue-node-north",
+      "name": "Blue Node North",
+      "owner": "blue",
+      "class": "node",
+      "hex": [-1, 4],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-flagship",
+      "name": "Red Flagship",
+      "owner": "red",
+      "class": "flagship",
+      "hex": [5, -2],
+      "speed": 1,
+      "sensorRange": 3,
+      "strength": 3
+    },
+    {
+      "id": "red-line",
+      "name": "Red Line",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [2, -1],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "red-raider",
+      "name": "Red Raider",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, -4],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-node-east",
+      "name": "Red Node East",
+      "owner": "red",
+      "class": "node",
+      "hex": [4, 1],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-node-south",
+      "name": "Red Node South",
+      "owner": "red",
+      "class": "node",
+      "hex": [1, -4],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    }
+  ],
   "common": "common.md",
   "gm": "gm.md",
   "players": [

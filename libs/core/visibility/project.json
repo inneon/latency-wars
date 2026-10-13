@@ -1,0 +1,15 @@
+{
+  "name": "visibility",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/core/visibility/src",
+  "projectType": "library",
+  "tags": ["type:core", "scope:shared"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p libs/core/visibility/tsconfig.lib.json --noEmit && tsc -p libs/core/visibility/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}

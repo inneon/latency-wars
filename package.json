@@ -8,7 +8,7 @@
     "lint": "nx run-many -t lint",
     "build": "nx run-many -t build",
     "affected": "nx affected -t lint test build typecheck",
-    "playtest": "tsx apps/playtest/src/main.ts",
+    "playtest": "tsx --tsconfig apps/playtest/tsconfig.app.json apps/playtest/src/main.ts",
     "prepare": "lefthook install"
   },
   "private": true,

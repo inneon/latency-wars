@@ -28,6 +28,8 @@ export async function loadScenario(workspaceRoot: string, scenario: string): Pro
     title: file.title,
     description: file.description,
     maxRounds: file.maxRounds,
+    parameters: file.parameters,
+    units: file.units.map(({ hex: [q, r], ...unit }) => ({ ...unit, hex: { q, r } })),
     rules: await Promise.all(
       file.rules.map(async (p) => ({ path: p, content: await readFile(path.join(workspaceRoot, p), 'utf8') })),
     ),

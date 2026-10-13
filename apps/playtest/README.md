@@ -58,6 +58,7 @@ Design points:
 - **Each agent has its own conversation.** The runner is the only thing that moves information between them, so a player can't see anything the GM didn't send them. `core/game.spec.ts` checks this.
 - **Everything is structured.** Players return orders, rules questions and `rules_confusions`. The GM returns its working, the true state, per-player reports and a `rulings` log, each tagged `explicit`, `interpreted` or `invented`. The `interpreted` and `invented` rulings are the gaps in the rules, and they're the most useful output.
 - **The rules are the system prompt**, loaded fresh from the docs on every run, so editing the docs and re-running is the whole iteration loop. The rules block is identical for every agent, so it's cached once and shared.
+- **An engine owns positions and visibility.** The GM reports every unit's end-of-turn position and strength in a structured `units` list. The engine (`core/engine.ts`, built on `@latency-wars/visibility`) checks the moves against unit speeds, works out what each player can see under the `LIGHT-*` rules, and appends that to each report as a computed sensor picture, including `FB-05` silences. The GM's own report text is limited to messages: acks, combat news, qBit balance, rules answers. It lists the units it mentions, and any mention fresher than the player could know is sent back to the GM to fix. Instant intel works the same way: the GM rules on cost, and the engine supplies what the intel shows. As more mechanics move into libs, the GM's share shrinks.
 - **The game loop doesn't know about Claude.** `runPlaytest` takes anything implementing `Agent`, so tests use scripted fakes.
 
 ## Code layout
@@ -68,14 +69,14 @@ Design points:
 src/
   types/    Shared shapes, no logic: scenario format, agent output schemas, events, run config, usage
   input/    Reads the outside world (argv, scenario files, clock) and validates it → RunConfig
-  core/     The game loop, prompt text, and askFor (reply validation). No file, console or network access
+  core/     The game loop, prompt text, askFor (reply validation) and the engine. No file, console or network access
   llm/      The Agent implementations (API, Claude Code CLI, clipboard) and usage tracking
   output/   Pure Markdown renderers, and RunWriter, which writes them and logs progress
 ```
 
 `core/` doesn't call the network itself. It talks to whatever `Agent` it's given: one of the `llm/` backends in a real run, and a scripted fake in tests.
 
-An `Agent` is a transport: `send(label, prompt, responseSchema?)` returns the reply as a string. When a JSON Schema is passed, the agent asks for a matching reply in whatever way its transport supports, but doesn't check it. `core/ask.ts` owns the contract. It turns the Zod schemas in `types/schemas.ts` into JSON Schema, validates each reply, and sends a malformed one back to the same agent to be fixed (up to two times). So Zod stays in `types/` and `core/`, and a new backend only has to move text.
+An `Agent` is a transport: `send(label, prompt, responseSchema?)` returns the reply as a string. When a JSON Schema is passed, the agent asks for a matching reply in whatever way its transport supports, but doesn't check it. `core/ask.ts` owns the contract. It turns the Zod schemas in `types/schemas.ts` into JSON Schema, validates each reply, runs any game-state check the caller passes (such as the engine's leak check), and sends a failing reply back to the same agent to be fixed (up to two times). Every correction is logged, and the report lists them: GM corrections show where the rules are hard to apply. So Zod stays in `types/` and `core/`, and a new backend only has to move text.
 
 Events stream to the output layer as they happen, rather than only at the end, so a run that crashes partway still leaves `events.jsonl` and a partial transcript.
 
@@ -85,7 +86,7 @@ A scenario is a directory under `scenarios/`:
 
 | File | Who sees it |
 |---|---|
-| `scenario.json` | Title, description, turn limit, rule documents, players and personas |
+| `scenario.json` | Title, description, turn limit, rule documents, players and personas, light-delay `parameters` (`c`, `trackDecay`), and the starting `units` (id, owner, class, hex, speed, sensor range, strength). The units are the engine's turn-0 state, and the GM's briefing gets a table of them, so don't repeat them in `gm.md`. |
 | `common.md` | Everyone: map, parameters, house rules, victory conditions |
 | `gm.md` | GM only: the true starting state and design notes |
 | `<player>.md` | That player only |

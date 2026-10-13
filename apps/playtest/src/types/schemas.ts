@@ -50,16 +50,40 @@ export const Ruling = z.object({
 });
 export type Ruling = z.infer<typeof Ruling>;
 
+/** One unit's true state at the end of a turn. The engine tracks positions and visibility from these. */
+export const UnitState = z.object({
+  id: z.string().describe('The unit id from the scenario. A newly built node gets a new id.'),
+  owner: z.string().describe('Player id.'),
+  class: z.enum(['flagship', 'fleet', 'node']),
+  q: z.number().int(),
+  r: z.number().int(),
+  strength: z.number().int().describe('Current strength. Leave destroyed units out of the list instead.'),
+});
+export type UnitState = z.infer<typeof UnitState>;
+
+/** A unit that a piece of player-facing text describes, and the turn that information is from. */
+export const Mention = z.object({
+  unit_id: z.string(),
+  observed_turn: z
+    .number()
+    .int()
+    .describe('The turn whose end-of-turn state the information describes (t_o), not the turn it arrives.'),
+});
+export type Mention = z.infer<typeof Mention>;
+
 export const GmResolution = z.object({
   resolution_log: z
     .string()
-    .describe('Your private working: walk through each phase in order, with the calculations (distances, delivery and visibility checks, combat).'),
+    .describe('Your private working: walk through each phase in order, with the calculations (distances, delivery checks, combat).'),
   true_state: z
     .string()
     .describe(
-      'The complete authoritative game state after this turn: every unit (position, strength, active order, doctrine), ' +
-        'qBit balances, orders in transit, and the observation log with observation turns. Players never see this.',
+      'The complete authoritative game state after this turn, beyond what `units` holds: active orders, doctrines, ' +
+        'qBit balances, orders in transit (send turn, emission hex, sequence, recipient). Players never see this.',
     ),
+  units: z
+    .array(UnitState)
+    .describe('Every surviving unit at the end of this turn (after phase 8), with its true position and strength.'),
   player_reports: z
     .array(
       z.object({
@@ -67,9 +91,13 @@ export const GmResolution = z.object({
         report: z
           .string()
           .describe(
-            "This player's knowledge state for the next Planning phase: only what has become visible to them under the rules, " +
-              'with ages, plus answers to their rules questions.',
+            'Messages for this player in the next Planning phase: acks, queries and execution reports that have reached them, ' +
+              'what they know of any combat, their qBit balance, and answers to their rules questions. ' +
+              'Do not list unit positions: the engine appends the sensor picture.',
           ),
+        mentions: z
+          .array(Mention)
+          .describe('Every unit this report refers to, with the turn the information is from. The engine checks it against what the player can know.'),
       }),
     )
     .describe('Exactly one report per player.'),
@@ -80,8 +108,13 @@ export const GmResolution = z.object({
 export type GmResolution = z.infer<typeof GmResolution>;
 
 export const GmIntel = z.object({
-  private_notes: z.string().describe('Your working: what the request reveals, what it costs, and the qBit balance afterwards.'),
-  response: z.string().describe('What the player learns. Only what the request legitimately reveals.'),
+  private_notes: z.string().describe('Your working: what the request costs, and the qBit balance afterwards.'),
+  snapshot: z.boolean().describe('True if the player bought, and can afford, an instant intel snapshot.'),
+  pings: z.array(z.string()).describe('Ids of the units the player pinged and can afford to.'),
+  response: z
+    .string()
+    .describe('What you tell the player: costs, balance, and anything refused. The engine appends what the intel shows.'),
+  mentions: z.array(Mention).describe('Every unit your response refers to, with the turn the information is from.'),
   rulings: z.array(Ruling),
 }).meta({ title: 'GmIntel' });
 export type GmIntel = z.infer<typeof GmIntel>;

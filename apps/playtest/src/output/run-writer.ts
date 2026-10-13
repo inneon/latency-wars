@@ -58,6 +58,10 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: GM resolved the turn (${e.resolution.rulings.length} ruling(s))${
         e.resolution.game_over ? ` — game over: ${e.resolution.outcome}` : ''
       }`;
+    case 'report':
+      return `Turn ${e.turn}: ${e.player} received their report`;
+    case 'correction':
+      return `${e.agent} (${e.label}): reply sent back to be fixed`;
     case 'player_feedback':
       return `${e.player} gave feedback`;
     case 'gm_feedback':
