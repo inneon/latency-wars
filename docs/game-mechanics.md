@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.1)
+# Latency Wars - Game Mechanics (v0.2)
 
 ## 0. About This Document
 
@@ -103,19 +103,34 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   - *Why:* players should be able to count hexes and know at a glance "that's 3 turns stale". Using one measure for everything keeps it legible.
   - *Note:* hex distance overestimates straight-line distance by up to ~15% on diagonals. This is accepted for legibility. It's revisitable if link-length production (length²) feels distorted.
 - **SPACE-04** Hexes do not drift. Orbital drift is cosmetic only (design doc 9.2).
+- **SPACE-05** Hexes are identified by axial coordinates, always written `(q, r)`, in rules, engine data, logs and UI alike. Distance is `(|q1 − q2| + |r1 − r2| + |q1 + r1 − q2 − r2|) / 2`.
 
 ---
 
 ## 5. Light Delay and Information — **Proposed**
 
+### 5.0 Light travel time (read this first)
+- **LIGHT-14** The light travel time over a distance `d` is `L(d) = ceil(d / C)` turns. With `C = 3`: 0 hexes → 0 turns, 1–3 → 1, 4–6 → 2, 7–9 → 3.
+- **LIGHT-15** Everything sent at light speed arrives on a whole turn: **send turn + `L(d)`**, plus one turn if it was sent at the end of a turn rather than the start.
+
+| Message | Sent in | Arrives (sender and receiver stationary) | Usable in |
+|---|---|---|---|
+| Order | Emission (phase 2) of turn `T_s` | Turn `T_s + L(d)` | That turn's Delivery phase |
+| Observation, status report, ack, execution report | Observation (phase 8) of turn `t_o` | Turn `t_o + 1 + L(d)` | That turn's Planning phase |
+
+  - *Why the +1:* observations are made at the very end of a turn, so even local information (`d = 0`) is first usable in the next turn's Planning. Orders go out at the start of a turn, so a local order acts in the turn it's sent.
+  - *Sanity check (`C = 3`):* a fleet 3 hexes from the flagship sees an enemy at the end of turn 2. The player sees it in Planning of turn **4**, not turn 3. An order sent in turn 4 reaches the fleet in turn 5. The fleet's ack, sent at the end of turn 5, is seen in turn 7.
+- **LIGHT-16** Arrivals MUST be computed with `LIGHT-03` (observations) and `ORD-04` (orders), which also handle moving senders and receivers. The table above is the stationary special case, for sanity checks only.
+- **LIGHT-17** Players MUST only ever be told what has arrived. That includes acks and the outcome of their own orders: until the ack arrives, an order's status is "In transit" or "Awaiting ack" (`FB-07`), however certain its delivery seems.
+
 ### 5.1 Observation
 - **LIGHT-01** A player's units act as sensors. At the end of each turn (phase 8), each unit records observations of every object within its sensor range.
 - **LIGHT-02** Every unit also observes itself. This is its status report: position, strength, fuel, active order, doctrine state.
-- **LIGHT-03** An observation of hex `x` at observation turn `t_o` becomes visible to player P in the Planning phase of turn `T` when:
+- **LIGHT-03** An observation of hex `x` at observation turn `t_o` becomes visible to player P in the Planning phase of the first turn `T` where:
 
   `distance(x, F_P(T)) ≤ C × (T − 1 − t_o)`
 
-  where `F_P(T)` is P's flagship position at the start of turn `T`.
+  where `F_P(T)` is P's flagship position at the start of turn `T`. For a stationary flagship this is turn `t_o + 1 + L(d)` (`LIGHT-15`).
   - *Simplification:* delay is measured directly from the observed hex to the flagship, not via the sensor that saw it. Sensors decide **whether** something is seen; distance decides **when**. See open question `OPEN-01`.
 - **LIGHT-04** Every unit's speed MUST be less than `C`. *Why:* this guarantees that once information has reached a flagship or fleet, it can't outrun it. Visibility and delivery then only ever move forward, and are simple to compute.
 - **LIGHT-05** A player's **knowledge state** for turn `T` is the latest visible observation of each object. Players never see anything else, including their own fleets.
@@ -156,17 +171,21 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 | **Fallback** | `HoldAndReport`, `ReturnHome`, `ResumePrevious`, `Doctrine` | `HoldAndReport` |
 
 - **ORD-02** `Attack` targets a **track**. The order carries the track's last known position as the sender knew it.
-- **ORD-03** Every order carries a **send turn** and a **sequence number** (unique per player per turn).
+- **ORD-03** Every order carries a **send turn** and an **order ID**.
+- **ORD-08** A player MAY send at most **one order per fleet per turn**, light or instant. To change their mind, a player sends a new order in a later turn.
+  - *Why:* it removes any question of which of two same-turn orders wins (raised in the first play-test), without needing tie-break rules.
 
 ### 6.2 Transmission and Delivery
 - **ORD-04** A light order sent in turn `T_s` from flagship hex `s` is delivered in the Delivery phase of the first turn `T_d ≥ T_s` where:
 
   `distance(s, U(T_d)) ≤ C × (T_d − T_s)`
 
-  where `U(T_d)` is the recipient's position at the start of `T_d`. The wavefront is centred where it was emitted, so moving the flagship afterwards doesn't change it.
-- **ORD-05** Orders to local fleets (and to the flagship itself) are delivered in the same turn they are sent.
-- **ORD-06** Instant orders (qBits) are delivered in the Emission phase of the turn they are sent, whatever the distance.
-- **ORD-07** A fleet has at most one **active order**. A delivered order replaces the active order only if its (send turn, sequence) is later than the active order's. Otherwise it is discarded and acknowledged as **Stale**.
+  where `U(T_d)` is the recipient's position at the start of `T_d`. The wavefront is centred where it was emitted, so moving the flagship afterwards doesn't change it. For a stationary recipient this is turn `T_s + L(d)` (`LIGHT-15`).
+- **ORD-05** Orders to local fleets are delivered in the same turn they are sent. The flagship's own movement and doctrine changes are orders like any other: always local, so delivered immediately and free.
+- **ORD-06** Instant orders (qBits) are delivered in the Emission phase of the turn they are sent, whatever the distance. The recipient resolves them in that turn's Decision phase (section 7), so they take effect in that same turn's Movement and Combat.
+- **ORD-07** A fleet has at most one **active order**. A delivered order replaces the active order only if its send turn is later than the active order's. Otherwise it is discarded and acknowledged as **Stale**. (`ORD-08` means two orders to one fleet never share a send turn.)
+- **ORD-09** *(Proposed)* An instant order's ack comes back over the same entangled channel: it is visible in the next turn's Planning phase, whatever the distance. Everything else the fleet sends (status reports, execution reports) still travels at light speed.
+  - *Why:* part of what the qBits buy is knowing the order landed. *Open:* whether this should cost extra.
   - *Why:* if the flagship moves, an order sent later from closer can arrive before an earlier one. Instant orders overtake light orders too. Ordering by send time keeps the player's latest intent in charge.
 
 ---
@@ -194,8 +213,13 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
   - If the target is within the fleet's sensor range, it pursues.
   - Otherwise it moves to the freshest last known position available (the order's, or its own if fresher).
 - **RES-05** The fleet pursues within the leash (range from the last known position, and duration). If the target isn't reacquired by the time it reaches the last known position, or the leash runs out, the fleet carries out the fallback and reports **Target lost**.
+- **RES-06** If the fleet observes its target destroyed (by itself or anyone else), the order is **Completed** and the fleet carries out the fallback.
+- *Known gap:* with simultaneous movement, a fleet pursuing a *moving* target moves to where the target was, and the target moves away. In the first play-test, attacks only connected against stationary units. Making pursuit work needs an interception rule (`OPEN-06`).
 
-### 7.3 Outcomes by situation
+### 7.3 Location objectives
+- **RES-07** An objective tied to a hex (`MoveTo`, `Defend`, `Patrol`, `Build`) has the fleet move there at full speed by the shortest path until it is in place. Multi-turn work (such as a build countdown) starts with the first Economy phase the fleet spends in place.
+
+### 7.4 Outcomes by situation
 
 | Situation at delivery | What the fleet does | What the player learns |
 |---|---|---|
@@ -214,7 +238,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 - **FB-01** Every unit emits a **status report** every turn (`LIGHT-02`).
 - **FB-02** On delivery, a fleet emits an **ack** of one of these types: `Accepted`, `AcceptedWithNote`, `Queried(reason)`, `Rejected(reason)`, `Stale`.
 - **FB-03** During and after execution, a fleet emits **execution reports**: `Engaged(result)`, `Diverted(reason)`, `TargetLost`, `Completed`, `Failed(reason)`.
-- **FB-04** All fleet messages travel at light speed and become visible under `LIGHT-03`.
+- **FB-04** All fleet messages travel at light speed and become visible under `LIGHT-03`. The one exception is the ack for an instant order (`ORD-09`).
 
 ### 8.2 Silence
 - **FB-05** If a unit's status report for a turn doesn't become visible when it should, the unit is shown as **Silent since turn t**.
@@ -299,6 +323,7 @@ From observation to seeing the response takes 11 turns: roughly `3d/C + 2`.
 
 ## 11. Placeholders (to be specified)
 - **Combat resolution:** happens in hexes where opposing units end movement. Strength model, damage and retreat are TBD (design doc open question 10).
+  - **COMBAT-01** *(Proposed)* Every unit in a contested hex fights, whatever its order. Commitment (`Discretion` / `AtAllCosts`) and the objective decide what a fleet *does*: where it moves, whether it starts a fight. They never decide whether it fights back.
 - **Economy phase:** the order of production, construction and upkeep.
 - **Node construction rules** (design doc open question 7).
 
@@ -310,11 +335,11 @@ From observation to seeing the response takes 11 turns: roughly `3d/C + 2`.
 |---|---|---|
 | `OPEN-01` | Should observation delay follow the path via the sensor (object → sensor → flagship) instead of direct distance? | The path is more realistic but makes forward sensors less valuable and is harder to read. Start direct. |
 | `OPEN-02` | Track correlation: can contacts be misidentified, merged or faked (decoys)? | A rich source of deception. Adds UI and AI complexity. |
-| `OPEN-03` | **Does transmitting reveal you?** If light orders and status reports can be detected, every order you send gives away your flagship's position. | Potentially a core tension: talking reveals you, silence blinds you. It links to interception (design doc 7.2) and the flagship hunt. |
+| `OPEN-03` | **Does transmitting reveal you?** If light orders and status reports can be detected, every order you send gives away your flagship's position. | Potentially a core tension: talking reveals you, silence blinds you. It links to interception (design doc 7.2) and the flagship hunt. In the first play-test both flagships advanced every turn with nothing pushing back; this would be the counterweight. |
 | `OPEN-04` | Jamming: what does it block (delivery, reports, both)? What area does it cover, and what does it cost? | |
 | `OPEN-05` | Can units relay orders or extend sensor coverage (comms relays)? | |
 | `QBIT-05` | Instant order cost: flat, or scaled by distance? | A flat cost makes far-off instant orders the best value. A scaled cost makes local light orders and instant orders closer in value. |
-| `OPEN-06` | Do units passing through each other in the same turn fight (interception mid-move)? | Needed for combat. |
+| `OPEN-06` | **Interception.** How does a fleet catch a moving target? Options: units whose paths cross in the same turn fight; zones of control (moving next to an enemy stops you); or attack moves resolve after other moves. | **Priority.** Without one of these, pursuit never connects under simultaneous movement (see `RES-06` note). |
 | `OPEN-07` | Flagship movement: any limits beyond speed (fuel, cooldown, signature when moving)? | Design doc open question 5. |
 | `OPEN-08` | Does hex distance distort link-length production enough to matter? | See `SPACE-03`. |
 
