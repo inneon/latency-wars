@@ -14,6 +14,10 @@ Usage: pnpm playtest --scenario <name|dir> [options]
                      clipboard    You copy each prompt into a chat window and the reply back
   --claude-bin     Path to the claude CLI (claude-code backend; default: found automatically)
   --paste-limit    Most characters your chat app accepts per message (clipboard backend; default: no limit)
+  --remote         Play a seat yourself in the browser: a player id, or gm. Repeat for more seats.
+  --port           Port for remote seats (default: 4400)
+  --web-url        Use a web app served elsewhere, e.g. http://localhost:4200 from \`nx serve web\`
+                   (default: the built app in dist/apps/web, served on --port)
   --model          Model for every agent                                         (default: claude-opus-5-5)
   --gm-model       Model for the GM                                              (default: --model)
   --player-model   Model for the players                                         (default: --model)
@@ -30,6 +34,9 @@ export type CliArgs =
       backend: (typeof BACKENDS)[number];
       claudeBin?: string;
       pasteLimit?: number;
+      remote: string[];
+      port: number;
+      webUrl?: string;
       gm: { model: string; effort: Effort };
       players: { model: string; effort: Effort };
       out?: string;
@@ -45,6 +52,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
       backend: { type: 'string', default: 'api' },
       'claude-bin': { type: 'string' },
       'paste-limit': { type: 'string' },
+      remote: { type: 'string', multiple: true },
+      port: { type: 'string' },
+      'web-url': { type: 'string' },
       model: { type: 'string', default: 'claude-opus-5-5' },
       'gm-model': { type: 'string' },
       'player-model': { type: 'string' },
@@ -70,6 +80,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
     backend,
     claudeBin: values['claude-bin'],
     pasteLimit,
+    remote: values.remote ?? [],
+    port: positiveInt('--port', values.port) ?? 4400,
+    webUrl: values['web-url'],
     gm: { model: values['gm-model'] ?? values.model, effort: effort(values['gm-effort'], 'high') },
     players: { model: values['player-model'] ?? values.model, effort: effort(values['player-effort'], 'medium') },
     out: values.out,

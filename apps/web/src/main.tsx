@@ -1,6 +1,12 @@
-import { StrictMode } from 'react';
+import { lazy, StrictMode, Suspense } from 'react';
 import * as ReactDOM from 'react-dom/client';
 import App from './app/app';
+
+// The play-test seat page, loaded only on its own route. The path matches
+// PLAY_PATH in @latency-wars/playtest-contracts; importing it here would pull
+// that lib's schemas into the home page's bundle.
+const PLAY_PATH = '/play';
+const PlayPage = lazy(() => import('./play/play-page'));
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
@@ -8,6 +14,12 @@ const root = ReactDOM.createRoot(
 
 root.render(
   <StrictMode>
-    <App/>
+    {window.location.pathname.startsWith(PLAY_PATH) ? (
+      <Suspense fallback={null}>
+        <PlayPage />
+      </Suspense>
+    ) : (
+      <App />
+    )}
   </StrictMode>
 );

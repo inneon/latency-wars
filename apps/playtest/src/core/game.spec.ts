@@ -2,7 +2,7 @@ import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { Agent, JsonSchema } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
-import type { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '../types/schemas';
+import type { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { runPlaytest } from './game';
 
 class ScriptedAgent implements Agent {

@@ -1,20 +1,9 @@
+import type { JsonSchema, SystemPrompt } from '@latency-wars/playtest-contracts';
+
+export type { AgentDocument, JsonSchema, SystemPrompt } from '@latency-wars/playtest-contracts';
+
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
-
-/** Reference material for an agent. Each backend decides how to deliver it. */
-export interface AgentDocument {
-  /** A file name, which the instructions use to refer to the document. */
-  name: string;
-  content: string;
-  /** Identical for every agent in a run (the rules), so it can be cached once and shared. Listed first. */
-  shared: boolean;
-}
-
-/** An agent's standing context: what to read, and how to behave. */
-export interface SystemPrompt {
-  documents: AgentDocument[];
-  instructions: string;
-}
 
 /** How to set up one model-backed agent. */
 export interface AgentConfig {
@@ -23,8 +12,6 @@ export interface AgentConfig {
   effort: Effort;
   system: SystemPrompt;
 }
-
-export type JsonSchema = { [key: string]: unknown };
 
 /**
  * A participant with its own private, persistent conversation. Agents never

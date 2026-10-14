@@ -20,6 +20,7 @@ apps/
   playtest/ CLI that play-tests the rules with LLM agents (players + GM). See its README.
 libs/
   shared/contracts/   Wire types shared across the boundary (HealthResponse, paths).
+  playtest/contracts/ Play-test response schemas and the remote-seat protocol, shared by apps/playtest and apps/web.
 ```
 
 ## Architecture convention (ports & adapters)

@@ -1,6 +1,6 @@
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { Scenario } from '../types/scenario';
-import type { UnitState } from '../types/schemas';
+import type { UnitState } from '@latency-wars/playtest-contracts';
 import { checkMentions, intelObservations, knowledge, readUnits, recordTurn, renderSensorPicture, startEngine } from './engine';
 
 let scenario: Scenario;

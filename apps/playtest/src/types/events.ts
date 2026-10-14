@@ -1,4 +1,4 @@
-import type { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from './schemas';
+import type { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 
 /** Everything that happens in a play-test, in order. The outputs are all derived from these. */
 export type PlaytestEvent =

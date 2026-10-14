@@ -12,11 +12,12 @@ async function main() {
   }
 
   const output = new RunWriter(config);
-  const backend = createAgents(config);
+  const backend = await createAgents(config);
+  output.seats(backend.seatUrls);
   try {
     await runPlaytest({ scenario: config.scenario, agents: backend.agents, maxRounds: config.maxRounds, emit: output.event });
   } finally {
-    backend.close();
+    await backend.close();
     output.finish(backend.usage());
   }
 }

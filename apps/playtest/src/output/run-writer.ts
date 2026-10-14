@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { PlaytestEvent } from '../types/events';
@@ -9,20 +10,51 @@ import { renderReport, renderTranscript } from './render';
 export class RunWriter {
   private readonly events: PlaytestEvent[] = [];
   private readonly eventsFile: string;
+  /** Someone is playing a seat, so progress must not give anything away. */
+  private readonly quiet: boolean;
+  private lastTurnShown = 0;
 
   constructor(private readonly config: RunConfig) {
     mkdirSync(config.outDir, { recursive: true });
     this.eventsFile = path.join(config.outDir, 'events.jsonl');
+    this.quiet = (config.remote?.seats.length ?? 0) > 0;
     const { scenario, maxRounds } = config;
     console.log(`Play-testing "${scenario.title}" for up to ${maxRounds} turns → ${this.relative(config.outDir)}`);
+    if (this.quiet) {
+      console.log('Someone is playing a seat, so progress here is kept to turn numbers. Don\'t open the run folder until the game ends.');
+      if (config.backend.kind === 'clipboard') {
+        console.log('Note: with the clipboard backend you relay the other chats yourself, so you will see their prompts.');
+      }
+    }
+  }
+
+  /** Prints each remote seat's URL, and opens it in the browser. */
+  seats(urls: ReadonlyMap<string, string>): void {
+    for (const [seat, url] of urls) {
+      console.log(`\nSeat ${seat}: ${url}`);
+      openInBrowser(url);
+    }
+    if (urls.size > 0) console.log('');
   }
 
   /** Called for each event as it happens, so a failed run still leaves its log behind. */
   readonly event = (e: PlaytestEvent): void => {
     this.events.push(e);
     appendFileSync(this.eventsFile, JSON.stringify(e) + '\n');
-    console.log(`  ${describe(e)}`);
+    const line = this.quiet ? this.describeQuietly(e) : describe(e);
+    if (line) console.log(`  ${line}`);
   };
+
+  /** Turn numbers and milestones only: nothing about who did what. */
+  private describeQuietly(e: PlaytestEvent): string | null {
+    if (e.type === 'report' && e.turn !== this.lastTurnShown) {
+      this.lastTurnShown = e.turn;
+      return `Turn ${e.turn}`;
+    }
+    if (e.type === 'gm_feedback') return 'Debrief';
+    if (e.type === 'synthesis') return 'Report written';
+    return null;
+  }
 
   /** Writes the Markdown outputs from whatever events arrived, complete or not. */
   finish(usage: AgentUsage[]): void {
@@ -72,5 +104,15 @@ function describe(e: PlaytestEvent): string {
       return 'Analyst wrote the report';
     case 'warning':
       return `WARNING: ${e.message}`;
+  }
+}
+
+/** Best effort: if it fails, the URL is printed anyway. */
+function openInBrowser(url: string): void {
+  const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  try {
+    spawn(command, [url], { stdio: 'ignore', detached: true }).on('error', () => undefined).unref();
+  } catch {
+    // Nothing to do: the URL is on screen.
   }
 }

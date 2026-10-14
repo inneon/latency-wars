@@ -7,18 +7,24 @@ import type { AgentUsage } from '../types/usage';
 import { ClaudeApiAgent } from './claude-api-agent';
 import { ClaudeCodeAgent } from './claude-code-agent';
 import { ClipboardAgent, ClipboardRelay } from './clipboard-agent';
+import { RemoteAgent, RemoteSeatServer } from './remote-agent';
 import { UsageLedger } from './usage-ledger';
 
 export interface AgentBackend {
   agents: PlaytestAgents;
+  /** The URL each remote seat's player opens, by seat id. */
+  seatUrls: Map<string, string>;
   usage(): AgentUsage[];
-  /** Releases anything the backend holds open, such as the terminal. */
-  close(): void;
+  /** Releases anything the backend holds open, such as the terminal or the seat server. */
+  close(): Promise<void>;
 }
 
-/** Builds one agent per participant on the configured backend. */
-export function createAgents(config: RunConfig): AgentBackend {
-  const { scenario, backend } = config;
+/**
+ * Builds one agent per participant on the configured backend, except remote
+ * seats, which go to whoever opens their URL.
+ */
+export async function createAgents(config: RunConfig): Promise<AgentBackend> {
+  const { scenario, backend, remote } = config;
   let make: (agent: AgentConfig, name: string) => Agent;
   let ledger: UsageLedger | null = null;
   let close: () => void = () => undefined;
@@ -44,7 +50,21 @@ export function createAgents(config: RunConfig): AgentBackend {
     }
   }
 
+  const seatUrls = new Map<string, string>();
+  let seatServer: RemoteSeatServer | null = null;
+  if (remote) {
+    const server = (seatServer = new RemoteSeatServer(remote.webUrl ? undefined : remote.webRoot));
+    await server.listen(remote.port);
+    const backendMake = make;
+    make = (agent, name) => {
+      if (!remote.seats.includes(agent.id)) return backendMake(agent, name);
+      seatUrls.set(agent.id, server.addSeat(agent.id, name, agent.system, remote.webUrl));
+      return new RemoteAgent(agent.id, server);
+    };
+  }
+
   return {
+    seatUrls,
     agents: {
       gm: make({ id: 'gm', ...config.gm, system: prompts.gmSystem(scenario) }, 'GM'),
       players: new Map(
@@ -59,6 +79,9 @@ export function createAgents(config: RunConfig): AgentBackend {
       ),
     },
     usage: () => ledger?.summary() ?? [],
-    close,
+    close: async () => {
+      close();
+      await seatServer?.close();
+    },
   };
 }

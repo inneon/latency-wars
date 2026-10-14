@@ -1,7 +1,7 @@
 import type { PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
-import { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '../types/schemas';
+import { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { askFor } from './ask';
 import {
   checkMentions,

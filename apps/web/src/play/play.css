@@ -1,0 +1,30 @@
+.play {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+.play h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+.play-status { margin-top: 0; opacity: 0.75; }
+.play-error { color: #dc2626; }
+.play details { margin: 0.5rem 0; }
+.play summary { cursor: pointer; font-weight: 600; }
+.play-briefing, .play-history details { border: 1px solid rgb(127 127 127 / 0.35); border-radius: 6px; padding: 0.5rem 0.75rem; }
+.play-current { margin-top: 1.5rem; border-top: 2px solid currentColor; }
+.play-prompt { background: rgb(127 127 127 / 0.12); border-radius: 6px; padding: 0.25rem 1rem; }
+.play table { border-collapse: collapse; }
+.play th, .play td { border: 1px solid rgb(127 127 127 / 0.4); padding: 0.2rem 0.5rem; }
+.play pre { background: rgb(127 127 127 / 0.12); padding: 0.5rem; overflow-x: auto; }
+
+.schema-form { margin-top: 1rem; }
+.schema-form fieldset { border: 1px solid rgb(127 127 127 / 0.4); border-radius: 6px; margin: 0.75rem 0; }
+.schema-form legend { font-weight: 600; }
+.field { display: flex; flex-direction: column; gap: 0.2rem; margin: 0.6rem 0; }
+.field label { font-weight: 600; }
+.field-inline { flex-direction: row; align-items: center; gap: 0.5rem; }
+.field-help { margin: 0; font-size: 0.85rem; opacity: 0.7; }
+.field textarea, .field input, .field select { font: inherit; padding: 0.3rem; }
+.array-item { border-left: 3px solid rgb(127 127 127 / 0.35); padding-left: 0.75rem; margin: 0.5rem 0; }
+.schema-form button { font: inherit; padding: 0.35rem 0.9rem; margin-top: 0.4rem; cursor: pointer; }
+.schema-form button.secondary { font-size: 0.85rem; padding: 0.2rem 0.6rem; }

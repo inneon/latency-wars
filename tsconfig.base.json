@@ -26,6 +26,9 @@
       ],
       "@latency-wars/visibility": [
         "./libs/core/visibility/src/index.ts"
+      ],
+      "@latency-wars/playtest-contracts": [
+        "./libs/playtest/contracts/src/index.ts"
       ]
     },
     "noUncheckedIndexedAccess": true,

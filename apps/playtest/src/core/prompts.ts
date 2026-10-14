@@ -1,7 +1,7 @@
 import { formatHex } from '@latency-wars/domain';
 import type { AgentDocument, SystemPrompt } from '../types/agent';
 import type { Scenario, ScenarioPlayer } from '../types/scenario';
-import type { GmResolution, PlayerTurn } from '../types/schemas';
+import type { GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 
 // Rules documents are byte-identical for every agent, so they're marked shared and listed first.
 const ruleDocuments = (scenario: Scenario): AgentDocument[] =>

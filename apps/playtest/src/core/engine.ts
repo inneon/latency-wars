@@ -11,7 +11,7 @@ import {
   type VisibilityLog,
 } from '@latency-wars/visibility';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
-import type { Mention, UnitState } from '../types/schemas';
+import type { Mention, UnitState } from '@latency-wars/playtest-contracts';
 
 /*
  * The engine side of the strangler fig: the facts code owns, so the GM doesn't

@@ -21,6 +21,24 @@ pnpm nx run playtest:run --scenario=the-hunt               # same thing via Nx
 | `events.jsonl` | Raw structured events, written as they happen. A crashed run still leaves this behind. |
 | `relay/` | Clipboard backend only: every prompt and reply you relayed, and `attachments/<chat>/`, the files to attach to each chat. |
 
+## Playing a seat yourself
+
+`--remote <seat>` hands a seat (a player id, or `gm`) to you in the browser instead of a model:
+
+```sh
+pnpm nx build web                                              # once, and after changing the web app
+pnpm playtest --scenario the-hunt --backend claude-code --remote blue
+```
+
+The play-test prints a link for the seat and opens it. The page (`apps/web`, route `/play`) shows your briefing and documents, everything you've been told so far, and the current prompt with a form built from its response schema. Your reply goes through the same checks as a model's, so a malformed or illegal order comes back with the same correction a model would get. If a reply was sent back to be fixed, the form starts from what you sent.
+
+- **Isolation is enforced.** Each seat has its own secret token, so its page can only see its own prompts, and while a seat is in play the terminal shows only turn numbers. Don't open the run folder until the game ends: `events.jsonl` has everything.
+- **The other seats need an automated backend** (`api` or `claude-code`). With `clipboard` you'd be relaying the GM's prompts, which contain the true state.
+- **More than one seat:** repeat `--remote`. Two people on two browsers can play each other, with a model as GM.
+- **Developing the page:** run `pnpm nx serve web` and pass `--web-url http://localhost:4200`, and the link points at the dev server instead. `nx run playtest:run` builds the web app first; `pnpm playtest` doesn't, so build it yourself.
+
+How it works: `llm/remote-agent.ts` implements `Agent` by handing each prompt to a small HTTP server in the play-test process (`RemoteSeatServer`), which also serves the built web app. The protocol (`SeatState`, `RemoteRequest`, `RemoteReply`, server-sent events for new prompts) and the response schemas live in `libs/playtest/contracts`, shared with the web app. Anything that speaks the protocol can take a seat, not just the web page.
+
 ## Backends
 
 Every backend implements the same `Agent` interface, so the game plays the same on each. Each agent's standing context is a set of named documents (the rule files, `scenario.md`, and a private briefing) plus instructions that refer to them by name; each backend decides how to deliver the documents. The API and Claude Code put them in the system prompt; the clipboard backend has you attach them as files. Only where the replies come from changes. Whatever the backend, the core validates every reply and asks for up to two corrections.
@@ -67,10 +85,11 @@ Design points:
 
 ```
 src/
-  types/    Shared shapes, no logic: scenario format, agent output schemas, events, run config, usage
+  types/    Shared shapes, no logic: scenario format, events, run config, usage. The response schemas and
+            remote-seat protocol are in libs/playtest/contracts, because the web app shares them
   input/    Reads the outside world (argv, scenario files, clock) and validates it → RunConfig
   core/     The game loop, prompt text, askFor (reply validation) and the engine. No file, console or network access
-  llm/      The Agent implementations (API, Claude Code CLI, clipboard) and usage tracking
+  llm/      The Agent implementations (API, Claude Code CLI, clipboard, remote seat) and usage tracking
   output/   Pure Markdown renderers, and RunWriter, which writes them and logs progress
 ```
 

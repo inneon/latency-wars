@@ -1,6 +1,6 @@
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
-import type { Feedback, GmFeedback, GmResolution, PlayerTurn, Ruling } from '../types/schemas';
+import type { Feedback, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
 import type { AgentUsage } from '../types/usage';
 
 // Pure formatters: events in, Markdown out. Writing the files is run-writer's job.

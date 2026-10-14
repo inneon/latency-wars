@@ -9,6 +9,14 @@
   ],
   "targets": {
     "run": {
+      "dependsOn": [
+        {
+          "projects": [
+            "web"
+          ],
+          "target": "build"
+        }
+      ],
       "executor": "nx:run-commands",
       "options": {
         "command": "tsx --tsconfig apps/playtest/tsconfig.app.json apps/playtest/src/main.ts",
