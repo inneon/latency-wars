@@ -44,6 +44,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   const players = scenario.players.map((p) => p.id);
   const corrections = (agent: string, label: string) => ({
     onCorrection: (problems: string) => record({ type: 'correction', agent, label, problems }),
+    onUnresolved: (problems: string) => record({ type: 'unresolved', agent, label, problems }),
   });
 
   // The engine owns positions and visibility. Every GM resolution is checked
@@ -166,8 +167,8 @@ function assessResolution(
 ): { errors: string[]; engine: EngineState } {
   const players = scenario.players.map((p) => p.id);
   const { units, errors } = readUnits(engine.units, resolution.units, players, { exact: turn === 0 });
-  if (errors.length) return { errors, engine };
-
+  // Recorded even when there are errors: if the GM's version is accepted
+  // anyway, the game continues from it. Setup always starts from the scenario.
   const next = turn === 0 ? engine : recordTurn(engine, turn, units);
   for (const r of resolution.player_reports) {
     if (!players.includes(r.player_id)) errors.push(`There is a report for ${r.player_id}, who isn't a player.`);
@@ -199,6 +200,9 @@ function synthesisMaterial(events: PlaytestEvent[]): string {
   const corrections: string[] = [];
   for (const e of events) {
     if (e.type === 'correction') corrections.push(`- ${e.agent} (${e.label}):\n${e.problems.replace(/^/gm, '  ')}`);
+    if (e.type === 'unresolved') {
+      corrections.push(`- ${e.agent} (${e.label}), ACCEPTED UNFIXED after the last correction:\n${e.problems.replace(/^/gm, '  ')}`);
+    }
     if (e.type === 'setup' || e.type === 'gm_resolution' || e.type === 'gm_intel') {
       const turn = e.type === 'setup' ? 0 : e.turn;
       const list = e.type === 'gm_intel' ? e.intel.rulings : e.resolution.rulings;

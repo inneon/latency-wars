@@ -58,7 +58,7 @@ const turn = (intel: string[] = []): PlayerTurn => ({
   rules_confusions: ['what is age?'],
 });
 
-function setup(scenario: Scenario, gameOverOnTurn: number, { leakOnTurn = 0 } = {}) {
+function setup(scenario: Scenario, gameOverOnTurn: number, { leakOnTurn = 0, stubborn = false } = {}) {
   const gm = new ScriptedAgent('gm', (label) => {
     if (label === 'setup') return resolution(scenario, 0);
     if (label === 'debrief') return gmFeedback;
@@ -67,7 +67,9 @@ function setup(scenario: Scenario, gameOverOnTurn: number, { leakOnTurn = 0 } = 
     }
     const n = Number(label.split(' ')[1]);
     // On the leak turn, the first resolution tells Red where Blue's flagship is.
-    const leak = n === leakOnTurn && !label.includes('correction') ? [{ unit_id: 'blue-flagship', observed_turn: n }] : [];
+    // A stubborn GM keeps leaking through every correction.
+    const leaking = n === leakOnTurn && (stubborn || !label.includes('correction'));
+    const leak = leaking ? [{ unit_id: 'blue-flagship', observed_turn: n }] : [];
     return resolution(scenario, n, n === gameOverOnTurn, leak);
   });
   const player = (id: string) =>
@@ -154,5 +156,18 @@ describe('runPlaytest', () => {
     ]);
     expect(gm.prompts.map((p) => p.label)).toContain('turn 1 resolve (correction 1)');
     expect(red.prompts.map((p) => p.prompt).join('\n')).not.toContain('blue-flagship');
+  });
+
+  it('keeps playing when the GM never fixes a problem, and records it as unresolved', async () => {
+    const { agents } = setup(scenario, 99, { leakOnTurn: 1, stubborn: true });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents, maxRounds: 3, emit: (e) => events.push(e) });
+
+    expect(events.filter((e) => e.type === 'correction')).toHaveLength(2);
+    expect(events.filter((e) => e.type === 'unresolved')).toEqual([
+      expect.objectContaining({ agent: 'gm', label: 'turn 1 resolve', problems: expect.stringContaining('blue-flagship') }),
+    ]);
+    expect(events.filter((e) => e.type === 'gm_resolution').map((e) => e.turn)).toEqual([1, 2, 3]);
+    expect(events.at(-1)).toEqual({ type: 'synthesis', report: 'REPORT' });
   });
 });

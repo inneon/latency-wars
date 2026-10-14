@@ -61,7 +61,10 @@ export function readUnits(
   const nodeSensorRange = previous.find((u) => u.class === 'node')?.sensorRange ?? 0;
 
   for (const r of reported) {
-    if (seen.has(r.id)) errors.push(`Unit ${r.id} is listed twice.`);
+    if (seen.has(r.id)) {
+      errors.push(`Unit ${r.id} is listed twice.`);
+      continue;
+    }
     seen.add(r.id);
     const hex = { q: r.q, r: r.r };
     const before = previous.find((u) => u.id === r.id);

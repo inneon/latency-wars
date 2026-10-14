@@ -56,7 +56,7 @@ describe('askFor', () => {
 
   it('gives up after the allowed corrections', async () => {
     const agent = new CannedAgent(['Four.', 'Four!', 'FOUR.']);
-    await expect(askFor(agent, 'q', 'What is 2 + 2?', Schema)).rejects.toThrow('red (q): reply still failed after 2 corrections');
+    await expect(askFor(agent, 'q', 'What is 2 + 2?', Schema)).rejects.toThrow('red (q): reply still malformed after 2 corrections');
     expect(agent.sent).toHaveLength(3);
   });
 
@@ -71,5 +71,24 @@ describe('askFor', () => {
     expect(agent.sent[1]?.prompt).toContain('- 5 is not 2 + 2');
     expect(agent.sent[1]?.prompt).toContain('checks against the game state');
     expect(corrections).toEqual(['- 5 is not 2 + 2']);
+  });
+
+  it('accepts the last well-formed reply when only the check still fails, and reports it', async () => {
+    const agent = new CannedAgent(['{"answer": 5}', '{"answer": 6}', '{"answer": 7}']);
+    const unresolved: string[] = [];
+    const value = await askFor(agent, 'q', 'What is 2 + 2?', Schema, {
+      check: (v) => (v.answer === 4 ? [] : [`${v.answer} is not 2 + 2`]),
+      onUnresolved: (problems) => unresolved.push(problems),
+    });
+    expect(value).toEqual({ answer: 7 });
+    expect(agent.sent).toHaveLength(3);
+    expect(unresolved).toEqual(['- 7 is not 2 + 2']);
+  });
+
+  it('still throws when the last reply is malformed, even if earlier ones only failed the check', async () => {
+    const agent = new CannedAgent(['{"answer": 5}', '{"answer": 6}', 'Four.']);
+    await expect(
+      askFor(agent, 'q', 'What is 2 + 2?', Schema, { check: (v) => (v.answer === 4 ? [] : ['wrong']) }),
+    ).rejects.toThrow('reply still malformed');
   });
 });

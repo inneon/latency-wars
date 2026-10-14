@@ -10,6 +10,8 @@ export type PlaytestEvent =
   | { type: 'report'; turn: number; player: string; text: string }
   /** A reply sent back to be fixed, with the problems found. */
   | { type: 'correction'; agent: string; label: string; problems: string }
+  /** A reply accepted with its problems, because the corrections ran out. The game continues as it says. */
+  | { type: 'unresolved'; agent: string; label: string; problems: string }
   | { type: 'player_feedback'; player: string; feedback: Feedback }
   | { type: 'gm_feedback'; feedback: GmFeedback }
   | { type: 'synthesis'; report: string }

@@ -33,4 +33,7 @@ These are stopgaps for things the rules leave as placeholders. They are not part
 ## Victory
 
 - If your flagship is destroyed, you lose immediately.
-- Otherwise, after the final turn, the player with the highest qBit production per turn wins. Ties are broken by banked qBits.
+- Otherwise, after the final turn, the player with the highest qBit production per turn wins. Ties are broken by the number 
+of surviving fleets, counting the flagship but not nodes; most 
+wins. If still tied, the player whose flagship is closer to 
+the star at (0, 0) wins. Otherwise it's a draw.

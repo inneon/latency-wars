@@ -23,7 +23,7 @@ pnpm nx run playtest:run --scenario=the-hunt               # same thing via Nx
 
 ## Backends
 
-Every backend implements the same `Agent` interface, so the game plays the same on each. Each agent's standing context is a set of named documents (the rule files, `scenario.md`, and a private briefing) plus instructions that refer to them by name; each backend decides how to deliver the documents. The API and Claude Code put them in the system prompt; the clipboard backend has you attach them as files. Only where the replies come from changes. Whatever the backend, the core validates every reply and asks for up to two corrections before failing the run.
+Every backend implements the same `Agent` interface, so the game plays the same on each. Each agent's standing context is a set of named documents (the rule files, `scenario.md`, and a private briefing) plus instructions that refer to them by name; each backend decides how to deliver the documents. The API and Claude Code put them in the system prompt; the clipboard backend has you attach them as files. Only where the replies come from changes. Whatever the backend, the core validates every reply and asks for up to two corrections.
 
 | `--backend` | Replies come from | Structured output | Notes |
 |---|---|---|---|
@@ -76,7 +76,7 @@ src/
 
 `core/` doesn't call the network itself. It talks to whatever `Agent` it's given: one of the `llm/` backends in a real run, and a scripted fake in tests.
 
-An `Agent` is a transport: `send(label, prompt, responseSchema?)` returns the reply as a string. When a JSON Schema is passed, the agent asks for a matching reply in whatever way its transport supports, but doesn't check it. `core/ask.ts` owns the contract. It turns the Zod schemas in `types/schemas.ts` into JSON Schema, validates each reply, runs any game-state check the caller passes (such as the engine's leak check), and sends a failing reply back to the same agent to be fixed (up to two times). Every correction is logged, and the report lists them: GM corrections show where the rules are hard to apply. So Zod stays in `types/` and `core/`, and a new backend only has to move text.
+An `Agent` is a transport: `send(label, prompt, responseSchema?)` returns the reply as a string. When a JSON Schema is passed, the agent asks for a matching reply in whatever way its transport supports, but doesn't check it. `core/ask.ts` owns the contract. It turns the Zod schemas in `types/schemas.ts` into JSON Schema, validates each reply, runs any game-state check the caller passes (such as the engine's leak check), and sends a failing reply back to the same agent to be fixed (up to two times). If the corrections run out, a reply that is still malformed ends the run, but a well-formed one that still fails a game-state check is accepted, so one stubborn mistake doesn't throw away a long game. Every correction is logged, and `report.md` lists them, with any accepted-but-unfixed replies at the top: GM corrections show where the rules are hard to apply. So Zod stays in `types/` and `core/`, and a new backend only has to move text.
 
 Events stream to the output layer as they happen, rather than only at the end, so a run that crashes partway still leaves `events.jsonl` and a partial transcript.
 

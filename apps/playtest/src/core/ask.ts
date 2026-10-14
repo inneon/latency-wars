@@ -9,28 +9,40 @@ export interface AskOptions<T> {
   check?: (value: T) => string[];
   /** Called with the problems each time a reply is sent back to be fixed. */
   onCorrection?: (problems: string) => void;
+  /** Called when the last reply is accepted despite failing `check`. */
+  onUnresolved?: (problems: string) => void;
 }
+
+type Validated<T> =
+  | { ok: true; value: T }
+  /** `value` is set when the reply was well formed and only failed `check`. */
+  | { ok: false; error: string; prompt: string; value?: T };
 
 /**
  * Asks an agent for a reply matching `schema`, and validates it: first its
  * format, then `check`. A reply that fails either goes back to the same agent
  * with the problems, in the same conversation.
+ *
+ * When the corrections run out, the two failures part ways. A malformed reply
+ * leaves nothing to go on, so it throws. A well-formed reply that still fails
+ * `check` is accepted, and reported through `onUnresolved`, so one stubborn
+ * mistake doesn't end the run.
  */
 export async function askFor<S extends z.ZodType>(
   agent: Agent,
   label: string,
   prompt: string,
   schema: S,
-  { check, onCorrection }: AskOptions<z.infer<S>> = {},
+  { check, onCorrection, onUnresolved }: AskOptions<z.infer<S>> = {},
 ): Promise<z.infer<S>> {
   const jsonSchema = z.toJSONSchema(schema) as JsonSchema;
-  const validate = (reply: string): { ok: true; value: z.infer<S> } | { ok: false; error: string; prompt: string } => {
+  const validate = (reply: string): Validated<z.infer<S>> => {
     const parsed = parseReply(reply, schema);
     if (!parsed.ok) return { ...parsed, prompt: correctionPrompt(parsed.error) };
     const problems = check?.(parsed.value) ?? [];
     if (problems.length === 0) return parsed;
     const error = problems.map((p) => `- ${p}`).join('\n');
-    return { ok: false, error, prompt: checkCorrectionPrompt(error) };
+    return { ok: false, error, prompt: checkCorrectionPrompt(error), value: parsed.value };
   };
 
   let result = validate(await agent.send(label, prompt, jsonSchema));
@@ -38,7 +50,11 @@ export async function askFor<S extends z.ZodType>(
     onCorrection?.(result.error);
     result = validate(await agent.send(`${label} (correction ${attempt})`, result.prompt, jsonSchema));
   }
-  if (!result.ok) throw new Error(`${agent.id} (${label}): reply still failed after ${MAX_CORRECTIONS} corrections:\n${result.error}`);
+  if (result.ok) return result.value;
+  if (result.value === undefined) {
+    throw new Error(`${agent.id} (${label}): reply still malformed after ${MAX_CORRECTIONS} corrections:\n${result.error}`);
+  }
+  onUnresolved?.(result.error);
   return result.value;
 }
 

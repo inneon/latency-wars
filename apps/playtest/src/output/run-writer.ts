@@ -62,6 +62,8 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: ${e.player} received their report`;
     case 'correction':
       return `${e.agent} (${e.label}): reply sent back to be fixed`;
+    case 'unresolved':
+      return `WARNING: ${e.agent} (${e.label}): accepted with unresolved problems after the last correction`;
     case 'player_feedback':
       return `${e.player} gave feedback`;
     case 'gm_feedback':

@@ -69,6 +69,10 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
         );
       }
       if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(e.resolution));
+    } else if (e.type === 'unresolved') {
+      out.push(
+        `> ⚠️ **${e.agent}** (${e.label}): **accepted with these problems unfixed**, after the last correction. The game continued as the reply says.\n>\n${e.problems.replace(/^/gm, '> ')}`,
+      );
     } else if (e.type === 'correction') {
       out.push(`> 🔁 **${e.agent}** (${e.label}): reply sent back to be fixed.\n>\n${e.problems.replace(/^/gm, '> ')}`);
     } else if (e.type === 'warning') {
@@ -121,6 +125,14 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
         : [],
   );
   const gaps = allRulings.filter((r) => r.basis !== 'explicit');
+  const unresolved = events.filter((e) => e.type === 'unresolved');
+  if (unresolved.length) {
+    out.push(
+      `# ⚠️ Replies accepted with problems unfixed (${unresolved.length})`,
+      'The corrections ran out, so the game continued from these replies as given. Treat anything downstream of them with care.',
+      unresolved.map((c) => `- **${c.agent}** (${c.label}):\n${c.problems.replace(/^/gm, '  ')}`).join('\n'),
+    );
+  }
   const corrections = events.filter((e) => e.type === 'correction');
   if (corrections.length) {
     out.push(
