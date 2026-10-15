@@ -16,8 +16,24 @@ const UnitFile = z.object({
   hex: z.tuple([z.number().int(), z.number().int()]),
   speed: z.number().int().min(0),
   sensorRange: z.number().int().min(0),
-  strength: z.number().int().positive(),
+  /** Some units live at strength 0 (a probe). */
+  strength: z.number().int().nonnegative(),
 });
+
+/** What the engine needs to price a spoof or seize (QBIT-07) and check it can be aimed (QBIT-04). */
+const HijackParameters = z.object({
+  /** `QBIT_SPOOF_COST` */
+  spoofCost: z.number().nonnegative(),
+  /** `QBIT_SEIZE_COST` */
+  seizeCost: z.number().nonnegative(),
+  /** `HOME_TURF_RANGE` */
+  homeTurfRange: z.number().int().nonnegative(),
+  /** `HOME_TURF_SURCHARGE` */
+  homeTurfSurcharge: z.number().nonnegative(),
+  /** `HIJACK_MAX_AGE` */
+  maxTrackAge: z.number().int().nonnegative(),
+});
+export type HijackParameters = z.infer<typeof HijackParameters>;
 
 /** The on-disk format of `scenarios/<name>/scenario.json`. */
 export const ScenarioFile = z.object({
@@ -26,8 +42,8 @@ export const ScenarioFile = z.object({
   /** Workspace-relative rule documents every participant reads. */
   rules: z.array(z.string()).default(['design-doc.md', 'docs/game-mechanics.md']),
   maxRounds: z.number().int().positive(),
-  /** The light-delay parameters the visibility engine needs (`C`, `TRACK_DECAY`). */
-  parameters: z.object({ c: z.number().positive(), trackDecay: z.number().int().positive().optional() }),
+  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`) and hijack pricing. */
+  parameters: z.object({ c: z.number().positive(), trackDecay: z.number().int().positive().optional(), hijack: HijackParameters }),
   /** The true state at the end of turn 0. Every unit is assumed to have held this position before play began. */
   units: z.array(UnitFile).min(1),
   /** Public to everyone: map, house rules, victory conditions. */
@@ -68,7 +84,7 @@ export interface Scenario {
   title: string;
   description: string;
   maxRounds: number;
-  parameters: { c: number; trackDecay?: number };
+  parameters: { c: number; trackDecay?: number; hijack: HijackParameters };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];
   rules: { path: string; content: string }[];

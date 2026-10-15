@@ -51,6 +51,35 @@ describe('ClipboardAgent', () => {
   });
 });
 
+describe('ClipboardAgent with a formats file', () => {
+  it('attaches the reply formats as a file and only names them in messages', async () => {
+    const relay = new ScriptedRelay();
+    const feedback = { title: 'Feedback', type: 'object', properties: { most_fun: { type: 'string' } } };
+    const agent = new ClipboardAgent('red', 'Red', system, relay, [turnSchema, feedback]);
+
+    await agent.send('turn 1', 'Turn 1 prompt', turnSchema);
+    await agent.send('debrief', 'Debrief', feedback);
+
+    const [first, second] = relay.sent;
+    const file = first?.attachments?.find((d) => d.name === 'response-formats.md');
+    expect(file?.content).toContain('## PlayerTurn');
+    expect(file?.content).toContain('"orders"');
+    expect(file?.content).toContain('## Feedback');
+    expect(first?.message).toContain('response-formats.md');
+    expect(first?.message).toContain('the "PlayerTurn" format described in response-formats.md');
+    expect(first?.message).not.toContain('"orders"');
+    expect(second?.message).toContain('the "Feedback" format described in response-formats.md');
+  });
+
+  it('still sends a format in full if it is not in the file', async () => {
+    const relay = new ScriptedRelay();
+    const agent = new ClipboardAgent('red', 'Red', system, relay, []);
+    await agent.send('turn 1', 'Turn 1 prompt', turnSchema);
+    expect(relay.sent[0]?.attachments?.map((d) => d.name)).not.toContain('response-formats.md');
+    expect(relay.sent[0]?.message).toContain('"orders"');
+  });
+});
+
 describe('splitMessage', () => {
   it('leaves a message under the limit alone', () => {
     expect(splitMessage('short', 8000)).toEqual(['short']);

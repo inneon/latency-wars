@@ -1,18 +1,20 @@
 import type { PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
+import type { HijackQuote } from '../types/quotes';
 import type { Scenario } from '../types/scenario';
 import { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { askFor } from './ask';
 import {
-  checkMentions,
+  type Applied,
+  applyResolution,
   type EngineState,
   intelObservations,
   knowledge,
-  readRemoved,
-  readUnits,
+  messagesArriving,
+  quoteHijack,
   recordIntel,
-  recordTurn,
   renderIntel,
+  renderQuotes,
   renderSensorPicture,
   startEngine,
 } from './engine';
@@ -48,16 +50,22 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     onUnresolved: (problems: string) => record({ type: 'unresolved', agent, label, problems }),
   });
 
-  // The engine owns positions and visibility. Every GM resolution is checked
-  // against it before anything reaches a player.
+  // The engine owns positions, visibility and when messages arrive. It applies
+  // each GM resolution, correcting rather than sending it back, and the GM
+  // hears about any corrections at the start of its next resolution.
   let engine = startEngine(scenario);
-  const assess = (resolution: GmResolution, turn: number) => assessResolution(engine, scenario, resolution, turn);
+  const apply = (resolution: GmResolution, turn: number): Applied => {
+    const applied = applyResolution(engine, resolution, players, turn);
+    if (applied.adjustments.length || applied.overrides.length) {
+      record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides });
+    }
+    return applied;
+  };
 
-  let latest = await askFor(gm, 'setup', prompts.gmSetupPrompt(scenario), GmResolution, {
-    check: (r) => assess(r, 0).errors,
-    ...corrections('gm', 'setup'),
-  });
+  let latest = await askFor(gm, 'setup', prompts.gmSetupPrompt(scenario), GmResolution, corrections('gm', 'setup'));
   record({ type: 'setup', resolution: latest });
+  let applied = apply(latest, 0);
+  engine = applied.engine;
 
   for (let turn = 1; turn <= maxRounds && !latest.game_over; turn++) {
     const reports = composeReports(engine, scenario, latest, turn);
@@ -79,51 +87,67 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       }),
     );
 
-    // Instant intel resolves inside the Planning phase (TURN-03), before orders are final.
-    // The GM rules on cost; the engine supplies what the intel shows.
-    // The GM is one conversation, so its intel rulings run one at a time.
+    // qBit purchases resolve inside the Planning phase (TURN-03), before orders
+    // are final. A first submission with any purchase is a request for quotes:
+    // the GM rules on intel (cost and affordability; the engine supplies what it
+    // shows), the engine prices hijacks from the true state (QBIT-07), and the
+    // player then submits for real. The GM is one conversation, so its intel
+    // rulings run one at a time.
     const delivered = new Map<string, string>();
     for (const p of scenario.players) {
-      const requests = submissions.get(p.id)?.instant_intel_requests ?? [];
-      if (requests.length === 0) continue;
-      const label = `turn ${turn} intel ${p.id}`;
-      const intel = await askFor(gm, label, prompts.gmIntelPrompt(turn, p, requests), GmIntel, {
-        check: (v) => {
-          const after = recordIntel(engine, p.id, turn, intelObservations(engine, p.id, turn, v));
-          return checkMentions(knowledge(after, scenario, p.id, turn), v.mentions, 'Your response');
-        },
-        ...corrections('gm', label),
-      });
-      const observations = intelObservations(engine, p.id, turn, intel);
-      engine = recordIntel(engine, p.id, turn, observations);
-      const text = `${intel.response}\n\n${renderIntel(observations)}`;
+      const purchases = submissions.get(p.id)?.qbit_purchases ?? [];
+      if (purchases.length === 0) continue;
+      const parts: string[] = [];
+      let intel: GmIntel | undefined;
+      const intelRequests = purchases.filter((q) => q.kind === 'snapshot' || q.kind === 'ping');
+      if (intelRequests.length > 0) {
+        const label = `turn ${turn} intel ${p.id}`;
+        intel = await askFor(gm, label, prompts.gmIntelPrompt(turn, p, intelRequests), GmIntel, corrections('gm', label));
+        const observations = intelObservations(engine, p.id, turn, intel);
+        engine = recordIntel(engine, p.id, turn, observations);
+        parts.push(intel.response, renderIntel(observations));
+      }
+      const hijacks = purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
+      if (hijacks.length > 0) parts.push(renderQuotes(hijacks));
+      const text = parts.join('\n\n');
       delivered.set(p.id, text);
-      record({ type: 'gm_intel', turn, player: p.id, intel, delivered: text });
+      record({ type: 'quotes', turn, player: p.id, intel, hijacks, delivered: text });
     }
     await Promise.all(
       [...delivered].map(async ([id, text]) => {
         const submission = await askFor(
           player(id),
-          `turn ${turn} after intel`,
-          prompts.playerAfterIntelPrompt(turn, text),
+          `turn ${turn} final`,
+          prompts.playerFinalPrompt(turn, text),
           PlayerTurn,
-          corrections(id, `turn ${turn} after intel`),
+          corrections(id, `turn ${turn} final`),
         );
-        if (submission.instant_intel_requests.length > 0) {
-          record({ type: 'warning', message: `Turn ${turn}: ${id} asked for intel twice; second request ignored.` });
+        if (submission.qbit_purchases.some((q) => q.kind === 'snapshot' || q.kind === 'ping')) {
+          record({ type: 'warning', message: `Turn ${turn}: ${id} asked for intel again in the final submission; ignored.` });
         }
         submissions.set(id, submission);
-        record({ type: 'player_turn', turn, player: id, step: 'after_intel', submission });
+        record({ type: 'player_turn', turn, player: id, step: 'final', submission });
       }),
     );
 
+    // Hijacks in the final submissions are bought at the engine's prices.
+    const hijacks = new Map<string, HijackQuote[]>();
+    for (const [id, submission] of submissions) {
+      const bought = submission.qbit_purchases
+        .filter((q) => q.kind === 'spoof' || q.kind === 'seize')
+        .map((q) => quoteHijack(engine, scenario, id, turn, q));
+      if (bought.length > 0) {
+        hijacks.set(id, bought);
+        record({ type: 'hijacks', turn, player: id, quotes: bought });
+      }
+    }
+
     const label = `turn ${turn} resolve`;
-    latest = await askFor(gm, label, prompts.gmResolvePrompt(turn, scenario, submissions, turn === maxRounds), GmResolution, {
-      check: (r) => assess(r, turn).errors,
-      ...corrections('gm', label),
-    });
-    engine = assess(latest, turn).engine;
+    const prompt = prompts.gmResolvePrompt(turn, scenario, submissions, hijacks, engine.units, applied.adjustments, turn === maxRounds);
+    latest = await askFor(gm, label, prompt, GmResolution, corrections('gm', label));
     record({ type: 'gm_resolution', turn, resolution: latest });
+    applied = apply(latest, turn);
+    engine = applied.engine;
 
     for (const id of players) {
       if (!latest.game_over && !engine.units.some((u) => u.owner === id && u.class === 'flagship')) {
@@ -156,42 +180,22 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
 }
 
 /**
- * Checks a GM resolution against the engine: its units against the previous
- * state, and every report's mentions against what that player can know in the
- * next Planning phase. Turn 0 is setup, whose units must match the scenario.
+ * What each player is told for the Planning phase of `turn`: the GM's note
+ * (balance, rules answers), the messages that have just reached them, and the
+ * sensor picture.
  */
-function assessResolution(
-  engine: EngineState,
-  scenario: Scenario,
-  resolution: GmResolution,
-  turn: number,
-): { errors: string[]; engine: EngineState } {
-  const players = scenario.players.map((p) => p.id);
-  const { units, errors } = readUnits(engine.units, resolution.units, players, { exact: turn === 0 });
-  const { removed, errors: removedErrors } = readRemoved(engine.units, resolution.units, resolution.removed_units);
-  errors.push(...removedErrors);
-  if (turn === 0 && removed.length > 0) errors.push('Nothing is removed at setup.');
-  // Recorded even when there are errors: if the GM's version is accepted
-  // anyway, the game continues from it. Setup always starts from the scenario.
-  const next = turn === 0 ? engine : recordTurn(engine, turn, units, removed);
-  for (const r of resolution.player_reports) {
-    if (!players.includes(r.player_id)) errors.push(`There is a report for ${r.player_id}, who isn't a player.`);
-  }
-  for (const id of players) {
-    const report = resolution.player_reports.find((r) => r.player_id === id);
-    if (!report) errors.push(`There is no report for ${id}.`);
-    else errors.push(...checkMentions(knowledge(next, scenario, id, turn + 1), report.mentions, `The report to ${id}`));
-  }
-  return { errors, engine: next };
-}
-
-/** What each player is told for the Planning phase of `turn`: the GM's messages, then the computed sensor picture. */
 function composeReports(engine: EngineState, scenario: Scenario, resolution: GmResolution, turn: number): Map<string, string> {
   return new Map(
     scenario.players.map((p) => {
-      const messages = resolution.player_reports.find((r) => r.player_id === p.id)?.report ?? '';
+      const note = resolution.player_notes.find((n) => n.player_id === p.id)?.note ?? '';
+      const arriving = messagesArriving(engine, scenario, p.id, turn);
+      const messages = arriving.length
+        ? `## Messages received\n\n${arriving
+            .map((m) => `- **${m.fromName}** (\`${m.fromUnit}\`, sent turn ${m.sentTurn}${m.instant ? ', instant' : ''}): ${m.text}`)
+            .join('\n')}`
+        : '## Messages received\n\nNone.';
       const picture = renderSensorPicture(knowledge(engine, scenario, p.id, turn));
-      return [p.id, `${messages}\n\n${picture}`.trim()];
+      return [p.id, [note, messages, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }
@@ -202,14 +206,25 @@ function synthesisMaterial(events: PlaytestEvent[]): string {
   const confusions: string[] = [];
   const feedback: string[] = [];
   const corrections: string[] = [];
+  const engineNotes: string[] = [];
+  const hijackNotes: string[] = [];
   for (const e of events) {
+    if (e.type === 'engine') {
+      for (const o of e.overrides) engineNotes.push(`- Turn ${e.turn}, GM OVERRIDE (${o.rule_ids.join(', ') || 'no rule'}) ${o.unit_id}: ${o.reason}`);
+      for (const a of e.adjustments) engineNotes.push(`- Turn ${e.turn}, engine corrected the GM: ${a}`);
+    }
     if (e.type === 'correction') corrections.push(`- ${e.agent} (${e.label}):\n${e.problems.replace(/^/gm, '  ')}`);
     if (e.type === 'unresolved') {
       corrections.push(`- ${e.agent} (${e.label}), ACCEPTED UNFIXED after the last correction:\n${e.problems.replace(/^/gm, '  ')}`);
     }
-    if (e.type === 'setup' || e.type === 'gm_resolution' || e.type === 'gm_intel') {
+    if (e.type === 'hijacks') {
+      for (const q of e.quotes) {
+        if (!q.refused) hijackNotes.push(`- Turn ${e.turn}, ${e.player}: ${q.kind} ${q.target} → ${q.order} for ${q.cost} qBits${q.fails ? ` (failed: ${q.fails})` : ''}`);
+      }
+    }
+    if (e.type === 'setup' || e.type === 'gm_resolution' || e.type === 'quotes') {
       const turn = e.type === 'setup' ? 0 : e.turn;
-      const list = e.type === 'gm_intel' ? e.intel.rulings : e.resolution.rulings;
+      const list = e.type === 'quotes' ? (e.intel?.rulings ?? []) : e.resolution.rulings;
       for (const r of list) {
         rulings.push(`- Turn ${turn} [${r.basis}] (${r.rule_ids.join(', ') || 'no rule'}) ${r.situation} → ${r.ruling}`);
       }
@@ -228,7 +243,15 @@ function synthesisMaterial(events: PlaytestEvent[]): string {
 ${rulings.join('\n') || '(none)'}
 </gm_rulings>
 
-<corrections note="Replies sent back because they broke the format or contradicted the engine's state. GM corrections show where the rules were hard to apply correctly.">
+<engine_corrections note="Where the GM's resolution broke a hard rule the engine enforces, and the engine corrected it; and where the GM overrode the engine, claiming a rule allowed it. Both show where the rules are hard to apply, or where the engine and the rules disagree.">
+${engineNotes.join('\n') || '(none)'}
+</engine_corrections>
+
+<hijacks note="Spoofs and seizes bought, at the engine's prices (QBIT-07).">
+${hijackNotes.join('\n') || '(none)'}
+</hijacks>
+
+<corrections note="Replies sent back because they were malformed.">
 ${corrections.join('\n') || '(none)'}
 </corrections>
 

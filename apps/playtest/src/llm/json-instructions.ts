@@ -13,8 +13,19 @@ Reply with a single JSON object, in a \`\`\`json code block, that matches this J
 ${JSON.stringify(schema, null, 2)}
 \`\`\``;
 
-/** For a conversation that has already been given the schema once. */
-export const withFormatReference = (prompt: string, title: string) =>
+/** For a conversation that already has the schema: earlier in the chat, or in an attached file. */
+export const withFormatReference = (prompt: string, title: string, file?: string) =>
   `${prompt}
 
-Reply in the "${title}" format I gave you earlier: a single JSON object in a \`\`\`json code block, with nothing outside it.`;
+Reply in the "${title}" format ${file ? `described in ${file}` : 'I gave you earlier'}: a single JSON object in a \`\`\`json code block, with nothing outside it.`;
+
+/** Every reply format a participant will use, as one document to attach. */
+export const formatsDocument = (schemas: readonly JsonSchema[]) =>
+  `# Response formats
+
+Every reply you send is a single JSON object, in a \`\`\`json code block, with nothing outside it. Each message says which of these formats to use.
+
+${schemas
+  .map((schema) => `## ${String(schema['title'] ?? 'Reply')}\n\n\`\`\`json\n${JSON.stringify(schema, null, 2)}\n\`\`\``)
+  .join('\n\n')}
+`;

@@ -44,7 +44,8 @@ export async function createAgents(config: RunConfig): Promise<AgentBackend> {
     }
     case 'clipboard': {
       const relay = new ClipboardRelay(path.join(config.outDir, 'relay'), backend.pasteLimit);
-      make = (agent, name) => new ClipboardAgent(agent.id, name, agent.system, relay);
+      const role = (id: string) => (id === 'gm' ? 'gm' : id === 'analyst' ? 'analyst' : 'player');
+      make = (agent, name) => new ClipboardAgent(agent.id, name, agent.system, relay, prompts.responseFormats(role(agent.id)));
       close = () => relay.close();
       break;
     }

@@ -5,7 +5,14 @@
   "maxRounds": 10,
   "parameters": {
     "c": 3,
-    "trackDecay": 8
+    "trackDecay": 8,
+    "hijack": {
+      "spoofCost": 3,
+      "seizeCost": 7,
+      "homeTurfRange": 2,
+      "homeTurfSurcharge": 3,
+      "maxTrackAge": 1
+    }
   },
   "units": [
     {
@@ -13,7 +20,7 @@
       "name": "Blue Flagship",
       "owner": "blue",
       "class": "flagship",
-      "hex": [-5, 2],
+      "hex": [-3, 2],
       "speed": 1,
       "sensorRange": 3,
       "strength": 3
@@ -23,7 +30,7 @@
       "name": "Blue Line",
       "owner": "blue",
       "class": "fleet",
-      "hex": [-2, 1],
+      "hex": [-2, 2],
       "speed": 1,
       "sensorRange": 2,
       "strength": 4
@@ -33,7 +40,7 @@
       "name": "Blue Raider",
       "owner": "blue",
       "class": "fleet",
-      "hex": [-3, 4],
+      "hex": [-1, 3],
       "speed": 2,
       "sensorRange": 2,
       "strength": 2
@@ -63,7 +70,7 @@
       "name": "Red Flagship",
       "owner": "red",
       "class": "flagship",
-      "hex": [5, -2],
+      "hex": [3, -2],
       "speed": 1,
       "sensorRange": 3,
       "strength": 3
@@ -73,7 +80,7 @@
       "name": "Red Line",
       "owner": "red",
       "class": "fleet",
-      "hex": [2, -1],
+      "hex": [2, -2],
       "speed": 1,
       "sensorRange": 2,
       "strength": 4
@@ -83,7 +90,7 @@
       "name": "Red Raider",
       "owner": "red",
       "class": "fleet",
-      "hex": [3, -4],
+      "hex": [1, -3],
       "speed": 2,
       "sensorRange": 2,
       "strength": 2

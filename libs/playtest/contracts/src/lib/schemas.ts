@@ -3,31 +3,42 @@ import { z } from 'zod';
 // Everything an agent returns is structured, so the runner can route it and the
 // report can aggregate it. Free-text fields carry the actual play.
 
+/** Something a player spends qBits on in Planning (QBIT-01), other than an instant order. */
+export const QbitPurchase = z.object({
+  kind: z
+    .enum(['snapshot', 'ping', 'spoof', 'seize'])
+    .describe('snapshot: instant intel (FB-10). ping: one of your units (FB-08). spoof / seize: hijack an enemy fleet (QBIT-02, QBIT-03).'),
+  target: z.string().optional().describe('The unit id: yours for a ping, the enemy fleet for a spoof or seize. Not used for a snapshot.'),
+  order: z
+    .string()
+    .optional()
+    .describe('Spoof or seize only: the order the hijacked fleet carries out this turn. A spoof allows MoveTo, Hold or ReturnHome (QBIT-02).'),
+});
+export type QbitPurchase = z.infer<typeof QbitPurchase>;
+
 export const PlayerTurn = z.object({
   situation_assessment: z
     .string()
     .describe('What you believe is happening right now, and how stale or uncertain that belief is.'),
-  instant_intel_requests: z
-    .array(z.string())
+  qbit_purchases: z
+    .array(QbitPurchase)
     .describe(
-      'qBit-paid instant intel snapshots or pings you want resolved BEFORE committing orders this turn (Planning phase). ' +
-        'If non-empty, your orders below are ignored: the GM answers these, then asks you for your final orders. ' +
-        'Leave empty if you want no instant intel, or if you have already received it this turn.',
+      'qBit purchases for this Planning phase: intel snapshots, pings, spoofs and seizes. Instant orders are not listed here; ' +
+        "mark them in orders. The first time a turn's submission lists any purchase, it is a request for quotes: nothing is bought, " +
+        'your orders are ignored, and you are told what each costs (and shown any intel you asked for) before submitting again. ' +
+        'Purchases in that final submission are binding at the quoted prices. Leave empty to buy nothing.',
     ),
   orders: z
     .array(
       z.object({
-        unit: z.string().describe('The unit receiving the order.'),
+        unit: z.string().describe('The unit receiving the order. Your flagship\'s own moves and doctrine changes go here too (ORD-05).'),
         order: z
           .string()
           .describe('The order: objective, plus commitment, leash and fallback if not the defaults.'),
         delivery: z.enum(['light', 'instant']).describe('Light-speed (free, delayed) or instant (costs qBits).'),
       }),
     )
-    .describe('Orders sent this turn. Empty means no new orders.'),
-  other_actions: z
-    .array(z.string())
-    .describe('Anything else you do this turn that is not an order to a unit, e.g. moving your flagship, changing a doctrine.'),
+    .describe('Orders sent this turn, at most one per unit (ORD-08). Empty means no new orders.'),
   questions_for_gm: z
     .array(z.string())
     .describe('Rules questions for the GM. The GM answers rules questions only and never reveals hidden information.'),
@@ -71,15 +82,25 @@ export const UnitState = z.object({
 });
 export type UnitState = z.infer<typeof UnitState>;
 
-/** A unit that a piece of player-facing text describes, and the turn that information is from. */
-export const Mention = z.object({
-  unit_id: z.string(),
-  observed_turn: z
-    .number()
-    .int()
-    .describe('The turn whose end-of-turn state the information describes (t_o), not the turn it arrives.'),
+/** A message a unit sends home this turn. The engine decides when it arrives. */
+export const FleetMessage = z.object({
+  from_unit: z.string().describe('The unit sending it: the fleet that acks, queries, reports or fought.'),
+  text: z
+    .string()
+    .describe('The message as the player will read it, e.g. "Accepted: Attack(red-raider)" or "Engaged red-line at (1, -1): lost 2 strength".'),
+  instant_ack: z
+    .boolean()
+    .describe('True only for the ack of an instant order (ORD-09), which comes back by the next Planning phase whatever the distance.'),
 });
-export type Mention = z.infer<typeof Mention>;
+export type FleetMessage = z.infer<typeof FleetMessage>;
+
+/** A claim that a rule lets a unit break a constraint the engine enforces. Reviewed by the designer. */
+export const EngineOverride = z.object({
+  unit_id: z.string(),
+  reason: z.string().describe('Why the rules allow this, e.g. a move beyond the unit\'s normal speed.'),
+  rule_ids: z.array(z.string()),
+});
+export type EngineOverride = z.infer<typeof EngineOverride>;
 
 export const GmResolution = z.object({
   resolution_log: z
@@ -100,23 +121,24 @@ export const GmResolution = z.object({
       'Every unit that left the game this turn (destroyed in combat, or gone for any other reason the rules allow), ' +
         'at the hex where it was last and with its final strength. Sensors in range see it go (COMBAT-04). Empty if none.',
     ),
-  player_reports: z
-    .array(
-      z.object({
-        player_id: z.string(),
-        report: z
-          .string()
-          .describe(
-            'Messages for this player in the next Planning phase: acks, queries and execution reports that have reached them, ' +
-              'what they know of any combat, their qBit balance, and answers to their rules questions. ' +
-              'Do not list unit positions: the engine appends the sensor picture.',
-          ),
-        mentions: z
-          .array(Mention)
-          .describe('Every unit this report refers to, with the turn the information is from. The engine checks it against what the player can know.'),
-      }),
-    )
-    .describe('Exactly one report per player.'),
+  messages: z
+    .array(FleetMessage)
+    .describe(
+      'Every ack, query, execution report or combat report a unit sends home this turn (FB-02, FB-03), from the unit that sends it. ' +
+        "The engine delivers each one when it reaches the owner's flagship. A unit that left the game sends nothing.",
+    ),
+  player_notes: z
+    .array(z.object({ player_id: z.string(), note: z.string() }))
+    .describe(
+      "One per player, for their next Planning phase: their qBit balance and answers to their rules questions. Nothing about any unit: " +
+        'what units report goes in messages, and the engine adds the sensor picture.',
+    ),
+  overrides: z
+    .array(EngineOverride)
+    .describe(
+      'Only when a rule lets a unit do something the engine would otherwise correct, such as moving beyond its speed. ' +
+        'Without an override, the engine corrects it and tells you. Usually empty.',
+    ),
   rulings: z.array(Ruling).describe('Every ruling you had to make this turn. Include routine explicit ones only if notable.'),
   game_over: z.boolean(),
   outcome: z.string().describe('If the game is over, who won and why. Otherwise an empty string.'),
@@ -129,8 +151,7 @@ export const GmIntel = z.object({
   pings: z.array(z.string()).describe('Ids of the units the player pinged and can afford to.'),
   response: z
     .string()
-    .describe('What you tell the player: costs, balance, and anything refused. The engine appends what the intel shows.'),
-  mentions: z.array(Mention).describe('Every unit your response refers to, with the turn the information is from.'),
+    .describe('What you tell the player: costs, balance, and anything refused. Nothing about any unit: the engine appends what the intel shows.'),
   rulings: z.array(Ruling),
 }).meta({ title: 'GmIntel' });
 export type GmIntel = z.infer<typeof GmIntel>;

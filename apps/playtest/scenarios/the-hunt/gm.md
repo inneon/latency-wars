@@ -1,6 +1,6 @@
 ## Starting state (end of turn 0)
 
-All units have held their starting positions (listed under "Starting units" below) since long before turn 1. No unit has any enemy within sensor range, so neither player has any contacts. Doctrines are Balanced, with each fleet's home at its starting hex.
+The game starts a couple of turns into the opening: both flagships have moved forward, Line fleets are heading for the centre, and each Raider is one hex from its side's magnetosphere pocket. Treat every unit as having held its starting position (listed under "Starting units" below) since long before turn 1. No unit has any enemy within sensor range, so neither player has any contacts. Doctrines are Balanced, with each fleet's home at its starting hex. Neither player has any probes yet; the first arrive in turn 1's Economy phase.
 
 Links: Blue Node West ↔ Blue Node North (length 8). Red Node East ↔ Red Node South (length 8). Each player produces 64 ÷ 16 = 4 qBits per turn and starts with 8 qBits banked.
 
@@ -10,10 +10,10 @@ No unit has an active order. Every fleet uses doctrine defaults from the mechani
 
 | | Blue Flag | Blue Line | Blue Raider | Blue West | Blue North | Red Flag | Red Line | Red Raider | Red East | Red South |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Blue Flag | 0 | 3 | 4 | 3 | 6 | 10 | 7 | 8 | 9 | 6 |
-| Red Flag | 10 | 7 | 8 | 9 | 6 | 0 | 3 | 4 | 3 | 6 |
+| Blue Flag | 0 | 1 | 3 | 4 | 4 | 6 | 5 | 5 | 7 | 6 |
+| Red Flag | 6 | 5 | 5 | 7 | 6 | 0 | 1 | 3 | 4 | 4 |
 
-Magnetosphere pocket A (0, 2) is 5 from both flagships; pocket B (0, −2) likewise.
+Magnetosphere pocket A (0, 2) is 3 from the Blue Flagship and 4 from the Red Flagship; pocket B (0, −2) is the mirror image. The closest enemy units are the two Line fleets, 4 apart.
 
 ## Notes for the GM
 

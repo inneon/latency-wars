@@ -11,7 +11,7 @@ describe('hexDistance (SPACE-05)', () => {
     for (const n of neighbours) expect(hexDistance(origin, n)).toBe(1);
   });
 
-  it('matches the distance table in the-hunt gm.md', () => {
+  it('matches hand-counted distances on a mirrored two-player layout', () => {
     const blueFlag = hex(-5, 2);
     expect(hexDistance(blueFlag, hex(-2, 1))).toBe(3); // Blue Line
     expect(hexDistance(blueFlag, hex(-3, 4))).toBe(4); // Blue Raider

@@ -1,7 +1,11 @@
 import { formatHex } from '@latency-wars/domain';
 import type { AgentDocument, SystemPrompt } from '../types/agent';
-import type { Scenario, ScenarioPlayer } from '../types/scenario';
-import type { GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import type { PlaytestUnit, Scenario, ScenarioPlayer } from '../types/scenario';
+import { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn, type QbitPurchase } from '@latency-wars/playtest-contracts';
+import type { HijackQuote } from '../types/quotes';
+import { renderHijacksForGm } from './engine';
+import type { JsonSchema } from '../types/agent';
+import { toJsonSchema } from './ask';
 
 // Rules documents are byte-identical for every agent, so they're marked shared and listed first.
 const ruleDocuments = (scenario: Scenario): AgentDocument[] =>
@@ -24,6 +28,15 @@ const startingUnitsTable = (scenario: Scenario) =>
     ),
   ].join('\n');
 
+/**
+ * The reply formats each participant is asked for during a game, so a
+ * transport that has to describe them in text can do it once, up front.
+ */
+export function responseFormats(participant: 'gm' | 'player' | 'analyst'): JsonSchema[] {
+  const schemas = participant === 'gm' ? [GmResolution, GmIntel, GmFeedback] : participant === 'player' ? [PlayerTurn, Feedback] : [];
+  return schemas.map(toJsonSchema);
+}
+
 const names = (docs: AgentDocument[]) => docs.map((d) => `\`${d.name}\``).join(', ');
 
 const playerList = (scenario: Scenario) =>
@@ -40,6 +53,8 @@ ${playerList(scenario)}
 Your documents: the rules are in ${names(rules)}. The scenario, including its map and house rules, is in \`scenario.md\`. Your private briefing is in \`${briefing.name}\`.
 
 How play works: a game master (GM) holds the true game state. At the start of each turn you get your knowledge state for the Planning phase: messages from the GM (acks and reports from your fleets, your qBit balance, rules answers) and a sensor picture of every unit you know about, with how old that information is. You reply with your actions for that turn. Everyone submits simultaneously and nobody sees anyone else's submission.
+
+Everything you do is an order to one of your units, including your flagship's own moves and doctrine changes (ORD-05), or a qBit purchase. A spoof or seize is priced from true positions (QBIT-07), so you can't know its cost in advance: list it in qbit_purchases and you'll be quoted the price, and shown any intel you bought, before you submit for real.
 
 Play to win, within the rules. Your play style: ${player.persona}
 
@@ -66,20 +81,21 @@ Your documents: the rules are in ${names(rules)}. The scenario, including its ma
 You are the arbiter and the game engine. You alone hold the true game state. Your duties:
 
 1. Resolve each turn faithfully, through every phase of TURN-03 in order. Show your working in resolution_log: hex distances, the ORD-04 delivery check for each order in transit, and combat.
-2. Report every unit still in the game at the end of the turn, with its true position and strength, in \`units\`, using the ids in your briefing; a unit that joined this turn also needs its stats. List every unit that left the game this turn in \`removed_units\`, at the hex where it was last. A game engine tracks positions and light delay from these, and works out what each player can see. Keep everything else in true_state, so you can resolve later turns from it: active orders and doctrines, qBit balances, and every order in transit (send turn, emission hex, sequence, recipient).
-3. Write each player's report as messages for their next Planning phase: the acks, queries and execution reports that have reached them under the FB rules, what they know of any combat, their qBit balance, and answers to their rules questions. The engine appends each player's sensor picture (the positions, ages and silences they know of), so don't list positions yourself. In \`mentions\`, list every unit your report refers to and the turn the information is from: an ack or report from a fleet is from the turn the fleet sent it. The engine checks these against what the player can know, and sends back anything that leaks. Information reaching a player who shouldn't have it ruins the test.
-4. Apply the rules as written. The scenario's house rules fill the gaps the rules leave as placeholders. Where the rules are still ambiguous or silent, make a reasonable ruling, apply it consistently from then on, and log it in rulings with an honest basis. Those logs are the most valuable output of this play-test.
-5. Be impartial. Don't steer the game, and don't help or hinder any player.
-6. Declare game_over when a victory condition is met.
+2. Report every unit still in the game at the end of the turn, with its true position and strength, in \`units\`, using the ids in your briefing; a unit that joined this turn also needs its stats. List every unit that left the game this turn in \`removed_units\`, at the hex where it was last. A game engine tracks positions and light delay from these, and works out what each player can see. It enforces hard rules such as unit speeds: if you move a unit further than it can go, the engine moves it as far as it legally can and tells you at the start of the next turn. If you believe a rule allows it, declare an override with the rule, and the engine accepts it. Keep everything else in true_state, so you can resolve later turns from it: active orders and doctrines, qBit balances, and every order in transit (send turn, emission hex, sequence, recipient).
+3. Put every ack, query, execution report and combat report a unit sends home this turn in \`messages\`, from the unit that sends it. The engine delivers each one when it reaches its player under the light-delay rules, or by the next Planning phase for an instant order's ack, so never work out when a player learns something yourself. A unit that left the game sends nothing. Your \`player_notes\` hold only each player's qBit balance and answers to their rules questions: nothing about any unit, ever, because that is how information leaks to a player who shouldn't have it.
+4. Keep the qBit ledger. In the Economy phase apply decay (ECON-04) before production (ECON-01), and keep balances exact: they are fractions, never rounded. Hijack prices come from the engine with each turn's submissions and are authoritative; deduct them if the balance covers them, otherwise refuse the hijack. A hijacked fleet's status report must say it was spoofed or seized and what it did (QBIT-06): put that in messages, from that fleet.
+5. Apply the rules as written. The scenario's house rules fill the gaps the rules leave as placeholders. Where the rules are still ambiguous or silent, make a reasonable ruling, apply it consistently from then on, and log it in rulings with an honest basis. Those logs are the most valuable output of this play-test.
+6. Be impartial. Don't steer the game, and don't help or hinder any player.
+7. Declare game_over when a victory condition is met.
 
 Use axial hex coordinates (q, r). distance((q1, r1), (q2, r2)) = (|q1 − q2| + |r1 − r2| + |q1 + r1 − q2 − r2|) / 2.`,
   };
 }
 
 export const gmSetupPrompt = (scenario: Scenario) =>
-  `Set up the game. Record the starting true state from your briefing, and copy the starting units into \`units\` exactly. Then write each player's messages for the Planning phase of turn 1: at least their qBit balance. The engine adds their sensor picture.
+  `Set up the game. Record the starting true state from your briefing, and copy the starting units into \`units\` exactly. Then write each player's note for the Planning phase of turn 1: at least their qBit balance. The engine adds their sensor picture.
 
-Treat the game as having run before turn 1 with every unit holding its starting position. This is turn 0, so make no rulings unless setup itself needs one, and set game_over to false.
+Treat the game as having run before turn 1 with every unit holding its starting position. This is turn 0, so send no messages, make no rulings unless setup itself needs one, and set game_over to false.
 
 Player ids: ${scenario.players.map((p) => p.id).join(', ')}.`;
 
@@ -90,34 +106,54 @@ ${report}
 
 Submit your actions for turn ${turn}.`;
 
-export const playerAfterIntelPrompt = (turn: number, response: string) =>
-  `Instant intel results for turn ${turn}:
+export const playerFinalPrompt = (turn: number, response: string) =>
+  `Your qBit purchase quotes for turn ${turn}, and any intel you bought:
 
 ${response}
 
-Now submit your final actions for turn ${turn}. No more instant intel is available this turn, so leave instant_intel_requests empty.`;
+Now submit your final actions for turn ${turn}. List in qbit_purchases only the spoofs and seizes you are buying, at the prices quoted; intel bought is already yours and can't be bought again this turn.`;
 
-export const gmIntelPrompt = (turn: number, player: ScenarioPlayer, requests: string[]) =>
+export const gmIntelPrompt = (turn: number, player: ScenarioPlayer, requests: readonly QbitPurchase[]) =>
   `Turn ${turn}, Planning phase. ${player.name} (id: ${player.id}) asks for instant intel before committing orders:
 
-${requests.map((r) => `- ${r}`).join('\n')}
+${requests.map((r) => `- ${r.kind === 'snapshot' ? 'intel snapshot (FB-10)' : `ping ${r.target ?? '(no unit given)'} (FB-08)`}`).join('\n')}
 
-Rule on these now: deduct the qBit cost, and refuse what they can't afford. Set \`snapshot\` and \`pings\` to what they get; the engine appends what that shows, as of the end of turn ${turn - 1}. Your response covers the cost, the new balance and anything refused. The player will then submit final orders.`;
+Rule on these now: deduct the qBit cost, and refuse what they can't afford. Set \`snapshot\` and \`pings\` to what they get; the engine appends what that shows, as of the end of turn ${turn - 1}. Your response covers the cost, the new balance and anything refused, and nothing about any unit. The player will then submit final orders.`;
 
-export function gmResolvePrompt(turn: number, scenario: Scenario, submissions: Map<string, PlayerTurn>, isLastTurn: boolean) {
+const engineUnitsTable = (units: readonly PlaytestUnit[]) =>
+  [
+    '| Id | Owner | Class | Hex | Strength | Speed |',
+    '|---|---|---|---|---|---|',
+    ...units.map((u) => `| \`${u.id}\` | ${u.owner} | ${u.class} | ${formatHex(u.hex)} | ${u.strength} | ${u.speed} |`),
+  ].join('\n');
+
+export function gmResolvePrompt(
+  turn: number,
+  scenario: Scenario,
+  submissions: Map<string, PlayerTurn>,
+  hijacks: Map<string, readonly HijackQuote[]>,
+  units: readonly PlaytestUnit[],
+  adjustments: readonly string[],
+  isLastTurn: boolean,
+) {
   const sections = scenario.players.map((p) => {
     const s = submissions.get(p.id);
+    const bought = renderHijacksForGm(hijacks.get(p.id) ?? []);
     return `## ${p.name} (id: ${p.id})\n\`\`\`json\n${JSON.stringify(
-      s && { orders: s.orders, other_actions: s.other_actions, questions_for_gm: s.questions_for_gm },
+      s && { orders: s.orders, questions_for_gm: s.questions_for_gm },
       null,
       2,
-    )}\n\`\`\``;
+    )}\n\`\`\`${bought ? `\n\n${bought}` : ''}`;
   });
-  return `Turn ${turn}: the players' submissions (any instant intel was already resolved above).
+  const corrected = adjustments.length
+    ? `The engine corrected your last resolution. Update your ledger to match:\n\n${adjustments.map((a) => `- ${a}`).join('\n')}\n\n`
+    : '';
+  const engineState = `${corrected}The units at the start of turn ${turn}, as the engine has them (authoritative):\n\n${engineUnitsTable(units)}\n\n`;
+  return `${engineState}Turn ${turn}: the players' submissions (any intel was already resolved above; hijacks are listed with each player, already priced).
 
 ${sections.join('\n\n')}
 
-Resolve turn ${turn} through every phase. Then write each player's knowledge state for the Planning phase of turn ${turn + 1}.${
+Resolve turn ${turn} through every phase. Record the end-of-turn units and any removed units, the messages units send home this turn, and each player's note for the Planning phase of turn ${turn + 1}.${
     isLastTurn
       ? `\n\nThis is the final turn. If no victory condition has been met, apply the scenario's end-of-game scoring, set game_over to true, and give the outcome.`
       : ''

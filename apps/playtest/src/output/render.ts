@@ -21,10 +21,15 @@ function rulingsTable(rulings: Ruling[]): string {
 
 function playerTurn(name: string, step: string, s: PlayerTurn): string {
   const list = (items: string[]) => items.map((i) => `- ${i}`).join('\n');
-  const parts = [`#### ${name}${step === 'after_intel' ? ' (after intel)' : ''}`, s.situation_assessment];
-  if (s.instant_intel_requests.length) parts.push(`**Instant intel requested**\n${list(s.instant_intel_requests)}`);
+  const parts = [`#### ${name}${step === 'final' ? ' (final)' : ''}`, s.situation_assessment];
+  if (s.qbit_purchases.length) {
+    parts.push(
+      `**qBit purchases**\n${s.qbit_purchases
+        .map((q) => `- ${q.kind}${q.target ? ` \`${q.target}\`` : ''}${q.order ? ` → ${q.order}` : ''}`)
+        .join('\n')}`,
+    );
+  }
   if (s.orders.length) parts.push(`**Orders**\n${s.orders.map((o) => `- \`${o.unit}\` (${o.delivery}): ${o.order}`).join('\n')}`);
-  if (s.other_actions.length) parts.push(`**Other actions**\n${list(s.other_actions)}`);
   if (s.questions_for_gm.length) parts.push(`**Questions for the GM**\n${list(s.questions_for_gm)}`);
   if (s.rules_confusions.length) parts.push(`**Rules confusions**\n${list(s.rules_confusions)}`);
   return parts.join('\n\n');
@@ -53,22 +58,33 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
   for (const e of events) {
     if (e.type === 'setup') {
       out.push('## Setup', gmResolution(e.resolution));
-    } else if (e.type === 'report' || e.type === 'player_turn' || e.type === 'gm_intel' || e.type === 'gm_resolution') {
+    } else if (e.type === 'report' || e.type === 'player_turn' || e.type === 'quotes' || e.type === 'hijacks' || e.type === 'gm_resolution') {
       if (e.turn !== currentTurn) {
         currentTurn = e.turn;
         out.push(`## Turn ${e.turn}`);
       }
       if (e.type === 'report') out.push(details(`Report to ${name(e.player)}`, e.text));
       if (e.type === 'player_turn') out.push(playerTurn(name(e.player), e.step, e.submission));
-      if (e.type === 'gm_intel') {
-        out.push(
-          `#### GM: instant intel for ${name(e.player)}`,
-          e.delivered,
-          rulingsTable(e.intel.rulings),
-          details('GM working', e.intel.private_notes),
-        );
+      if (e.type === 'quotes') {
+        out.push(`#### Quotes for ${name(e.player)}`, e.delivered);
+        if (e.intel) out.push(rulingsTable(e.intel.rulings), details('GM working', e.intel.private_notes));
+      }
+      if (e.type === 'hijacks') {
+        const bought = e.quotes.filter((q) => !q.refused);
+        if (bought.length) {
+          out.push(
+            `#### Hijacks bought by ${name(e.player)}`,
+            bought.map((q) => `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown})${q.fails ? `; fails: ${q.fails}` : ''}`).join('\n'),
+          );
+        }
       }
       if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(e.resolution));
+    } else if (e.type === 'engine') {
+      const lines = [
+        ...e.overrides.map((o) => `> - **GM override** of \`${o.unit_id}\` (${o.rule_ids.join(', ') || 'no rule cited'}): ${o.reason}`),
+        ...e.adjustments.map((a) => `> - ${a}`),
+      ];
+      out.push(`> ⚙️ **Engine** (${e.turn === 0 ? 'setup' : `turn ${e.turn}`}):\n${lines.join('\n')}`);
     } else if (e.type === 'unresolved') {
       out.push(
         `> ⚠️ **${e.agent}** (${e.label}): **accepted with these problems unfixed**, after the last correction. The game continued as the reply says.\n>\n${e.problems.replace(/^/gm, '> ')}`,
@@ -120,11 +136,28 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
   const allRulings = events.flatMap((e) =>
     e.type === 'setup' || e.type === 'gm_resolution'
       ? e.resolution.rulings
-      : e.type === 'gm_intel'
-        ? e.intel.rulings
+      : e.type === 'quotes'
+        ? (e.intel?.rulings ?? [])
         : [],
   );
   const gaps = allRulings.filter((r) => r.basis !== 'explicit');
+  const engine = events.filter((e) => e.type === 'engine');
+  const overrides = engine.flatMap((e) => e.overrides.map((o) => ({ turn: e.turn, ...o })));
+  if (overrides.length) {
+    out.push(
+      `# ⚠️ GM overrides to review (${overrides.length})`,
+      'The GM claimed a rule let a unit break a constraint the engine enforces. Either the engine is missing a rule, or the GM is wrong.',
+      overrides.map((o) => `- Turn ${o.turn}, \`${o.unit_id}\` (${o.rule_ids.join(', ') || 'no rule cited'}): ${o.reason}`).join('\n'),
+    );
+  }
+  const adjustments = engine.flatMap((e) => e.adjustments.map((a) => ({ turn: e.turn, text: a })));
+  if (adjustments.length) {
+    out.push(
+      `# Engine corrections (${adjustments.length})`,
+      'Where the GM broke a hard rule and the engine corrected it. Many of one kind suggest that rule is hard to apply.',
+      adjustments.map((a) => `- ${a.turn === 0 ? 'Setup' : `Turn ${a.turn}`}: ${a.text}`).join('\n'),
+    );
+  }
   const unresolved = events.filter((e) => e.type === 'unresolved');
   if (unresolved.length) {
     out.push(

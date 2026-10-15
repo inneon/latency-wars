@@ -61,7 +61,8 @@ describe('RemoteSeatServer', () => {
   it('pushes requests to an open event stream, including one already waiting', async () => {
     void new RemoteAgent('blue', server).send('turn 1', 'Your move');
     const res = await fetch(`${base}/playtest/seats/blue/events?token=${token(blueUrl)}`);
-    const reader = res.body!.getReader();
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error('no response body');
     const { value } = await reader.read();
     const text = new TextDecoder().decode(value);
     expect(text).toContain('event: request');

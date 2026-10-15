@@ -4,6 +4,9 @@ import type { Agent, JsonSchema } from '../types/agent';
 /** How many times a malformed reply is sent back to be fixed before the run fails. */
 export const MAX_CORRECTIONS = 2;
 
+/** The JSON Schema an agent is sent for a reply format. Titled, so a format can be referred to by name. */
+export const toJsonSchema = (schema: z.ZodType): JsonSchema => z.toJSONSchema(schema) as JsonSchema;
+
 export interface AskOptions<T> {
   /** Game-state checks on a well-formed reply. Returns the problems; empty means it passes. */
   check?: (value: T) => string[];
@@ -35,7 +38,7 @@ export async function askFor<S extends z.ZodType>(
   schema: S,
   { check, onCorrection, onUnresolved }: AskOptions<z.infer<S>> = {},
 ): Promise<z.infer<S>> {
-  const jsonSchema = z.toJSONSchema(schema) as JsonSchema;
+  const jsonSchema = toJsonSchema(schema);
   const validate = (reply: string): Validated<z.infer<S>> => {
     const parsed = parseReply(reply, schema);
     if (!parsed.ok) return { ...parsed, prompt: correctionPrompt(parsed.error) };

@@ -46,7 +46,7 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Step** | One slice of the Movement phase. A unit moves at most one hex per step. |
 | **Willing** | A unit that wants to fight a given enemy: it has an Attack order on it, or its doctrine would engage it (`MOVE-04`). |
 | **Engagement** | Two hostile units that come within `ENGAGE_RANGE` during Movement, at least one of them willing. Engaged units stop and fight. |
-| **Engagement group** | All units joined by engagements, plus every unit sharing a hex with one of them. Each group fights one combat. |
+| **Engagement group** | All units joined by engagements, plus any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight. Each group fights one combat. |
 | **Spoof / Seize** | qBit actions that override an enemy fleet's orders for one turn (`QBIT-02`, `QBIT-03`). |
 
 ---
@@ -73,12 +73,15 @@ All values are placeholders, to be tuned by playtesting.
 | `RETREAT_AT` | Default retreat threshold | 30% strength | |
 | `ENGAGE_RANGE` | Distance at which hostile units engage during Movement | 1 hex | `MOVE-03` |
 | `QBIT_DIVISOR` | Divides link output into qBits | 16 | `ECON-01`. With a length-8 link, 64 ÷ 16 = 4 qBits/turn. |
+| `QBIT_DECAY` | Fraction of unspent qBits lost each turn | 1/3 | `ECON-04`. A player who never spends levels off at income ÷ `QBIT_DECAY`: 12 at 4 qBits/turn. |
 | `BUILD_TURNS` | Economy phases a builder must spend in a zone | 2 | `ECON-03` |
 | `QBIT_ORDER_COST` | Cost of an instant order | 4 | Open: flat or scaled by distance (`QBIT-05`). |
 | `QBIT_INTEL_COST` | Cost of an instant intel snapshot | 5 | `FB-10` |
 | `QBIT_PING_COST` | Cost of a ping | 2 | `FB-08` |
-| `QBIT_SPOOF_COST` | Cost of a spoof | 5 | `QBIT-02` |
-| `QBIT_SEIZE_COST` | Cost of a seize | 10 | `QBIT-03`. Watch it: at 4 qBits/turn it's affordable by about turn 3. |
+| `QBIT_SPOOF_COST` | Base cost of a spoof | 3 | `QBIT-07` adds reach and home-turf costs. |
+| `QBIT_SEIZE_COST` | Base cost of a seize | 7 | `QBIT-07` adds reach and home-turf costs. With qBit decay (`ECON-04`), a player on 4 qBits/turn can save at most 12. |
+| `HOME_TURF_RANGE` | How close a target must be to its owner's node or flagship to count as on home turf | 2 hexes | `QBIT-07` |
+| `HOME_TURF_SURCHARGE` | Extra cost of a spoof or seize against a target on home turf | 3 | `QBIT-07` |
 | `HIJACK_MAX_AGE` | Oldest track a spoof or seize can be aimed with | 1 turn | `QBIT-04` |
 
 ---
@@ -99,7 +102,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 | 4 | **Decision** | Each fleet works out its behaviour for the turn: it resolves newly delivered orders and applies doctrine (`RES-01`, `AUTO-03`). A spoofed or seized fleet follows the hijacker's order instead (`QBIT-02`, `QBIT-03`). |
 | 5 | **Movement** | All units move simultaneously, step by step. Engaged units stop (`MOVE-01`, `MOVE-03`). |
 | 6 | **Combat** | Each engagement group fights (`COMBAT-02`). |
-| 7 | **Economy** | qBit production, construction and unit production (`ECON-01`, `ECON-03`; unit production is a placeholder). |
+| 7 | **Economy** | qBit decay, then qBit production, construction and unit production (`ECON-04`, `ECON-01`, `ECON-03`; unit production is a placeholder). |
 | 8 | **Observation** | Sensors record observations, including units destroyed in this turn's combat (`COMBAT-04`). Every unit emits its status report, plus any acks, queries or execution reports. All of these carry this turn as their observation turn. |
 
 *Why this order:* delivery happens before decision, so an order can affect behaviour in the turn it arrives. Observation is last, so what players see always describes the end of a turn.
@@ -365,7 +368,11 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
 
 ### 11.1 Combat
 - **COMBAT-01** Every unit in an engagement group fights, whatever its order. Commitment (`Discretion` / `AtAllCosts`) and the objective decide what a fleet *does*: where it moves, whether it starts a fight. They never decide whether it fights back.
-- **COMBAT-02** Each engagement group (units joined by `MOVE-03`, plus every unit sharing a hex with one of them) fights one combat in the Combat phase. Damage on both sides is dealt simultaneously.
+- **COMBAT-02** Each engagement group fights one combat in the Combat phase. Damage on both sides is dealt simultaneously. A group is:
+  - the units joined by engagements (`MOVE-03`); plus
+  - any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight (`MOVE-04`).
+
+  Any other unit in that hex is a bystander: it neither fights nor stops moving.
 - **COMBAT-03** Where damage goes:
   1. A unit with an `Attack` order deals its damage to its target.
   2. A fleet in the same group with an `Escort` order on that target takes the damage in its place first, up to its remaining strength. Any excess goes through to the target.
@@ -383,21 +390,31 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
   - An Economy phase in which the builder fought doesn't count, but its progress isn't lost.
   - Leaving the zone resets the progress. The builder being destroyed ends it.
   - Only fleets build, not the flagship (`FLAG-02`). A scenario MAY bar other unit classes from building.
+- **ECON-04** At the start of the Economy phase, before this turn's production is added, each player loses `QBIT_DECAY` of their unspent qBits.
+  - *Why:* qBits have a half-life. Saving up is still possible, but each extra turn of saving pays off less, so nobody can stockpile for a sudden burst. Spare qBits are better spent now than kept.
 
 ### 11.3 Unit production — **Placeholder**
 How players get new units is not yet designed (`OPEN-10`). Until it is, each scenario defines its own reinforcements, if any, as a house rule.
 
 ### 11.4 Spending qBits
-- **QBIT-01** In Planning, a player MAY spend qBits on: an instant order (`QBIT_ORDER_COST`, `ORD-06`), an intel snapshot (`QBIT_INTEL_COST`, `FB-10`), a ping (`QBIT_PING_COST`, `FB-08`), a spoof (`QBIT_SPOOF_COST`, `QBIT-02`) or a seize (`QBIT_SEIZE_COST`, `QBIT-03`).
-- **QBIT-02** **Spoof:** inject a fake order into an enemy fleet. It is delivered in Emission, and the fleet carries out a non-combat order of the spoofer's choosing (`MoveTo`, `Hold` or `ReturnHome`) for that turn, overriding its own order and doctrine. Its own active order resumes the next turn.
+- **QBIT-01** In Planning, a player MAY spend qBits on: an instant order (`QBIT_ORDER_COST`, `ORD-06`), an intel snapshot (`QBIT_INTEL_COST`, `FB-10`), a ping (`QBIT_PING_COST`, `FB-08`), a spoof (`QBIT-02`) or a seize (`QBIT-03`). Spoofs and seizes are priced by `QBIT-07`.
+- **QBIT-02** **Spoof:** inject a fake order into an enemy fleet. It is delivered in Emission, and the fleet carries out a non-combat order of the spoofer's choosing (`MoveTo`, `Hold` or `ReturnHome`) for that turn, overriding its own order and doctrine. A spoofed fleet can't start a fight, but fights back if engaged (`COMBAT-01`). Its own active order resumes the next turn.
 - **QBIT-03** **Seize:** take over an enemy fleet for one turn. It follows any order the seizer gives it, including `Attack`, and fights on the seizer's side in that turn's combat. It returns to its owner's control the next turn.
 - **QBIT-04** A spoof or seize needs:
   - a track on the target no older than `HIJACK_MAX_AGE`, because you need to know where to aim;
   - a target that isn't a flagship, isn't comms-silent (`AUTO-07`) and isn't local to its own flagship, because local command is secure.
 
-  A spoof or seize overrides any order the owner delivers to that fleet in the same turn.
-- **QBIT-06** A spoofed or seized fleet's status report for that turn records that it acted on an order its owner didn't send. The owner learns this when that report arrives at light speed; until then the fleet just looks Diverged (`LIGHT-13`) once its movement shows up.
+  A spoof or seize decides what the fleet does in that turn. An order its owner delivers in the same turn is still checked as usual (`RES-01`) and, if accepted, becomes the fleet's active order from the next turn.
+- **QBIT-06** A spoofed or seized fleet's status report for that turn records that it was spoofed or seized, and what it did. The owner learns this only when that report arrives, at light speed.
   - *Why:* the victim only finds out after the fact, through delayed reports.
+- **QBIT-07** A spoof or seize costs:
+  - its base cost (`QBIT_SPOOF_COST` or `QBIT_SEIZE_COST`); plus
+  - **reach:** `L(d)` (`LIGHT-14`), where `d` is the distance from the hijacker's nearest node or flagship to the target; plus
+  - **home turf:** `HOME_TURF_SURCHARGE` if the target is within `HOME_TURF_RANGE` of one of its owner's nodes or its owner's flagship.
+
+  Distances use true positions at the start of the turn. The player is told the price when they buy, and pays it whether or not the hijack succeeds.
+  - *Why:* reaching deep into enemy space costs more, and fleets defending near their own infrastructure are expensive to hijack. Defence is cheap and over-extension is exposed, which is the kind of catch-up design doc 2.6 wants.
+  - *Example (placeholder values, `C = 3`):* seizing a fleet in open space 3 hexes from your nearest node costs 7 + 1 = 8. The same fleet next to its owner's node costs 7 + 1 + 3 = 11.
 
 ---
 
@@ -416,6 +433,9 @@ How players get new units is not yet designed (`OPEN-10`). Until it is, each sce
 | `OPEN-09` | Is there a maximum link length, or an upkeep per link (for example, power from design doc 3.3)? | With `ECON-02` every node links to every other, so production grows fast as the web grows. That's intended (design doc 2.6), but this is the brake if it's too fast. |
 | `OPEN-10` | Where do units come from? | Production should come from something the player controls, such as the metals and fuel tiers in the design doc. Where new units appear matters as much as how many: at nodes makes the web worth defending, at the flagship adds another pull towards the front. |
 | `OPEN-11` | Should orders be queueable ("do this after your current order")? | Asked for because a newer order discards an older one in flight (`ORD-07`). The outbox's Overtaken state (`FB-07`) may be enough. |
+| `OPEN-12` | **Firewall.** Should there be a defensive qBit spend, such as paying a little to protect one fleet or hex from spoofs and seizes for a turn? A hijack against a protected target would fail, with its qBits still spent. | A cheap counter to hijacking, with room for bluffing. With qBit decay (`ECON-04`), spare qBits would naturally flow into it. Distance- or home-turf-based hijack costs might do the same job without a new action. |
+| `OPEN-13` | **Overload.** Should a player be able to overload their nodes for a short burst of extra production, at the cost of damaging or burning them out? | A catch-up mechanic proposed by a play-test player. It helps whoever is behind regardless of how they played, which cuts against design doc 2.6 (catch-up should punish over-extension, not prop up the loser). |
+| `OPEN-14` | **Node-loss penalty.** Should losing a node cost its owner more than that node's production, for example two turns of its output taken from the bank? | Two things need settling first. (1) If the bank can't cover it, does the balance go negative (a debt future production pays off first), or stop at zero? (2) If two linked nodes are destroyed in the same turn, each one's output includes the link between them, so the penalty could count that link twice or feed back on itself. One option is to work out every lost node's penalty from the web as it stood before that turn's combat, so the total is fixed and nothing cascades. |
 
 ---
 

@@ -82,16 +82,22 @@ function describe(e: PlaytestEvent): string {
       return 'GM set up the game';
     case 'player_turn':
       return `Turn ${e.turn}: ${e.player} submitted ${e.submission.orders.length} order(s)${
-        e.submission.instant_intel_requests.length ? ' and asked for instant intel' : ''
+        e.submission.qbit_purchases.length ? ` and ${e.submission.qbit_purchases.length} qBit purchase(s)` : ''
       }`;
-    case 'gm_intel':
-      return `Turn ${e.turn}: GM resolved instant intel for ${e.player}`;
+    case 'quotes':
+      return `Turn ${e.turn}: quotes for ${e.player}${e.intel ? ' (with GM intel ruling)' : ''}`;
+    case 'hijacks':
+      return `Turn ${e.turn}: ${e.player} bought ${e.quotes.filter((q) => !q.refused).length} hijack(s)`;
     case 'gm_resolution':
       return `Turn ${e.turn}: GM resolved the turn (${e.resolution.rulings.length} ruling(s))${
         e.resolution.game_over ? ` — game over: ${e.resolution.outcome}` : ''
       }`;
     case 'report':
       return `Turn ${e.turn}: ${e.player} received their report`;
+    case 'engine':
+      return `${e.turn === 0 ? 'Setup' : `Turn ${e.turn}`}: engine corrected ${e.adjustments.length} thing(s)${
+        e.overrides.length ? `; GM declared ${e.overrides.length} override(s)` : ''
+      }`;
     case 'correction':
       return `${e.agent} (${e.label}): reply sent back to be fixed`;
     case 'unresolved':

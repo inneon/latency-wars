@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createInterface, type Interface } from 'node:readline/promises';
 import type { Agent, AgentDocument, JsonSchema, SystemPrompt } from '../types/agent';
-import { withFormatReference, withJsonInstructions } from './json-instructions';
+import { formatsDocument, withFormatReference, withJsonInstructions } from './json-instructions';
 
 /** Platform clipboard commands, in order of preference. */
 const CLIPBOARDS: { copy: [string, ...string[]]; paste: [string, ...string[]] }[] = [
@@ -151,29 +151,37 @@ export class ClipboardAgent implements Agent {
   private started = false;
   /** Formats this chat has seen in full, by title. */
   private readonly formats = new Set<string>();
+  /** Formats in the attached formats file, by title. */
+  private readonly filed: Set<string>;
 
+  /** `formats` are the reply formats this participant will use: they go in an attached file, so messages only name them. */
   constructor(
     readonly id: string,
     private readonly chat: string,
     private readonly system: SystemPrompt,
     private readonly relay: Relay,
-  ) {}
+    private readonly formatSchemas: readonly JsonSchema[] = [],
+  ) {
+    this.filed = new Set(formatSchemas.map((f) => f['title']).filter((t): t is string => typeof t === 'string'));
+  }
 
   send(_label: string, prompt: string, responseSchema?: JsonSchema): Promise<string> {
     let message = prompt;
     if (responseSchema) {
       const title = typeof responseSchema['title'] === 'string' ? responseSchema['title'] : null;
-      message =
-        title && this.formats.has(title)
-          ? withFormatReference(prompt, title)
-          : withJsonInstructions(prompt, responseSchema);
+      if (title && this.filed.has(title)) message = withFormatReference(prompt, title, FORMATS_FILE);
+      else if (title && this.formats.has(title)) message = withFormatReference(prompt, title);
+      else message = withJsonInstructions(prompt, responseSchema);
       if (title) this.formats.add(title);
     }
 
     if (this.started) return this.relay.exchange(this.chat, message);
     this.started = true;
     // A chat has no system prompt: the documents go as attachments, and the first message carries the instructions.
-    const { documents, instructions } = this.system;
+    const { instructions } = this.system;
+    const documents = this.formatSchemas.length
+      ? [...this.system.documents, { name: FORMATS_FILE, content: formatsDocument(this.formatSchemas), shared: false }]
+      : this.system.documents;
     return this.relay.exchange(
       this.chat,
       `These are your standing instructions for this whole conversation. The attached files are your documents: ${documents
@@ -183,3 +191,5 @@ export class ClipboardAgent implements Agent {
     );
   }
 }
+
+const FORMATS_FILE = 'response-formats.md';

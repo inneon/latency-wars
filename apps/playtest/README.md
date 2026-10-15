@@ -55,15 +55,16 @@ For example, for a chat app that accepts at most 8,000 characters per message:
 pnpm playtest --scenario the-hunt --backend clipboard --rounds 3 --paste-limit 8000
 ```
 
-With the clipboard backend, a 10-turn game takes about 35 exchanges (each one paste into a chat and one copy back): 1 to set up, 3 per turn, 3 debriefs and 1 report, plus 2 more each time a player buys instant intel, plus any correction requests, plus one extra paste for each part of a split message. You see every hidden state while relaying, so you can't also be a player.
+With the clipboard backend, a 10-turn game takes about 35 exchanges (each one paste into a chat and one copy back): 1 to set up, 3 per turn, 3 debriefs and 1 report, plus 1 or 2 more each time a player asks for qBit purchase quotes (2 if the purchases include intel, which the GM rules on), plus any correction requests, plus one extra paste for each part of a split message. You see every hidden state while relaying, so you can't also be a player.
 
 ## How a run works
 
 ```
 setup     GM reads its private briefing → true state + each player's turn-1 knowledge state
 turn N    players submit in parallel, each seeing only their own report     (TURN-01)
-            ↳ if a player asked for instant intel: GM answers it privately,
-              then that player submits final orders                         (Planning phase)
+            ↳ if a player listed qBit purchases: the GM rules on any intel privately,
+              the engine prices any spoof or seize from the true state (QBIT-07),
+              and that player submits final orders at those prices            (Planning phase)
           GM resolves all eight phases → new true state, rulings, one report per player
           … until the GM declares game over or the turn limit is reached
 debrief   the GM and each player give structured feedback, in their own conversation;
@@ -76,7 +77,7 @@ Design points:
 - **Each agent has its own conversation.** The runner is the only thing that moves information between them, so a player can't see anything the GM didn't send them. `core/game.spec.ts` checks this.
 - **Everything is structured.** Players return orders, rules questions and `rules_confusions`. The GM returns its working, the true state, per-player reports and a `rulings` log, each tagged `explicit`, `interpreted` or `invented`. The `interpreted` and `invented` rulings are the gaps in the rules, and they're the most useful output.
 - **The rules are the system prompt**, loaded fresh from the docs on every run, so editing the docs and re-running is the whole iteration loop. The rules block is identical for every agent, so it's cached once and shared.
-- **An engine owns positions and visibility.** The GM reports every unit's end-of-turn position and strength in a structured `units` list. The engine (`core/engine.ts`, built on `@latency-wars/visibility`) checks the moves against unit speeds, works out what each player can see under the `LIGHT-*` rules, and appends that to each report as a computed sensor picture, including `FB-05` silences. The GM's own report text is limited to messages: acks, combat news, qBit balance, rules answers. It lists the units it mentions, and any mention fresher than the player could know is sent back to the GM to fix. Instant intel works the same way: the GM rules on cost, and the engine supplies what the intel shows. As more mechanics move into libs, the GM's share shrinks.
+- **An engine owns positions, visibility and message timing.** The GM decides what happens: it reports every unit's end-of-turn position and strength, any units that left the game, and every message a unit sends home (acks, queries, execution and combat reports). The engine (`core/engine.ts`, built on `@latency-wars/visibility`) then decides who learns what, and when. It delivers each message when light brings it home (FB-04), or by the next turn for an instant order's ack (ORD-09, with "No answer" if the fleet wasn't there), and appends a computed sensor picture to each report, including FB-05 silences. The GM's own words to a player are limited to their qBit balance and rules answers. The engine never sends a GM turn back: if the GM breaks a hard rule, such as moving a unit faster than its speed, the engine corrects it, logs the correction, and tells the GM at the start of the next turn along with the authoritative unit positions. If the GM believes a rule allows the move, it declares an override, which is accepted and listed in `report.md` for the designer to review. As more mechanics move into libs, the GM's share shrinks.
 - **The game loop doesn't know about Claude.** `runPlaytest` takes anything implementing `Agent`, so tests use scripted fakes.
 
 ## Code layout
@@ -95,7 +96,7 @@ src/
 
 `core/` doesn't call the network itself. It talks to whatever `Agent` it's given: one of the `llm/` backends in a real run, and a scripted fake in tests.
 
-An `Agent` is a transport: `send(label, prompt, responseSchema?)` returns the reply as a string. When a JSON Schema is passed, the agent asks for a matching reply in whatever way its transport supports, but doesn't check it. `core/ask.ts` owns the contract. It turns the Zod schemas in `types/schemas.ts` into JSON Schema, validates each reply, runs any game-state check the caller passes (such as the engine's leak check), and sends a failing reply back to the same agent to be fixed (up to two times). If the corrections run out, a reply that is still malformed ends the run, but a well-formed one that still fails a game-state check is accepted, so one stubborn mistake doesn't throw away a long game. Every correction is logged, and `report.md` lists them, with any accepted-but-unfixed replies at the top: GM corrections show where the rules are hard to apply. So Zod stays in `types/` and `core/`, and a new backend only has to move text.
+An `Agent` is a transport: `send(label, prompt, responseSchema?)` returns the reply as a string. When a JSON Schema is passed, the agent asks for a matching reply in whatever way its transport supports, but doesn't check it. `core/ask.ts` owns the contract. It turns the Zod schemas in `types/schemas.ts` into JSON Schema, validates each reply, runs any game-state check the caller passes, and sends a failing reply back to the same agent to be fixed (up to two times). If the corrections run out, a reply that is still malformed ends the run, but a well-formed one that still fails a game-state check is accepted, so one stubborn mistake doesn't throw away a long game. Every correction is logged, and `report.md` lists them, with any accepted-but-unfixed replies at the top: GM corrections show where the rules are hard to apply. So Zod stays in `types/` and `core/`, and a new backend only has to move text.
 
 Events stream to the output layer as they happen, rather than only at the end, so a run that crashes partway still leaves `events.jsonl` and a partial transcript.
 

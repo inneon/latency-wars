@@ -25,7 +25,7 @@ export function moved(u: TestUnit, to: Hex): TestUnit {
   return { ...u, hex: to };
 }
 
-/** The starting state of apps/playtest/scenarios/the-hunt (gm.md). */
+/** A two-player layout on the-hunt's map: each side a flagship, two fleets and two nodes, mirrored through the star. */
 export const theHunt = {
   blueFlag: unit('Blue Flagship', 'blue', 'flagship', hex(-5, 2)),
   blueLine: unit('Blue Line', 'blue', 'fleet', hex(-2, 1), { strength: 4 }),
