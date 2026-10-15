@@ -7,7 +7,8 @@ Nx + pnpm monorepo. TypeScript today; Python can join later via `@nxlv/python`.
 ```sh
 corepack enable && pnpm install   # pinned via packageManager (pnpm 12)
 pnpm dev          # api on :3000, web on :4200 (proxies /api -> :3000)
-pnpm test         # vitest across all projects
+pnpm test:ci      # vitest across all projects, run once (Nx-cached)
+pnpm test:watch   # vitest across all projects, re-running on change
 pnpm affected     # what CI runs: lint, typecheck, test, build on changed projects
 ```
 

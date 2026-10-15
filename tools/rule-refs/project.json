@@ -4,5 +4,12 @@
   "sourceRoot": "tools/rule-refs/src",
   "projectType": "library",
   "tags": ["scope:tooling"],
-  "targets": {}
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p tools/rule-refs/tsconfig.json --noEmit"
+      }
+    }
+  }
 }

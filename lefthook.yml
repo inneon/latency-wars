@@ -1,5 +1,16 @@
 # Installed by `pnpm install` (the `prepare` script).
+# --outputStyle=static keeps Nx's terminal UI off: inside a hook its terminal
+# colour queries go unanswered and the replies leak into the shell prompt.
 pre-commit:
   commands:
     rule-refs:
-      run: pnpm exec vitest run --config tools/rule-refs/vitest.config.mts
+      run: pnpm exec nx test rule-refs --outputStyle=static
+    affected:
+      run: pnpm exec nx affected -t lint typecheck test --outputStyle=static
+
+# Compares against origin/main: we commit straight to main, so the default
+# base (local main) is HEAD at push time and nothing would count as affected.
+pre-push:
+  commands:
+    affected:
+      run: pnpm exec nx affected -t lint typecheck test build --base=origin/main --outputStyle=static

@@ -4,7 +4,8 @@
   "license": "MIT",
   "scripts": {
     "dev": "nx run-many -t serve --projects=api,web",
-    "test": "nx run-many -t test",
+    "test:ci": "nx run-many -t test",
+    "test:watch": "vitest --watch",
     "lint": "nx run-many -t lint",
     "build": "nx run-many -t build",
     "affected": "nx affected -t lint test build typecheck",

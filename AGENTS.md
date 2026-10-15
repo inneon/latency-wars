@@ -1,11 +1,15 @@
 # Agent notes
 
+## Git hooks
+
+On every commit, Lefthook runs the rule-refs check (see rules section below) and `nx affected -t lint typecheck test`. On push it also builds, comparing against `origin/main`. Both are Nx-cached. The hooks check the working tree, not only staged files, so another agent's unfinished edits can block your commit. If that happens, report it; don't fix their code or bypass the hook.
+
 ## Rule IDs
 
 Game rules live in [docs/game-mechanics.md](docs/game-mechanics.md) with stable IDs such as `TURN-03`. Code, tests and prompts under `apps/` and `libs/` cite them. Each cited ID must be a live rule in that doc.
 
 - **Before you call a change done**, run:
-  `pnpm exec vitest run --config tools/rule-refs/vitest.config.mts`
+  `pnpm exec nx test rule-refs`
   The same check runs on pre-commit (lefthook).
 - **To retire a rule**, move its row into section 13 (Retired Rule IDs) and fill in *Replaced by*. Then update every citation the test reports.
 - **Never** renumber a rule, reuse a retired ID, or invent an ID that isn't in the doc.
