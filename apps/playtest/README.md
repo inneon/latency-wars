@@ -55,16 +55,18 @@ For example, for a chat app that accepts at most 8,000 characters per message:
 pnpm playtest --scenario the-hunt --backend clipboard --rounds 3 --paste-limit 8000
 ```
 
-With the clipboard backend, a 10-turn game takes about 35 exchanges (each one paste into a chat and one copy back): 1 to set up, 3 per turn, 3 debriefs and 1 report, plus 1 or 2 more each time a player asks for qBit purchase quotes (2 if the purchases include intel, which the GM rules on), plus any correction requests, plus one extra paste for each part of a split message. You see every hidden state while relaying, so you can't also be a player.
+With the clipboard backend, a 10-turn game takes about 35 exchanges (each one paste into a chat and one copy back): 1 to set up, 3 per turn, 3 debriefs and 1 report, plus 1 more each time a player asks for qBit purchase quotes, plus any correction requests, plus one extra paste for each part of a split message. You see every hidden state while relaying, so you can't also be a player.
 
 ## How a run works
 
 ```
 setup     GM reads its private briefing → true state + each player's turn-1 knowledge state
 turn N    players submit in parallel, each seeing only their own report     (TURN-01)
-            ↳ if a player listed qBit purchases: the GM rules on any intel privately,
-              the engine prices any spoof or seize from the true state (QBIT-07),
-              and that player submits final orders at those prices            (Planning phase)
+            ↳ if a player listed qBit purchases: the engine charges for any intel and
+              shows what it bought, prices any spoof or seize from the true state
+              (QBIT-07), and that player submits final orders at those prices (Planning phase)
+            ↳ the engine charges for instant orders and hijacks, and drops any the
+              player can't afford                                             (Emission phase)
           GM resolves all eight phases → new true state, rulings, one report per player
           … until the GM declares game over or the turn limit is reached
 debrief   the GM and each player give structured feedback, in their own conversation;
@@ -77,7 +79,7 @@ Design points:
 - **Each agent has its own conversation.** The runner is the only thing that moves information between them, so a player can't see anything the GM didn't send them. `core/game.spec.ts` checks this.
 - **Everything is structured.** Players return orders, rules questions and `rules_confusions`. The GM returns its working, the true state, per-player reports and a `rulings` log, each tagged `explicit`, `interpreted` or `invented`. The `interpreted` and `invented` rulings are the gaps in the rules, and they're the most useful output.
 - **The rules are the system prompt**, loaded fresh from the docs on every run, so editing the docs and re-running is the whole iteration loop. The rules block is identical for every agent, so it's cached once and shared.
-- **An engine owns positions, visibility and message timing.** The GM decides what happens: it reports every unit's end-of-turn position and strength, any units that left the game, and every message a unit sends home (acks, queries, execution and combat reports). The engine (`core/engine.ts`, built on `@latency-wars/visibility`) then decides who learns what, and when. It delivers each message when light brings it home (FB-04), or by the next turn for an instant order's ack (ORD-09, with "No answer" if the fleet wasn't there), and appends a computed sensor picture to each report, including FB-05 silences. The GM's own words to a player are limited to their qBit balance and rules answers. The engine never sends a GM turn back: if the GM breaks a hard rule, such as moving a unit faster than its speed, the engine corrects it, logs the correction, and tells the GM at the start of the next turn along with the authoritative unit positions. If the GM believes a rule allows the move, it declares an override, which is accepted and listed in `report.md` for the designer to review. As more mechanics move into libs, the GM's share shrinks.
+- **An engine owns positions, visibility, message timing and the qBit ledger.** The GM decides what happens: it reports every unit's end-of-turn position and strength, any units that left the game, and every message a unit sends home (acks, queries, execution and combat reports). The engine (`core/engine.ts`, built on `@latency-wars/visibility`) then decides who learns what, and when. It delivers each message when light brings it home (FB-04), or by the next turn for an instant order's ack (ORD-09, with "No answer" if the fleet wasn't there), and appends a computed sensor picture to each report, including FB-05 silences. It keeps the qBit ledger with `@latency-wars/economy`: it charges for purchases as they're made and settles each Economy phase from the nodes the GM reports, so each report carries the player's balance and last turn's statement, and the GM gets every balance with each turn's submissions. A report shows the total, not which links produced it, since that would tell a player which of their nodes still stand before the news could arrive. The GM's own words to a player are limited to rules answers. The engine never sends a GM turn back: if the GM breaks a hard rule, such as moving a unit faster than its speed, the engine corrects it, logs the correction, and tells the GM at the start of the next turn along with the authoritative unit positions. If the GM believes a rule allows the move, it declares an override, which is accepted and listed in `report.md` for the designer to review. As more mechanics move into libs, the GM's share shrinks.
 - **The game loop doesn't know about Claude.** `runPlaytest` takes anything implementing `Agent`, so tests use scripted fakes.
 
 ## Code layout
@@ -106,12 +108,12 @@ A scenario is a directory under `scenarios/`:
 
 | File | Who sees it |
 |---|---|
-| `scenario.json` | Title, description, turn limit, rule documents, players and personas, light-delay `parameters` (`c`, `trackDecay`), and the starting `units` (id, owner, class, hex, speed, sensor range, strength). The units are the engine's turn-0 state, and the GM's briefing gets a table of them, so don't repeat them in `gm.md`. |
+| `scenario.json` | Title, description, turn limit, rule documents, players and personas, the engine's `parameters` (light delay: `c`, `trackDecay`; `hijack` pricing; the `qbits` ledger: starting balance, `QBIT_*` values and zone bonuses as `linkBonuses`), and the starting `units` (id, owner, class, hex, speed, sensor range, strength). The units are the engine's turn-0 state, and the GM's briefing gets a table of them, so don't repeat them in `gm.md`. |
 | `common.md` | Everyone: map, parameters, house rules, victory conditions |
 | `gm.md` | GM only: the true starting state and design notes |
 | `<player>.md` | That player only |
 
-Use house rules in `common.md` to stand in for whatever the rules haven't specified yet (combat and economy, at the moment), and label them as stopgaps so feedback separates them from the design under test. Personas matter: a rules lawyer and an impatient aggressive player find different problems.
+Use house rules in `common.md` to stand in for whatever the rules haven't specified yet (combat, zone bonuses and unit production, at the moment), and label them as stopgaps so feedback separates them from the design under test. Personas matter: a rules lawyer and an impatient aggressive player find different problems.
 
 Ideas for scenarios that isolate one mechanic:
 

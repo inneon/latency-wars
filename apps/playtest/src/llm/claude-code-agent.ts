@@ -44,7 +44,7 @@ export class ClaudeCodeAgent implements Agent {
   async send(label: string, prompt: string, responseSchema?: JsonSchema): Promise<string> {
     if (!responseSchema) return (await this.run(label, prompt)).result ?? '';
     // --json-schema asks the CLI for structured output; the instructions cover the case where it doesn't apply.
-    const result = await this.run(label, withJsonInstructions(prompt, responseSchema), JSON.stringify(responseSchema));
+    const result = await this.run(label, withJsonInstructions(prompt, responseSchema), cliJsonSchema(responseSchema));
     return result.structured_output != null ? JSON.stringify(result.structured_output) : (result.result ?? '');
   }
 
@@ -82,6 +82,18 @@ export class ClaudeCodeAgent implements Agent {
     }
     return result;
   }
+}
+
+/**
+ * The schema as `--json-schema` takes it. The CLI's validator doesn't know
+ * the draft 2020-12 meta-schema that Zod declares in `$schema`, and rejects
+ * the whole schema over it, so the declaration is dropped. Nothing else in
+ * the play-test's schemas depends on that draft.
+ */
+function cliJsonSchema(schema: JsonSchema): string {
+  const rest = { ...schema };
+  delete rest['$schema'];
+  return JSON.stringify(rest);
 }
 
 /** Runs a command with `input` on stdin and resolves with its stdout. */

@@ -24,9 +24,9 @@ export const PlayerTurn = z.object({
     .array(QbitPurchase)
     .describe(
       'qBit purchases for this Planning phase: intel snapshots, pings, spoofs and seizes. Instant orders are not listed here; ' +
-        "mark them in orders. The first time a turn's submission lists any purchase, it is a request for quotes: nothing is bought, " +
-        'your orders are ignored, and you are told what each costs (and shown any intel you asked for) before submitting again. ' +
-        'Purchases in that final submission are binding at the quoted prices. Leave empty to buy nothing.',
+        "mark them in orders. The first time a turn's submission lists any purchase, it is a request for quotes: intel is bought and " +
+        'shown to you then, spoofs and seizes are only priced, and your orders are ignored until you submit again. ' +
+        'Spoofs and seizes in that final submission are bought at the quoted prices. Leave empty to buy nothing.',
     ),
   orders: z
     .array(
@@ -109,8 +109,8 @@ export const GmResolution = z.object({
   true_state: z
     .string()
     .describe(
-      'The complete authoritative game state after this turn, beyond what `units` holds: active orders, doctrines, ' +
-        'qBit balances, orders in transit (send turn, emission hex, sequence, recipient). Players never see this.',
+      'The complete authoritative game state after this turn, beyond what `units` holds and the engine tracks: active orders, doctrines, ' +
+        'orders in transit (send turn, emission hex, sequence, recipient). Players never see this.',
     ),
   units: z
     .array(UnitState)
@@ -130,8 +130,8 @@ export const GmResolution = z.object({
   player_notes: z
     .array(z.object({ player_id: z.string(), note: z.string() }))
     .describe(
-      "One per player, for their next Planning phase: their qBit balance and answers to their rules questions. Nothing about any unit: " +
-        'what units report goes in messages, and the engine adds the sensor picture.',
+      "One per player, for their next Planning phase: answers to their rules questions. Nothing about any unit: " +
+        'what units report goes in messages, and the engine adds the qBit balance and the sensor picture.',
     ),
   overrides: z
     .array(EngineOverride)
@@ -144,17 +144,6 @@ export const GmResolution = z.object({
   outcome: z.string().describe('If the game is over, who won and why. Otherwise an empty string.'),
 }).meta({ title: 'GmResolution' });
 export type GmResolution = z.infer<typeof GmResolution>;
-
-export const GmIntel = z.object({
-  private_notes: z.string().describe('Your working: what the request costs, and the qBit balance afterwards.'),
-  snapshot: z.boolean().describe('True if the player bought, and can afford, an instant intel snapshot.'),
-  pings: z.array(z.string()).describe('Ids of the units the player pinged and can afford to.'),
-  response: z
-    .string()
-    .describe('What you tell the player: costs, balance, and anything refused. Nothing about any unit: the engine appends what the intel shows.'),
-  rulings: z.array(Ruling),
-}).meta({ title: 'GmIntel' });
-export type GmIntel = z.infer<typeof GmIntel>;
 
 const Rating = z.number().int().min(1).max(5).describe('1 (very poor) to 5 (excellent).');
 

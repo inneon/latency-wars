@@ -13,15 +13,28 @@ import {
   recordTurnEnd,
   type VisibilityLog,
 } from '@latency-wars/visibility';
-import type { HijackQuote } from '../types/quotes';
+import {
+  balanceOf,
+  openLedger,
+  type QbitLedger,
+  type QbitParams,
+  type QbitRefusal,
+  type QbitSpend,
+  type QbitStatement,
+  qbitIncome,
+  settleEconomy,
+  spend,
+  statementFor,
+} from '@latency-wars/economy';
+import type { HijackQuote, IntelPurchase } from '../types/quotes';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
-import type { EngineOverride, GmResolution, QbitPurchase, UnitState } from '@latency-wars/playtest-contracts';
+import type { EngineOverride, GmResolution, PlayerTurn, QbitPurchase, UnitState } from '@latency-wars/playtest-contracts';
 
 /*
  * The engine side of the strangler fig: the facts code owns, so the GM doesn't
- * have to work them out. Today that's positions, visibility (LIGHT-*) and when
- * messages arrive (FB-04, ORD-09); the GM still owns orders, combat and the
- * economy.
+ * have to work them out. Today that's positions, visibility (LIGHT-*), when
+ * messages arrive (FB-04, ORD-09) and the qBit ledger (ECON-01, ECON-04,
+ * QBIT-01); the GM still owns orders, combat and construction.
  *
  * The GM decides what happens; the engine has the last word on what it
  * models. It never sends the GM back to redo a turn. It corrects what breaks
@@ -50,6 +63,9 @@ export interface EngineState {
   /** Every unit that has ever been in the game, by id: for naming, and to know who owned what. */
   readonly roster: ReadonlyMap<string, PlaytestUnit>;
   readonly messages: readonly QueuedMessage[];
+  /** Every player's qBits: charged for purchases as they're made, settled in each Economy phase. */
+  readonly ledger: QbitLedger<PlaytestUnit>;
+  readonly economy: QbitParams<PlaytestUnit>;
 }
 
 export function startEngine(scenario: Scenario): EngineState {
@@ -69,6 +85,22 @@ export function startEngine(scenario: Scenario): EngineState {
     units: scenario.units,
     roster: new Map(scenario.units.map((u) => [u.id, u])),
     messages: [],
+    ledger: openLedger<PlaytestUnit>(1, Object.fromEntries(scenario.players.map((p) => [p.id, scenario.parameters.qbits.start]))),
+    economy: qbitParams(scenario),
+  };
+}
+
+/** The ledger's parameters, with the scenario's zone bonuses as each link's `k`. */
+export function qbitParams(scenario: Scenario): QbitParams<PlaytestUnit> {
+  const { divisor, decay, linkBonuses } = scenario.parameters.qbits;
+  const bonusAt = (u: PlaytestUnit) => linkBonuses.filter((b) => b.hex[0] === u.hex.q && b.hex[1] === u.hex.r).map((b) => b.k);
+  return {
+    qbitDivisor: divisor,
+    qbitDecay: decay,
+    linkK: (a, b) => {
+      const bonuses = [...bonusAt(a), ...bonusAt(b)];
+      return bonuses.length ? Math.max(...bonuses) : 1;
+    },
   };
 }
 
@@ -181,11 +213,15 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
 
   const roster = new Map(engine.roster);
   for (const u of [...units, ...removed]) roster.set(u.id, u);
+  // Economy (TURN-03): the nodes still standing after Combat produce. A node
+  // that's new this turn was built in this Economy phase, after production.
+  const producing = units.filter((u) => u.class === 'node' && previous.some((p) => p.id === u.id));
   const recorded: EngineState = {
     ...engine,
     log: recordTurnEnd(engine.log, turn, units, removed),
     units,
     roster,
+    ledger: settleEconomy(engine.ledger, turn, producing, engine.economy),
   };
   return { engine: { ...recorded, messages: queueMessages(recorded, resolution, players, turn, previous, adjustments) }, adjustments, overrides };
 }
@@ -307,6 +343,145 @@ export function recordIntel(
   return { ...engine, log: recordInstantArrival(engine.log, player, turn, observations) };
 }
 
+/**
+ * Charges `player` for the instant intel they asked for in the Planning phase
+ * of `turn` (FB-08, FB-10, QBIT-01), in the order asked, and records what it
+ * shows. Unaffordable requests are refused and cost nothing. A ping to a unit
+ * that's no longer on the map is charged and gets "No answer" (FB-09).
+ */
+export function resolveIntel(
+  engine: EngineState,
+  scenario: Scenario,
+  player: string,
+  turn: number,
+  requests: readonly QbitPurchase[],
+): { engine: EngineState; purchases: IntelPurchase[]; text: string } {
+  const { intelCost, pingCost } = scenario.parameters.qbits;
+  let ledger = engine.ledger;
+  const purchases: IntelPurchase[] = [];
+  let snapshot = false;
+  const pings: string[] = [];
+  for (const request of requests) {
+    if (request.kind !== 'snapshot' && request.kind !== 'ping') continue;
+    const target = request.target ?? '';
+    const what = request.kind === 'snapshot' ? 'Intel snapshot (FB-10)' : `Ping \`${target}\` (FB-08)`;
+    const refuse = (why: string) => purchases.push({ kind: request.kind as 'snapshot' | 'ping', target: request.target, cost: 0, bought: false, note: `${what}: refused. ${why}` });
+    if (request.kind === 'snapshot' ? snapshot : pings.includes(target)) {
+      refuse('You already bought that this turn.');
+      continue;
+    }
+    if (request.kind === 'ping' && engine.roster.get(target)?.owner !== player) {
+      refuse(target ? `${target} isn't one of your units.` : 'No unit given.');
+      continue;
+    }
+    const cost = request.kind === 'snapshot' ? intelCost : pingCost;
+    const charged = spend(ledger, player, turn, request.kind === 'snapshot' ? 'intel snapshot' : `ping ${target}`, cost);
+    ledger = charged.ledger;
+    if (!charged.outcome.accepted) {
+      refuse(`It costs ${formatQbits(cost)} and your balance is ${formatQbits(charged.outcome.balance)} (QBIT-01).`);
+      continue;
+    }
+    const balance = `Balance now ${formatQbits(charged.outcome.balanceAfter)}.`;
+    if (request.kind === 'snapshot') {
+      snapshot = true;
+      purchases.push({ kind: 'snapshot', cost, bought: true, note: `${what}: ${formatQbits(cost)} qBits. ${balance}` });
+    } else {
+      pings.push(target);
+      const answered = engine.units.some((u) => u.id === target);
+      purchases.push({ kind: 'ping', target, cost, bought: true, note: `${what}: ${formatQbits(cost)} qBits.${answered ? '' : ' No answer (FB-09).'} ${balance}` });
+    }
+  }
+  const observations = snapshot || pings.length ? intelObservations(engine, player, turn, { snapshot, pings }) : [];
+  const recorded = observations.length ? recordIntel({ ...engine, ledger }, player, turn, observations) : { ...engine, ledger };
+  const parts = [`## Instant intel purchases\n\n${purchases.map((p) => `- ${p.note}`).join('\n')}`];
+  if (snapshot || pings.length) parts.push(renderIntel(observations));
+  return { engine: recorded, purchases, text: parts.join('\n\n') };
+}
+
+/**
+ * Charges `player` for the Emission phase of `turn` (TURN-03, QBIT-01): each
+ * instant order in the order listed, then each hijack bought. What they can't
+ * afford is refused and costs nothing: a refused instant order isn't sent at
+ * all, and a refused hijack isn't bought. Orders to the player's own flagship
+ * are local and free (ORD-05), however they're marked.
+ */
+export function payForEmission(
+  engine: EngineState,
+  scenario: Scenario,
+  player: string,
+  turn: number,
+  submission: PlayerTurn,
+  hijacks: readonly HijackQuote[],
+): { engine: EngineState; submission: PlayerTurn; hijacks: HijackQuote[] } {
+  let ledger = engine.ledger;
+  const flagship = engine.units.find((u) => u.owner === player && u.class === 'flagship');
+  const isFlagship = (unit: string) => flagship !== undefined && [flagship.id, flagship.name].some((n) => n.toLowerCase() === unit.trim().toLowerCase());
+  const orders: PlayerTurn['orders'] = [];
+  for (const order of submission.orders) {
+    if (order.delivery !== 'instant' || isFlagship(order.unit)) {
+      orders.push(order);
+      continue;
+    }
+    const charged = spend(ledger, player, turn, `instant order to ${order.unit}`, scenario.parameters.qbits.orderCost);
+    ledger = charged.ledger;
+    if (charged.outcome.accepted) orders.push(order);
+  }
+  const paid = hijacks.map((q): HijackQuote => {
+    if (q.refused || q.cost === undefined) return q;
+    const charged = spend(ledger, player, turn, `${q.kind} ${q.target}`, q.cost);
+    ledger = charged.ledger;
+    if (charged.outcome.accepted) return q;
+    return { ...q, refused: `It costs ${formatQbits(q.cost)} and your balance was ${formatQbits(charged.outcome.balance)} (QBIT-01).` };
+  });
+  return { engine: { ...engine, ledger }, submission: { ...submission, orders }, hijacks: paid };
+}
+
+/** A qBit amount for people to read. Balances are kept unrounded; this is display only. */
+export function formatQbits(amount: number): string {
+  return String(Math.round(amount * 100) / 100);
+}
+
+const spendLine = (p: QbitSpend | QbitRefusal) =>
+  p.accepted ? `${p.label} (${formatQbits(p.cost)})` : `${p.label} (${formatQbits(p.cost)}, refused: balance ${formatQbits(p.balance)})`;
+
+/** One line per settled turn: where the qBits went. */
+export function renderStatement(s: QbitStatement<PlaytestUnit>): string {
+  const spent = s.spends.length ? `spent ${s.spends.map(spendLine).join(', ')}` : 'spent nothing';
+  const refused = s.refusals.length ? `; refused ${s.refusals.map(spendLine).join(', ')}` : '';
+  return `Turn ${s.turn}: opened at ${formatQbits(s.opening)}; ${spent}${refused}; decay −${formatQbits(s.decay)}; production +${formatQbits(s.production)}; closed at ${formatQbits(s.closing)}.`;
+}
+
+/**
+ * The qBit section of a player's report for the Planning phase of `turn`:
+ * their balance and last turn's statement. Not the per-link breakdown, which
+ * would tell them which of their nodes still stand before the news could
+ * arrive; whether even the total should wait for light is open.
+ */
+export function renderQbits(engine: EngineState, player: string, turn: number): string {
+  const last = statementFor(engine.ledger, player, turn - 1);
+  const lines = [`Balance: ${formatQbits(balanceOf(engine.ledger, player))} qBits.`];
+  if (last) lines.push(renderStatement(last));
+  return `## qBits\n\n${lines.join('\n')}`;
+}
+
+/** The ledger as the GM needs it to resolve `turn`: balances after this turn's purchases, and income for scoring. */
+export function renderQbitsForGm(engine: EngineState, scenario: Scenario, turn: number): string {
+  const rows = scenario.players.map((p) => {
+    const mine = engine.ledger.pending.filter((x) => x.player === p.id);
+    const spent = mine.filter((x) => x.accepted).map(spendLine).join(', ') || 'nothing';
+    const refused = mine.filter((x) => !x.accepted).map(spendLine).join(', ') || 'nothing';
+    const income = qbitIncome(engine.units, p.id, engine.economy);
+    return `| ${p.id} | ${formatQbits(balanceOf(engine.ledger, p.id))} | ${spent} | ${refused} | ${formatQbits(income)} |`;
+  });
+  return [
+    `The qBit ledger for turn ${turn}, kept by the engine (authoritative). Purchases are already paid for. A refused instant order was not sent and isn't in the orders below; a refused hijack isn't listed. The engine applies decay and production in the Economy phase from the nodes you report, so don't keep balances yourself.`,
+    '',
+    '| Player | Balance after purchases | Spent this turn | Refused this turn | Income per turn (current web) |',
+    '|---|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
 const SPOOF_ORDERS = /^\s*(MoveTo|Hold|ReturnHome)\b/i;
 
 /**
@@ -374,10 +549,10 @@ export function renderHijacksForGm(quotes: readonly HijackQuote[]): string {
   const bought = quotes.filter((q) => !q.refused);
   if (bought.length === 0) return '';
   const lines = bought.map((q) => {
-    const fate = q.fails ? ` It fails on the true state: ${q.fails} Charge for it anyway (QBIT-07).` : '';
+    const fate = q.fails ? ` It fails on the true state: ${q.fails} It was paid for anyway (QBIT-07).` : '';
     return `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown}).${fate}`;
   });
-  return `Hijacks bought, priced by the engine (authoritative, QBIT-07). Deduct each price if the balance covers it, otherwise refuse it:\n${lines.join('\n')}`;
+  return `Hijacks bought, priced by the engine and already paid for (authoritative, QBIT-07):\n${lines.join('\n')}`;
 }
 
 const describe = (u: PlaytestUnit) => `${u.name} (\`${u.id}\`, ${u.class}, strength ${u.strength})`;

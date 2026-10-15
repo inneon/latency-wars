@@ -1,0 +1,15 @@
+{
+  "name": "economy",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/core/economy/src",
+  "projectType": "library",
+  "tags": ["type:core", "scope:shared"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p libs/core/economy/tsconfig.lib.json --noEmit && tsc -p libs/core/economy/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}

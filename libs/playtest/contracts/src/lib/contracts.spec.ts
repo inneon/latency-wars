@@ -1,12 +1,11 @@
 import { z } from 'zod';
 import { seatPath } from './remote-seat';
-import { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from './schemas';
+import { Feedback, GmFeedback, GmResolution, PlayerTurn } from './schemas';
 
 describe('response schemas', () => {
   it.each([
     ['PlayerTurn', PlayerTurn],
     ['GmResolution', GmResolution],
-    ['GmIntel', GmIntel],
     ['Feedback', Feedback],
     ['GmFeedback', GmFeedback],
   ])('%s converts to a titled JSON Schema that clients can render', (title, schema) => {

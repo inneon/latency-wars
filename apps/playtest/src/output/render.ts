@@ -1,3 +1,4 @@
+import { renderStatement } from '../core/engine';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import type { Feedback, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
@@ -58,17 +59,21 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
   for (const e of events) {
     if (e.type === 'setup') {
       out.push('## Setup', gmResolution(e.resolution));
-    } else if (e.type === 'report' || e.type === 'player_turn' || e.type === 'quotes' || e.type === 'hijacks' || e.type === 'gm_resolution') {
+    } else if (
+      e.type === 'report' ||
+      e.type === 'player_turn' ||
+      e.type === 'quotes' ||
+      e.type === 'hijacks' ||
+      e.type === 'gm_resolution' ||
+      e.type === 'qbits'
+    ) {
       if (e.turn !== currentTurn) {
         currentTurn = e.turn;
         out.push(`## Turn ${e.turn}`);
       }
       if (e.type === 'report') out.push(details(`Report to ${name(e.player)}`, e.text));
       if (e.type === 'player_turn') out.push(playerTurn(name(e.player), e.step, e.submission));
-      if (e.type === 'quotes') {
-        out.push(`#### Quotes for ${name(e.player)}`, e.delivered);
-        if (e.intel) out.push(rulingsTable(e.intel.rulings), details('GM working', e.intel.private_notes));
-      }
+      if (e.type === 'quotes') out.push(`#### Quotes for ${name(e.player)}`, e.delivered);
       if (e.type === 'hijacks') {
         const bought = e.quotes.filter((q) => !q.refused);
         if (bought.length) {
@@ -79,6 +84,7 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
         }
       }
       if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(e.resolution));
+      if (e.type === 'qbits') out.push(`#### qBit ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderStatement(st)}`).join('\n')}`);
     } else if (e.type === 'engine') {
       const lines = [
         ...e.overrides.map((o) => `> - **GM override** of \`${o.unit_id}\` (${o.rule_ids.join(', ') || 'no rule cited'}): ${o.reason}`),
@@ -124,6 +130,11 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
   const name = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
   const out = [`# Play-test report: ${scenario.title}`];
 
+  const warnings = events.filter((e) => e.type === 'warning');
+  if (warnings.length) {
+    out.push(`# ⚠️ Warnings (${warnings.length})`, warnings.map((w) => `- ${w.message}`).join('\n'));
+  }
+
   const synthesis = events.find((e) => e.type === 'synthesis');
   if (synthesis?.type === 'synthesis') out.push(synthesis.report);
 
@@ -133,13 +144,7 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
     if (e.type === 'player_feedback') out.push(feedbackSection(name(e.player), e.feedback));
   }
 
-  const allRulings = events.flatMap((e) =>
-    e.type === 'setup' || e.type === 'gm_resolution'
-      ? e.resolution.rulings
-      : e.type === 'quotes'
-        ? (e.intel?.rulings ?? [])
-        : [],
-  );
+  const allRulings = events.flatMap((e) => (e.type === 'setup' || e.type === 'gm_resolution' ? e.resolution.rulings : []));
   const gaps = allRulings.filter((r) => r.basis !== 'explicit');
   const engine = events.filter((e) => e.type === 'engine');
   const overrides = engine.flatMap((e) => e.overrides.map((o) => ({ turn: e.turn, ...o })));

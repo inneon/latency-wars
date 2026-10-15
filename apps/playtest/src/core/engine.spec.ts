@@ -7,14 +7,18 @@ import {
   intelObservations,
   knowledge,
   messagesArriving,
+  payForEmission,
   quoteHijack,
   recordIntel,
   renderQuotes,
   renderSensorPicture,
+  resolveIntel,
   startEngine,
   stepToward,
 } from './engine';
 import { hexDistance } from '@latency-wars/domain';
+import { balanceOf, statementFor } from '@latency-wars/economy';
+import type { PlayerTurn } from '@latency-wars/playtest-contracts';
 
 let scenario: Scenario;
 beforeAll(async () => {
@@ -311,5 +315,82 @@ describe('quoteHijack (QBIT-07, QBIT-04)', () => {
     expect(text).toContain('spoof `red-line` → Hold: 8 qBits (base 3 + reach 2 + home turf 3)');
     expect(text).toContain('seize `red-raider` → Hold: refused. You have no track on red-raider.');
     expect(text).not.toContain('secret');
+  });
+});
+
+describe('the qBit ledger', () => {
+  const node = (id: string, owner: string, q: number, r: number): UnitState => ({ id, owner, class: 'node', q, r, strength: 2 });
+  const withCash = (engine: EngineState, player: string, amount: number): EngineState => ({
+    ...engine,
+    ledger: { ...engine.ledger, balances: { ...engine.ledger.balances, [player]: amount } },
+  });
+
+  it('settles each Economy phase from the nodes standing after Combat', () => {
+    const { engine } = play(resolution(states()));
+    // Each side's two nodes are 8 apart: 4 qBits, after 8 decays by a third.
+    expect(balanceOf(engine.ledger, 'blue')).toBeCloseTo(8 - 8 / 3 + 4, 9);
+    expect(statementFor(engine.ledger, 'red', 1)?.production).toBe(4);
+  });
+
+  it('a node built this turn produces from the next, and a destroyed one stops at once (TURN-03)', () => {
+    const built = [...states(), node('blue-node-a', 'blue', 0, 2)];
+    const { engine } = play(resolution(built), resolution(built.filter((u) => u.id !== 'blue-node-west'), { removed: [node('blue-node-west', 'blue', -4, -1)] }));
+    expect(statementFor(engine.ledger, 'blue', 1)?.links.map((l) => l.length)).toEqual([8]);
+    // Turn 2: North ↔ pocket A, length 2, k = 2 from the scenario's zone bonus: 8 ÷ 16.
+    expect(statementFor(engine.ledger, 'blue', 2)).toMatchObject({ production: 0.5, links: [expect.objectContaining({ length: 2, k: 2 })] });
+  });
+
+  it('charges for intel in the order asked, refusing what the balance does not cover', () => {
+    const { engine } = play(resolution(states()));
+    const { engine: after, purchases, text } = resolveIntel(withCash(engine, 'blue', 6), scenario, 'blue', 2, [
+      { kind: 'ping', target: 'blue-line' },
+      { kind: 'snapshot' },
+      { kind: 'ping', target: 'blue-line' },
+      { kind: 'ping', target: 'red-line' },
+    ]);
+    expect(purchases.map((p) => [p.kind, p.bought, p.cost])).toEqual([
+      ['ping', true, 2],
+      ['snapshot', false, 0],
+      ['ping', false, 0],
+      ['ping', false, 0],
+    ]);
+    expect(text).toContain('Intel snapshot (FB-10): refused. It costs 5 and your balance is 4 (QBIT-01).');
+    expect(text).toContain('already bought that this turn');
+    expect(text).toContain("red-line isn't one of your units");
+    expect(balanceOf(after.ledger, 'blue')).toBe(4);
+    expect(after.log.instant.map((i) => i.observation.unit.id)).toEqual(['blue-line']);
+  });
+
+  it('a ping to a unit that has left the game is charged and gets No answer (FB-09)', () => {
+    const present = states().filter((u) => u.id !== 'blue-raider');
+    const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: -1, r: 3, strength: 0 };
+    const { engine } = play(resolution(present, { removed: [gone] }));
+    const { purchases } = resolveIntel(engine, scenario, 'blue', 2, [{ kind: 'ping', target: 'blue-raider' }]);
+    expect(purchases[0]).toMatchObject({ bought: true, cost: 2 });
+    expect(purchases[0]?.note).toContain('No answer (FB-09)');
+  });
+
+  it('charges instant orders then hijacks, dropping what the player cannot afford', () => {
+    const engine = withCash(startEngine(scenario), 'blue', 9);
+    const submission: PlayerTurn = {
+      situation_assessment: '',
+      qbit_purchases: [],
+      orders: [
+        { unit: 'Blue Flagship', order: 'Hold', delivery: 'instant' },
+        { unit: 'blue-line', order: 'Hold', delivery: 'instant' },
+        { unit: 'blue-raider', order: 'Hold', delivery: 'light' },
+      ],
+      questions_for_gm: [],
+      rules_confusions: [],
+    };
+    const paid = payForEmission(engine, scenario, 'blue', 1, submission, [
+      { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 4, breakdown: '' },
+      { kind: 'seize', target: 'red-raider', order: 'Hold', cost: 3, breakdown: '' },
+      { kind: 'spoof', target: 'red-flagship', order: 'Hold', refused: 'flagship' },
+    ]);
+    // The flagship's order is free (ORD-05); blue-line's costs 4; the spoof 4 more; the seize can't be afforded.
+    expect(paid.submission.orders).toEqual(submission.orders);
+    expect(balanceOf(paid.engine.ledger, 'blue')).toBe(1);
+    expect(paid.hijacks.map((q) => q.refused)).toEqual([undefined, 'It costs 3 and your balance was 1 (QBIT-01).', 'flagship']);
   });
 });

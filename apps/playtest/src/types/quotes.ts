@@ -17,3 +17,15 @@ export interface HijackQuote {
    */
   readonly fails?: string;
 }
+
+/** An instant intel purchase (FB-08, FB-10), as the engine charged it. */
+export interface IntelPurchase {
+  readonly kind: 'snapshot' | 'ping';
+  /** The pinged unit. */
+  readonly target?: string;
+  /** What was charged; 0 when refused. */
+  readonly cost: number;
+  readonly bought: boolean;
+  /** What the player is told about this purchase. */
+  readonly note: string;
+}

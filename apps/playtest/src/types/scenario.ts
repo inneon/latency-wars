@@ -35,6 +35,31 @@ const HijackParameters = z.object({
 });
 export type HijackParameters = z.infer<typeof HijackParameters>;
 
+/** What the engine needs to keep the qBit ledger (ECON-01, ECON-04, QBIT-01). */
+const QbitParameters = z.object({
+  /** Every player's balance at the start of turn 1. */
+  start: z.number().nonnegative(),
+  /** `QBIT_DIVISOR` */
+  divisor: z.number().positive(),
+  /** `QBIT_DECAY`, as a fraction. */
+  decay: z.number().min(0).max(1),
+  /** `QBIT_ORDER_COST` */
+  orderCost: z.number().nonnegative(),
+  /** `QBIT_INTEL_COST` */
+  intelCost: z.number().nonnegative(),
+  /** `QBIT_PING_COST` */
+  pingCost: z.number().nonnegative(),
+  /**
+   * Zone bonuses, a house rule until the rules have them: a link with either
+   * end on one of these hexes takes the largest `k` among them. Every other
+   * link has k = 1.
+   */
+  linkBonuses: z
+    .array(z.object({ hex: z.tuple([z.number().int(), z.number().int()]), k: z.number().nonnegative() }))
+    .default([]),
+});
+export type QbitParameters = z.infer<typeof QbitParameters>;
+
 /** The on-disk format of `scenarios/<name>/scenario.json`. */
 export const ScenarioFile = z.object({
   title: z.string(),
@@ -42,8 +67,13 @@ export const ScenarioFile = z.object({
   /** Workspace-relative rule documents every participant reads. */
   rules: z.array(z.string()).default(['design-doc.md', 'docs/game-mechanics.md']),
   maxRounds: z.number().int().positive(),
-  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`) and hijack pricing. */
-  parameters: z.object({ c: z.number().positive(), trackDecay: z.number().int().positive().optional(), hijack: HijackParameters }),
+  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), hijack pricing and the qBit ledger. */
+  parameters: z.object({
+    c: z.number().positive(),
+    trackDecay: z.number().int().positive().optional(),
+    hijack: HijackParameters,
+    qbits: QbitParameters,
+  }),
   /** The true state at the end of turn 0. Every unit is assumed to have held this position before play began. */
   units: z.array(UnitFile).min(1),
   /** Public to everyone: map, house rules, victory conditions. */
@@ -84,7 +114,7 @@ export interface Scenario {
   title: string;
   description: string;
   maxRounds: number;
-  parameters: { c: number; trackDecay?: number; hijack: HijackParameters };
+  parameters: { c: number; trackDecay?: number; hijack: HijackParameters; qbits: QbitParameters };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];
   rules: { path: string; content: string }[];

@@ -85,7 +85,7 @@ function describe(e: PlaytestEvent): string {
         e.submission.qbit_purchases.length ? ` and ${e.submission.qbit_purchases.length} qBit purchase(s)` : ''
       }`;
     case 'quotes':
-      return `Turn ${e.turn}: quotes for ${e.player}${e.intel ? ' (with GM intel ruling)' : ''}`;
+      return `Turn ${e.turn}: quotes for ${e.player}${e.intel.length ? ` (with ${e.intel.filter((i) => i.bought).length} intel purchase(s))` : ''}`;
     case 'hijacks':
       return `Turn ${e.turn}: ${e.player} bought ${e.quotes.filter((q) => !q.refused).length} hijack(s)`;
     case 'gm_resolution':
@@ -98,6 +98,8 @@ function describe(e: PlaytestEvent): string {
       return `${e.turn === 0 ? 'Setup' : `Turn ${e.turn}`}: engine corrected ${e.adjustments.length} thing(s)${
         e.overrides.length ? `; GM declared ${e.overrides.length} override(s)` : ''
       }`;
+    case 'qbits':
+      return `Turn ${e.turn}: engine settled the qBit ledger`;
     case 'correction':
       return `${e.agent} (${e.label}): reply sent back to be fixed`;
     case 'unresolved':

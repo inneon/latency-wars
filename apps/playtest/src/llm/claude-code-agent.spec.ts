@@ -34,6 +34,8 @@ process.stdout.write(JSON.stringify(results[n - 1]));
 }
 
 const schema = { type: 'object', properties: { orders: { type: 'array', items: { type: 'string' } } } };
+// What Zod produces: the same, plus a draft 2020-12 declaration the CLI rejects.
+const zodSchema = { $schema: 'https://json-schema.org/draft/2020-12/schema', ...schema };
 const config = {
   id: 'red',
   model: 'claude-sonnet-5-5',
@@ -51,7 +53,7 @@ describe('ClaudeCodeAgent', () => {
     const ledger = new UsageLedger(false);
     const agent = new ClaudeCodeAgent(bin, config, ledger);
 
-    expect(JSON.parse(await agent.send('turn 1', 'Turn 1 prompt', schema))).toEqual({ orders: ['hold'] });
+    expect(JSON.parse(await agent.send('turn 1', 'Turn 1 prompt', zodSchema))).toEqual({ orders: ['hold'] });
     expect(await agent.send('synthesis', 'Write the report')).toBe('The report.');
 
     const [first, second] = calls();
@@ -65,6 +67,7 @@ describe('ClaudeCodeAgent', () => {
     expect(flag(first?.args, '--system-prompt')).toBe('<document name="rules.md">\nTHE RULES\n</document>\n\nYOU ARE RED');
     expect(flag(first?.args, '--model')).toBe('claude-sonnet-5-5');
     expect(JSON.parse(flag(first?.args, '--json-schema') ?? '')).toEqual(schema);
+    expect(flag(first?.args, '--json-schema')).not.toContain('$schema');
     expect(second?.args).not.toContain('--json-schema');
     expect(first?.stdin).toContain('Turn 1 prompt');
 

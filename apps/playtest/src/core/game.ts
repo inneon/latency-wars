@@ -1,21 +1,22 @@
 import type { PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
-import type { HijackQuote } from '../types/quotes';
+import type { HijackQuote, IntelPurchase } from '../types/quotes';
 import type { Scenario } from '../types/scenario';
-import { Feedback, GmFeedback, GmIntel, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import { Feedback, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { askFor } from './ask';
 import {
   type Applied,
   applyResolution,
   type EngineState,
-  intelObservations,
   knowledge,
   messagesArriving,
+  payForEmission,
   quoteHijack,
-  recordIntel,
-  renderIntel,
+  renderQbits,
+  renderQbitsForGm,
   renderQuotes,
   renderSensorPicture,
+  resolveIntel,
   startEngine,
 } from './engine';
 import * as prompts from './prompts';
@@ -50,15 +51,18 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     onUnresolved: (problems: string) => record({ type: 'unresolved', agent, label, problems }),
   });
 
-  // The engine owns positions, visibility and when messages arrive. It applies
-  // each GM resolution, correcting rather than sending it back, and the GM
-  // hears about any corrections at the start of its next resolution.
+  // The engine owns positions, visibility, when messages arrive and the qBit
+  // ledger. It applies each GM resolution, correcting rather than sending it
+  // back, and the GM hears about any corrections at the start of its next
+  // resolution.
   let engine = startEngine(scenario);
   const apply = (resolution: GmResolution, turn: number): Applied => {
     const applied = applyResolution(engine, resolution, players, turn);
     if (applied.adjustments.length || applied.overrides.length) {
       record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides });
     }
+    const statements = applied.engine.ledger.statements.filter((s) => s.turn === turn);
+    if (statements.length) record({ type: 'qbits', turn, statements });
     return applied;
   };
 
@@ -89,23 +93,21 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
 
     // qBit purchases resolve inside the Planning phase (TURN-03), before orders
     // are final. A first submission with any purchase is a request for quotes:
-    // the GM rules on intel (cost and affordability; the engine supplies what it
-    // shows), the engine prices hijacks from the true state (QBIT-07), and the
-    // player then submits for real. The GM is one conversation, so its intel
-    // rulings run one at a time.
+    // the engine charges for intel and shows what it bought (FB-08, FB-10),
+    // prices hijacks from the true state (QBIT-07), and the player then submits
+    // for real.
     const delivered = new Map<string, string>();
     for (const p of scenario.players) {
       const purchases = submissions.get(p.id)?.qbit_purchases ?? [];
       if (purchases.length === 0) continue;
       const parts: string[] = [];
-      let intel: GmIntel | undefined;
+      let intel: IntelPurchase[] = [];
       const intelRequests = purchases.filter((q) => q.kind === 'snapshot' || q.kind === 'ping');
       if (intelRequests.length > 0) {
-        const label = `turn ${turn} intel ${p.id}`;
-        intel = await askFor(gm, label, prompts.gmIntelPrompt(turn, p, intelRequests), GmIntel, corrections('gm', label));
-        const observations = intelObservations(engine, p.id, turn, intel);
-        engine = recordIntel(engine, p.id, turn, observations);
-        parts.push(intel.response, renderIntel(observations));
+        const resolved = resolveIntel(engine, scenario, p.id, turn, intelRequests);
+        engine = resolved.engine;
+        intel = resolved.purchases;
+        parts.push(resolved.text);
       }
       const hijacks = purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
       if (hijacks.length > 0) parts.push(renderQuotes(hijacks));
@@ -130,20 +132,36 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       }),
     );
 
-    // Hijacks in the final submissions are bought at the engine's prices.
+    // The Emission phase's spending (TURN-03): instant orders, then hijacks at
+    // the engine's prices. Whatever a player can't afford is refused, so the GM
+    // never sees it.
     const hijacks = new Map<string, HijackQuote[]>();
-    for (const [id, submission] of submissions) {
-      const bought = submission.qbit_purchases
+    for (const p of scenario.players) {
+      const submission = submissions.get(p.id);
+      if (!submission) continue;
+      const quoted = submission.qbit_purchases
         .filter((q) => q.kind === 'spoof' || q.kind === 'seize')
-        .map((q) => quoteHijack(engine, scenario, id, turn, q));
-      if (bought.length > 0) {
-        hijacks.set(id, bought);
-        record({ type: 'hijacks', turn, player: id, quotes: bought });
+        .map((q) => quoteHijack(engine, scenario, p.id, turn, q));
+      const paid = payForEmission(engine, scenario, p.id, turn, submission, quoted);
+      engine = paid.engine;
+      submissions.set(p.id, paid.submission);
+      if (paid.hijacks.length > 0) {
+        hijacks.set(p.id, paid.hijacks);
+        record({ type: 'hijacks', turn, player: p.id, quotes: paid.hijacks });
       }
     }
 
     const label = `turn ${turn} resolve`;
-    const prompt = prompts.gmResolvePrompt(turn, scenario, submissions, hijacks, engine.units, applied.adjustments, turn === maxRounds);
+    const prompt = prompts.gmResolvePrompt(
+      turn,
+      scenario,
+      submissions,
+      hijacks,
+      engine.units,
+      renderQbitsForGm(engine, scenario, turn),
+      applied.adjustments,
+      turn === maxRounds,
+    );
     latest = await askFor(gm, label, prompt, GmResolution, corrections('gm', label));
     record({ type: 'gm_resolution', turn, resolution: latest });
     applied = apply(latest, turn);
@@ -161,28 +179,34 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   }
 
   // Debrief: everyone answers in their own conversation, so they remember the game they played.
-  const [gmFeedback, playerFeedback] = await Promise.all([
-    askFor(gm, 'debrief', prompts.gmDebriefPrompt, GmFeedback),
-    Promise.all(
-      scenario.players.map(async (p) => ({
-        player: p.id,
-        feedback: await askFor(player(p.id), 'debrief', prompts.playerDebriefPrompt(latest), Feedback),
-      })),
+  // Each debrief stands alone: one that fails is recorded, and the rest of the game's
+  // feedback still counts.
+  const failed = (who: string, what: string) => (err: unknown) =>
+    record({ type: 'warning', message: `${who}'s ${what} failed, so it is missing: ${firstLine(err)}` });
+  await Promise.all([
+    askFor(gm, 'debrief', prompts.gmDebriefPrompt, GmFeedback).then(
+      (feedback) => record({ type: 'gm_feedback', feedback }),
+      failed('The GM', 'debrief'),
+    ),
+    ...scenario.players.map((p) =>
+      askFor(player(p.id), 'debrief', prompts.playerDebriefPrompt(latest), Feedback).then(
+        (feedback) => record({ type: 'player_feedback', player: p.id, feedback }),
+        failed(p.name, 'debrief'),
+      ),
     ),
   ]);
-  record({ type: 'gm_feedback', feedback: gmFeedback });
-  for (const f of playerFeedback) record({ type: 'player_feedback', ...f });
 
-  const report = await agents.analyst.send('synthesis', prompts.synthesisPrompt(synthesisMaterial(events)));
-  record({ type: 'synthesis', report });
+  await agents.analyst
+    .send('synthesis', prompts.synthesisPrompt(synthesisMaterial(events)))
+    .then((report) => record({ type: 'synthesis', report }), failed('The analyst', 'report'));
 
   return events;
 }
 
 /**
  * What each player is told for the Planning phase of `turn`: the GM's note
- * (balance, rules answers), the messages that have just reached them, and the
- * sensor picture.
+ * (rules answers), their qBits, the messages that have just reached them, and
+ * the sensor picture.
  */
 function composeReports(engine: EngineState, scenario: Scenario, resolution: GmResolution, turn: number): Map<string, string> {
   return new Map(
@@ -195,7 +219,7 @@ function composeReports(engine: EngineState, scenario: Scenario, resolution: GmR
             .join('\n')}`
         : '## Messages received\n\nNone.';
       const picture = renderSensorPicture(knowledge(engine, scenario, p.id, turn));
-      return [p.id, [note, messages, picture].filter(Boolean).join('\n\n')];
+      return [p.id, [note, renderQbits(engine, p.id, turn), messages, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }
@@ -222,10 +246,9 @@ function synthesisMaterial(events: PlaytestEvent[]): string {
         if (!q.refused) hijackNotes.push(`- Turn ${e.turn}, ${e.player}: ${q.kind} ${q.target} → ${q.order} for ${q.cost} qBits${q.fails ? ` (failed: ${q.fails})` : ''}`);
       }
     }
-    if (e.type === 'setup' || e.type === 'gm_resolution' || e.type === 'quotes') {
+    if (e.type === 'setup' || e.type === 'gm_resolution') {
       const turn = e.type === 'setup' ? 0 : e.turn;
-      const list = e.type === 'quotes' ? (e.intel?.rulings ?? []) : e.resolution.rulings;
-      for (const r of list) {
+      for (const r of e.resolution.rulings) {
         rulings.push(`- Turn ${turn} [${r.basis}] (${r.rule_ids.join(', ') || 'no rule'}) ${r.situation} → ${r.ruling}`);
       }
     } else if (e.type === 'player_turn') {
@@ -262,4 +285,11 @@ ${confusions.join('\n') || '(none)'}
 <debrief_feedback>
 ${feedback.join('\n\n')}
 </debrief_feedback>`;
+}
+
+/** The first line of an error, which carries what went wrong without the CLI's full JSON. */
+function firstLine(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  const safeguards = /safeguards flagged/.test(text) ? ' (declined by the model\'s safeguards)' : '';
+  return `${text.split('\n')[0]?.slice(0, 200) ?? ''}${safeguards}`;
 }
