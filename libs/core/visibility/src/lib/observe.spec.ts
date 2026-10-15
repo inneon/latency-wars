@@ -40,6 +40,21 @@ describe('observe (LIGHT-01, LIGHT-02)', () => {
     expect(observations.filter((o) => o.observer === 'blue' && o.unit.id === 't')).toHaveLength(1);
   });
 
+  it('a destroyed unit is seen as destroyed by sensors in range, and sees nothing itself (COMBAT-04)', () => {
+    const redLine = unit('red-line', 'red', 'fleet', hex(0, -1));
+    const blueRaider = unit('blue-raider', 'blue', 'fleet', hex(0, -1), { strength: 0 });
+    const blueFlag = unit('blue-flag', 'blue', 'flagship', hex(0, 3)); // 4 away: out of range
+    const redFlag = unit('red-flag', 'red', 'flagship', hex(9, 0));
+    const observations = observe(7, [redLine, blueFlag, redFlag], [blueRaider]);
+    const wreck = (observer: string) => observations.find((o) => o.observer === observer && o.unit.id === 'blue-raider');
+    expect(wreck('red')).toMatchObject({ turn: 7, destroyed: true, unit: blueRaider });
+    expect(wreck('blue')).toBeUndefined();
+    // Living units carry no `destroyed` flag at all.
+    expect(observations.find((o) => o.unit.id === 'red-line')).not.toHaveProperty('destroyed');
+    // The wreck is not a sensor: Blue sees neither it nor the adjacent Red Line through it.
+    expect(seenBy(observations, 'blue')).toEqual(['blue-flag']);
+  });
+
   it('Red Line moving to (1, 0) catches Blue Raider at (0, 2) (the-hunt turn 3)', () => {
     const redLine = { ...theHunt.redLine, hex: hex(1, 0) };
     const blueRaider = { ...theHunt.blueRaider, hex: hex(0, 2) };

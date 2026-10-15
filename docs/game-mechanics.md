@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.2)
+# Latency Wars - Game Mechanics (v0.3)
 
 ## 0. About This Document
 
@@ -43,6 +43,11 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Doctrine** | A fleet's standing rules for acting on its own when it has no order, or when an order no longer fits. |
 | **Confirmed position** | Where a player's own fleet was, per its latest status report. |
 | **Projected position** | Where a player's own fleet should be now, worked out from its confirmed position and the orders in force. |
+| **Step** | One slice of the Movement phase. A unit moves at most one hex per step. |
+| **Willing** | A unit that wants to fight a given enemy: it has an Attack order on it, or its doctrine would engage it (`MOVE-04`). |
+| **Engagement** | Two hostile units that come within `ENGAGE_RANGE` during Movement, at least one of them willing. Engaged units stop and fight. |
+| **Engagement group** | All units joined by engagements, plus every unit sharing a hex with one of them. Each group fights one combat. |
+| **Spoof / Seize** | qBit actions that override an enemy fleet's orders for one turn (`QBIT-02`, `QBIT-03`). |
 
 ---
 
@@ -66,9 +71,15 @@ All values are placeholders, to be tuned by playtesting.
 | `REFLEX_RANGE` | Default range for automatic reactions | 2 hexes | |
 | `ENGAGE_RATIO` | Default engage threshold (Balanced) | 1.0 | Estimated own strength ÷ enemy strength. |
 | `RETREAT_AT` | Default retreat threshold | 30% strength | |
-| `QBIT_ORDER_COST` | Cost of an instant order | TBD | Open: flat or scaled by distance (`QBIT-05`). |
-| `QBIT_INTEL_COST` | Cost of an instant intel snapshot | TBD | |
-| `QBIT_PING_COST` | Cost of a ping | TBD | |
+| `ENGAGE_RANGE` | Distance at which hostile units engage during Movement | 1 hex | `MOVE-03` |
+| `QBIT_DIVISOR` | Divides link output into qBits | 16 | `ECON-01`. With a length-8 link, 64 ÷ 16 = 4 qBits/turn. |
+| `BUILD_TURNS` | Economy phases a builder must spend in a zone | 2 | `ECON-03` |
+| `QBIT_ORDER_COST` | Cost of an instant order | 4 | Open: flat or scaled by distance (`QBIT-05`). |
+| `QBIT_INTEL_COST` | Cost of an instant intel snapshot | 5 | `FB-10` |
+| `QBIT_PING_COST` | Cost of a ping | 2 | `FB-08` |
+| `QBIT_SPOOF_COST` | Cost of a spoof | 5 | `QBIT-02` |
+| `QBIT_SEIZE_COST` | Cost of a seize | 10 | `QBIT-03`. Watch it: at 4 qBits/turn it's affordable by about turn 3. |
+| `HIJACK_MAX_AGE` | Oldest track a spoof or seize can be aimed with | 1 turn | `QBIT-04` |
 
 ---
 
@@ -83,19 +94,21 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 | # | Phase | What happens |
 |---|---|---|
 | 1 | **Planning** | Each player sees their knowledge state (section 5) and submits orders. Instant intel and pings are resolved immediately during this phase. |
-| 2 | **Emission** | Light orders are emitted from the flagship's current hex. Instant orders are delivered and their qBits spent. |
+| 2 | **Emission** | Light orders are emitted from the flagship's current hex. Instant orders, spoofs and seizes are delivered and their qBits spent. |
 | 3 | **Delivery** | Light orders whose wavefront has reached their recipient are delivered (`ORD-04`). |
-| 4 | **Decision** | Each fleet works out its behaviour for the turn: it resolves newly delivered orders (section 7) and applies doctrine (section 9). |
-| 5 | **Movement** | All units move simultaneously. |
-| 6 | **Combat** | Combat resolves in contested hexes (see section 11, placeholder). |
-| 7 | **Economy** | Production, construction and upkeep. |
-| 8 | **Observation** | Sensors record observations. Every unit emits its status report, plus any acks, queries or execution reports. All of these carry this turn as their observation turn. |
+| 4 | **Decision** | Each fleet works out its behaviour for the turn: it resolves newly delivered orders and applies doctrine (`RES-01`, `AUTO-03`). A spoofed or seized fleet follows the hijacker's order instead (`QBIT-02`, `QBIT-03`). |
+| 5 | **Movement** | All units move simultaneously, step by step. Engaged units stop (`MOVE-01`, `MOVE-03`). |
+| 6 | **Combat** | Each engagement group fights (`COMBAT-02`). |
+| 7 | **Economy** | qBit production, construction and unit production (`ECON-01`, `ECON-03`; unit production is a placeholder). |
+| 8 | **Observation** | Sensors record observations, including units destroyed in this turn's combat (`COMBAT-04`). Every unit emits its status report, plus any acks, queries or execution reports. All of these carry this turn as their observation turn. |
 
 *Why this order:* delivery happens before decision, so an order can affect behaviour in the turn it arrives. Observation is last, so what players see always describes the end of a turn.
 
 ---
 
-## 4. Space and Distance — **Proposed**
+## 4. Space, Distance and Movement — **Proposed**
+
+### 4.0 Space
 
 - **SPACE-01** The star system is a disc of hexes centred on the star.
 - **SPACE-02** Orbital bands are rings of hex distance from the star. Orbital zones (design doc 4.1) are specific hexes with environmental bonuses.
@@ -104,6 +117,21 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   - *Note:* hex distance overestimates straight-line distance by up to ~15% on diagonals. This is accepted for legibility. It's revisitable if link-length production (length²) feels distorted.
 - **SPACE-04** Hexes do not drift. Orbital drift is cosmetic only (design doc 9.2).
 - **SPACE-05** Hexes are identified by axial coordinates, always written `(q, r)`, in rules, engine data, logs and UI alike. Distance is `(|q1 − q2| + |r1 − r2| + |q1 + r1 − q2 − r2|) / 2`.
+- **SPACE-06** The star's hex is impassable: units route around it. It blocks nothing else. Sensors, light and entangled signals pass straight through, and distances are measured straight across it.
+
+### 4.1 Movement and engagement
+- **MOVE-01** Movement resolves in steps, as many as the fastest speed on the map. A unit with speed `v` moves one hex in each of the first `v` steps. All units take each step simultaneously.
+- **MOVE-02** Before each step, a moving unit picks its next hex towards its destination by the shortest path (`RES-07`). A pursuing unit aims at its target's position at the start of that step (`RES-04`).
+- **MOVE-03** After each step, two hostile units within `ENGAGE_RANGE` of each other **engage** if at least one of them is willing to fight the other (`MOVE-04`). Engaged units stop moving for the rest of the turn and fight in the Combat phase.
+  - Two units that swap hexes, or whose paths cross, end the step adjacent, so they engage.
+  - Engagement uses true positions, not anyone's knowledge. It is a physical event at the units' location.
+- **MOVE-04** A unit is **willing** to fight an enemy when:
+  - its active order is `Attack` on that enemy; or
+  - it has a `Defend` order and the enemy is within `ENGAGE_RANGE` of the defended hex; or
+  - its doctrine would engage that enemy (`AUTO-03` priority 4).
+
+  Flagships and nodes are never willing (`FLAG-01`). An unwilling unit still fights back once engaged (`COMBAT-01`).
+  - *Why:* a faster pursuer catches a slower target, crossing paths causes a fight, and an equally fast target that runs early gets away. An Evasive fleet avoids a fight by never ending a step within range of an enemy that wants one.
 
 ---
 
@@ -131,7 +159,8 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   `distance(x, F_P(T)) ≤ C × (T − 1 − t_o)`
 
   where `F_P(T)` is P's flagship position at the start of turn `T`. For a stationary flagship this is turn `t_o + 1 + L(d)` (`LIGHT-15`).
-  - *Simplification:* delay is measured directly from the observed hex to the flagship, not via the sensor that saw it. Sensors decide **whether** something is seen; distance decides **when**. See open question `OPEN-01`.
+  - Incoming information depends on where the flagship is *now*: moving towards a report brings it sooner. Outgoing orders are the opposite: they depend on where the flagship *was* when it sent them (`ORD-04`).
+  - *Simplification:* delay is measured directly from the observed hex to the flagship, not via the sensor that saw it. Sensors decide **whether** something is seen; distance decides **when**. See open question `OPEN-01`; play-test players preferred keeping it direct.
 - **LIGHT-04** Every unit's speed MUST be less than `C`. *Why:* this guarantees that once information has reached a flagship or fleet, it can't outrun it. Visibility and delivery then only ever move forward, and are simple to compute.
 - **LIGHT-05** A player's **knowledge state** for turn `T` is the latest visible observation of each object. Players never see anything else, including their own fleets.
 
@@ -180,13 +209,18 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 
   `distance(s, U(T_d)) ≤ C × (T_d − T_s)`
 
-  where `U(T_d)` is the recipient's position at the start of `T_d`. The wavefront is centred where it was emitted, so moving the flagship afterwards doesn't change it. For a stationary recipient this is turn `T_s + L(d)` (`LIGHT-15`).
-- **ORD-05** Orders to local fleets are delivered in the same turn they are sent. The flagship's own movement and doctrine changes are orders like any other: always local, so delivered immediately and free.
+  where `U(T_d)` is the recipient's position at the start of `T_d`. The wavefront is centred where it was emitted, so moving the flagship afterwards never changes when an order already sent arrives. Only the recipient's movement can. For a stationary recipient this is turn `T_s + L(d)` (`LIGHT-15`).
+- **ORD-05** Orders to local fleets are delivered in the same turn they are sent. The flagship's own orders (movement, doctrine changes) are orders like any other: always local, so delivered immediately. They count towards `ORD-08` and never cost qBits.
 - **ORD-06** Instant orders (qBits) are delivered in the Emission phase of the turn they are sent, whatever the distance. The recipient resolves them in that turn's Decision phase (section 7), so they take effect in that same turn's Movement and Combat.
 - **ORD-07** A fleet has at most one **active order**. A delivered order replaces the active order only if its send turn is later than the active order's. Otherwise it is discarded and acknowledged as **Stale**. (`ORD-08` means two orders to one fleet never share a send turn.)
-- **ORD-09** *(Proposed)* An instant order's ack comes back over the same entangled channel: it is visible in the next turn's Planning phase, whatever the distance. Everything else the fleet sends (status reports, execution reports) still travels at light speed.
+  - *Why:* if the flagship moves, an order sent later from closer can arrive before an earlier one. Instant orders overtake light orders too. Ordering by send time keeps the player's latest intent in charge. The outbox warns when an order in flight has been overtaken (`FB-07`).
+- **ORD-09** An instant order's ack comes back over the same entangled channel: it is visible in the next turn's Planning phase, whatever the distance. If the recipient doesn't respond, the ack is **No answer** (`FB-09`). Everything else the fleet sends (status reports, execution reports) still travels at light speed, so the map doesn't update until those arrive.
   - *Why:* part of what the qBits buy is knowing the order landed. *Open:* whether this should cost extra.
-  - *Why:* if the flagship moves, an order sent later from closer can arrive before an earlier one. Instant orders overtake light orders too. Ordering by send time keeps the player's latest intent in charge.
+
+### 6.3 The flagship
+- **FLAG-01** The flagship is never willing to fight (`MOVE-04`) and can't be given an `Attack` order. Once engaged, it fights back like any unit (`COMBAT-01`).
+  - *Why:* zero command lag makes the flagship the best-commanded unit on the map. If it could also start fights, "lead from the front" would dominate. It should be valuable to keep near the front, not a warship.
+- **FLAG-02** The flagship can't build nodes, and can't be spoofed or seized (`QBIT-04`).
 
 ---
 
@@ -210,14 +244,14 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 
 ### 7.2 Attacking a track
 - **RES-04** On accepting `Attack(track)`, the fleet uses its own current sensor picture:
-  - If the target is within the fleet's sensor range, it pursues.
-  - Otherwise it moves to the freshest last known position available (the order's, or its own if fresher).
+  - If the target is within the fleet's sensor range, it pursues: each step it heads for the target's current position (`MOVE-02`), and engages it when in range (`MOVE-03`).
+  - Otherwise it moves to the freshest last known position available (the order's, or its own if fresher), and pursues as soon as its sensors pick the target up.
 - **RES-05** The fleet pursues within the leash (range from the last known position, and duration). If the target isn't reacquired by the time it reaches the last known position, or the leash runs out, the fleet carries out the fallback and reports **Target lost**.
 - **RES-06** If the fleet observes its target destroyed (by itself or anyone else), the order is **Completed** and the fleet carries out the fallback.
-- *Known gap:* with simultaneous movement, a fleet pursuing a *moving* target moves to where the target was, and the target moves away. In the first play-test, attacks only connected against stationary units. Making pursuit work needs an interception rule (`OPEN-06`).
 
 ### 7.3 Location objectives
-- **RES-07** An objective tied to a hex (`MoveTo`, `Defend`, `Patrol`, `Build`) has the fleet move there at full speed by the shortest path until it is in place. Multi-turn work (such as a build countdown) starts with the first Economy phase the fleet spends in place.
+- **RES-07** An objective tied to a hex (`MoveTo`, `Defend`, `Patrol`, `Build`) has the fleet move there at full speed by the shortest path until it is in place. Multi-turn work (such as a build countdown) starts with the first Economy phase the fleet spends in place (`ECON-03`).
+  - A destination is never "too far". A unit, flagship included, moves up to its speed each turn until it arrives.
 
 ### 7.4 Outcomes by situation
 
@@ -251,15 +285,19 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | State | Meaning |
 |---|---|
 | **In transit** | Sent. Expected arrival worked out against the recipient's projected position. |
+| **Overtaken** | Still in transit, but a newer order to the same fleet will arrive first, so this one will be discarded as Stale (`ORD-07`). |
 | **Awaiting ack** | Expected arrival has passed. Shows the turn the ack is due. |
 | **Acknowledged** | An ack has arrived (shows its type). |
 | **Executing / Completed / Failed** | From execution reports. |
 | **Delayed** | The ack is overdue but status reports are still arriving. The fleet is probably further away than projected. |
 | **Recipient silent** | The ack is overdue and status reports have stopped. |
 
-### 8.4 qBit ping
-- **FB-08** A player MAY spend `QBIT_PING_COST` in Planning to ping a unit. The ping instantly returns whether the unit exists and its status at the end of the previous turn.
+### 8.4 Instant information
+- **FB-08** A player MAY spend `QBIT_PING_COST` in Planning to ping one of their units. The ping instantly returns the unit's status at the end of the previous turn, or **No answer** (`FB-09`).
 - *Why:* paying for certainty becomes a real decision.
+- **FB-09** A unit that is destroyed or comms-silent (`AUTO-07`) doesn't answer the entangled channel. A ping or instant order sent to it returns **No answer**, and the qBits are still spent.
+  - *Why:* "No answer" narrows the possibilities without handing over the full truth. It rules out "just delayed", but can't tell destroyed from deliberately silent.
+- **FB-10** A player MAY spend `QBIT_INTEL_COST` in Planning for an **instant intel snapshot**: everything their units' sensors observed at the end of the previous turn becomes visible at once, with age 0.
 
 ---
 
@@ -321,11 +359,45 @@ From observation to seeing the response takes 11 turns: roughly `3d/C + 2`.
 
 ---
 
-## 11. Placeholders (to be specified)
-- **Combat resolution:** happens in hexes where opposing units end movement. Strength model, damage and retreat are TBD (design doc open question 10).
-  - **COMBAT-01** *(Proposed)* Every unit in a contested hex fights, whatever its order. Commitment (`Discretion` / `AtAllCosts`) and the objective decide what a fleet *does*: where it moves, whether it starts a fight. They never decide whether it fights back.
-- **Economy phase:** the order of production, construction and upkeep.
-- **Node construction rules** (design doc open question 7).
+## 11. Combat, Economy and qBits — **Proposed**
+
+How much damage a unit deals, and its strength, are still set per scenario (design doc open question 10). The rules below say who fights whom, where damage goes, and what everyone learns.
+
+### 11.1 Combat
+- **COMBAT-01** Every unit in an engagement group fights, whatever its order. Commitment (`Discretion` / `AtAllCosts`) and the objective decide what a fleet *does*: where it moves, whether it starts a fight. They never decide whether it fights back.
+- **COMBAT-02** Each engagement group (units joined by `MOVE-03`, plus every unit sharing a hex with one of them) fights one combat in the Combat phase. Damage on both sides is dealt simultaneously.
+- **COMBAT-03** Where damage goes:
+  1. A unit with an `Attack` order deals its damage to its target.
+  2. A fleet in the same group with an `Escort` order on that target takes the damage in its place first, up to its remaining strength. Any excess goes through to the target.
+  3. All other damage is assigned by the receiving player.
+  - *Why:* escorting the flagship is a deliberate choice that costs a fleet's orders, and an unescorted flagship can be assassinated. Screening exists, but only on purpose.
+- **COMBAT-04** In the Observation phase, every surviving sensor in range observes the units destroyed in that turn's combat, as destroyed. Sensors in the same engagement group always do.
+  - *Why:* units destroyed in Combat no longer exist by Observation, so without this rule nobody would ever see a fight's result, not even the winner.
+
+### 11.2 Economy and the web
+- **ECON-01** In the Economy phase, each player gains `Σ (k × length²) ÷ QBIT_DIVISOR` qBits over all their links, exactly, with no rounding. Balances may hold fractions. A player can spend qBits only if their balance covers the cost.
+  - *Why:* rounding swallowed every small gain in play-tests, so expansion looked worthless. Length² still makes short links weak; that's intended.
+- **ECON-02** A completed node is linked to every other node its owner has. Every link produces.
+  - *Why:* links cost nothing, so choosing them would be a trivial decision. Placement becomes the decision. A node in a contested zone links to the whole web, which makes it valuable and worth attacking.
+- **ECON-03** A fleet with a `Build(node, zone)` order builds a node after spending `BUILD_TURNS` Economy phases in an empty orbital zone (no node in it).
+  - An Economy phase in which the builder fought doesn't count, but its progress isn't lost.
+  - Leaving the zone resets the progress. The builder being destroyed ends it.
+  - Only fleets build, not the flagship (`FLAG-02`). A scenario MAY bar other unit classes from building.
+
+### 11.3 Unit production — **Placeholder**
+How players get new units is not yet designed (`OPEN-10`). Until it is, each scenario defines its own reinforcements, if any, as a house rule.
+
+### 11.4 Spending qBits
+- **QBIT-01** In Planning, a player MAY spend qBits on: an instant order (`QBIT_ORDER_COST`, `ORD-06`), an intel snapshot (`QBIT_INTEL_COST`, `FB-10`), a ping (`QBIT_PING_COST`, `FB-08`), a spoof (`QBIT_SPOOF_COST`, `QBIT-02`) or a seize (`QBIT_SEIZE_COST`, `QBIT-03`).
+- **QBIT-02** **Spoof:** inject a fake order into an enemy fleet. It is delivered in Emission, and the fleet carries out a non-combat order of the spoofer's choosing (`MoveTo`, `Hold` or `ReturnHome`) for that turn, overriding its own order and doctrine. Its own active order resumes the next turn.
+- **QBIT-03** **Seize:** take over an enemy fleet for one turn. It follows any order the seizer gives it, including `Attack`, and fights on the seizer's side in that turn's combat. It returns to its owner's control the next turn.
+- **QBIT-04** A spoof or seize needs:
+  - a track on the target no older than `HIJACK_MAX_AGE`, because you need to know where to aim;
+  - a target that isn't a flagship, isn't comms-silent (`AUTO-07`) and isn't local to its own flagship, because local command is secure.
+
+  A spoof or seize overrides any order the owner delivers to that fleet in the same turn.
+- **QBIT-06** A spoofed or seized fleet's status report for that turn records that it acted on an order its owner didn't send. The owner learns this when that report arrives at light speed; until then the fleet just looks Diverged (`LIGHT-13`) once its movement shows up.
+  - *Why:* the victim only finds out after the fact, through delayed reports.
 
 ---
 
@@ -339,9 +411,11 @@ From observation to seeing the response takes 11 turns: roughly `3d/C + 2`.
 | `OPEN-04` | Jamming: what does it block (delivery, reports, both)? What area does it cover, and what does it cost? | |
 | `OPEN-05` | Can units relay orders or extend sensor coverage (comms relays)? | |
 | `QBIT-05` | Instant order cost: flat, or scaled by distance? | A flat cost makes far-off instant orders the best value. A scaled cost makes local light orders and instant orders closer in value. |
-| `OPEN-06` | **Interception.** How does a fleet catch a moving target? Options: units whose paths cross in the same turn fight; zones of control (moving next to an enemy stops you); or attack moves resolve after other moves. | **Priority.** Without one of these, pursuit never connects under simultaneous movement (see `RES-06` note). |
 | `OPEN-07` | Flagship movement: any limits beyond speed (fuel, cooldown, signature when moving)? | Design doc open question 5. |
 | `OPEN-08` | Does hex distance distort link-length production enough to matter? | See `SPACE-03`. |
+| `OPEN-09` | Is there a maximum link length, or an upkeep per link (for example, power from design doc 3.3)? | With `ECON-02` every node links to every other, so production grows fast as the web grows. That's intended (design doc 2.6), but this is the brake if it's too fast. |
+| `OPEN-10` | Where do units come from? | Production should come from something the player controls, such as the metals and fuel tiers in the design doc. Where new units appear matters as much as how many: at nodes makes the web worth defending, at the flagship adds another pull towards the front. |
+| `OPEN-11` | Should orders be queueable ("do this after your current order")? | Asked for because a newer order discards an older one in flight (`ORD-07`). The outbox's Overtaken state (`FB-07`) may be enough. |
 
 ---
 
@@ -351,6 +425,9 @@ Rules taken out of the mechanics. Their IDs stay reserved here so they aren't re
 
 | ID | Retired in | Replaced by | Reason |
 |---|---|---|---|
+| `OPEN-06` | v0.3 | `MOVE-01`, `MOVE-02`, `MOVE-03`, `MOVE-04`, `RES-04` | Interception is now answered by step-by-step movement and engagement range. |
+| `PROD-01` | v0.3 | Scenario house rules | Probe and raider reinforcements are a test stopgap, not core mechanics. Unit production is a placeholder (`OPEN-10`). |
+| `PROD-02` | v0.3 | Scenario house rules | The probe is a scenario unit class. |
 
 ---
 

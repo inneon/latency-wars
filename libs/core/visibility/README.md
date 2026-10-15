@@ -15,9 +15,9 @@ Import with `@latency-wars/visibility`. Types for hexes and units come from `@la
 | `observationArrivalTurn(hex, t_o, flagship, c, through)` | LIGHT-03 | When an end-of-turn observation becomes visible |
 | `orderDeliveryTurn(sentFrom, sentTurn, recipient, c, through)` | ORD-04, ORD-05 | When a light order lands; the wavefront is centred where the flagship *was* |
 | `forecastArrivalTurn(signal, path, c, from)` | LIGHT-15, FB-07 | Expected arrival if the receiver holds its current position |
-| `observe(turn, units)` | LIGHT-01, LIGHT-02 | What every player's sensors record at the end of a turn |
-| `recordTurnEnd(log, turn, units)` | — | Append a turn's true state to the log; every unit's start-of-turn path is derived from it |
-| `recordInstantArrival(log, player, turn, observations)` | FB-08, ORD-09 | Observations a player receives without light delay: an intel snapshot, a ping, an instant-order ack |
+| `observe(turn, units, destroyed)` | LIGHT-01, LIGHT-02, COMBAT-04 | What every player's sensors record at the end of a turn, including units they saw destroyed |
+| `recordTurnEnd(log, turn, units, destroyed)` | — | Append a turn's true state to the log; every unit's start-of-turn path is derived from it |
+| `recordInstantArrival(log, player, turn, observations)` | FB-08, FB-10, ORD-09 | Observations a player receives without light delay: an intel snapshot, a ping, an instant-order ack |
 | `unitPath(log, unitId)`, `flagshipPath(log, player)` | — | A unit's start-of-turn positions, for `orderDeliveryTurn` and `knowledgeState` |
 | `unitPresentAt(log, unitId, turn)` | RES-01 | Whether the unit was still on the map at the start of a turn, so a delivery turn to it means anything |
 | `knowledgeState(log, player, turn, params)` | LIGHT-05, 06, 09, 10, FB-05 | Everything the player may be told in that turn's Planning phase, by light or instantly |
@@ -33,8 +33,9 @@ import { emptyLog, recordHeldTurns, recordTurnEnd, recordInstantArrival, knowled
 // own status report has reached its flagship before play begins.
 let log = recordHeldTurns(emptyLog<MyUnit>(), -3, 0, startingUnits);
 
-// Each turn, after phase 8, with every surviving unit's true end-of-turn state:
-log = recordTurnEnd(log, turn, unitsAtEndOfTurn);
+// Each turn, after phase 8, with every surviving unit's true end-of-turn state and
+// the units destroyed in combat, at the hex where they died:
+log = recordTurnEnd(log, turn, unitsAtEndOfTurn, destroyedThisTurn);
 
 // Instant intel bought in the Planning phase of turn + 1: whatever the game grants,
 // here everything Blue's sensors recorded at the end of this turn.
@@ -42,7 +43,7 @@ log = recordInstantArrival(log, 'blue', turn + 1, log.observations.filter((o) =>
 
 // Each player's report for the next Planning phase:
 const blue = knowledgeState(log, 'blue', turn + 1, { c: 3, trackDecay: 8 });
-blue.own;      // status reports: unit as last seen, observedTurn, age, isNew, possibilityRadius
+blue.own;      // status reports: unit as last seen, observedTurn, age, isNew, possibilityRadius, destroyed
 blue.contacts; // the same for enemy units, plus `lost`
 blue.silent;   // own units whose next report is overdue: { unitId, sinceTurn, lastHeard }
 ```
@@ -55,7 +56,8 @@ blue.silent;   // own units whose next report is overdue: { unitId, sinceTurn, l
 - **Arrival is only ever computed for turns whose flagship position is known.** `knowledgeState` for turn `T` needs the log to cover the end of `T − 1`. Nothing is assumed about future movement; `forecastArrivalTurn` is the explicit "if you hold position" estimate.
 - **Silence assumes the unit stayed put.** A unit that moved away can be flagged while its report is merely delayed; it clears when the report lands. The rules want silence ambiguous (`FB-06`), so this is acceptable for now. Distinguishing "Delayed" from "Recipient silent" (`FB-07`) needs projected positions from orders, which this library doesn't know about.
 - **An observation that arrives twice is new once.** If instant intel delivers a sighting and the same sighting later arrives by light, the entry keeps its first arrival turn and `isNew` is false the second time.
-- **What an instant arrival contains is the caller's decision**, within one constraint: the observations must be the player's own. The library records and merges them; which of a player's observations a snapshot, ping or ack grants is a rule (`FB-08`, `ORD-09`) or a house rule.
+- **What an instant arrival contains is the caller's decision**, within one constraint: the observations must be the player's own. The library records and merges them; which of a player's observations a snapshot, ping or ack grants is the rules' business (`FB-08`, `FB-09`, `FB-10`, `ORD-09`).
+- **A destroyed unit is seen by sensors in range of where it died**, and the entry says so: no possibility cloud, never Lost, and its owner isn't told it's silent. `COMBAT-04` also says sensors in the same engagement group always see it; with `ENGAGE_RANGE` below every sensor range that follows from range alone, so the library doesn't model groups.
 - **A path outlives its unit.** `positionAt` carries a unit's last position forward after it leaves the log, so `orderDeliveryTurn` will happily deliver to where a destroyed fleet used to be. `unitPresentAt` is the check that turns that into a lost order (`RES-01`).
 - **Not covered:** track correlation and decoys (`OPEN-02`), jamming (`OPEN-04`), relays (`OPEN-05`).
 

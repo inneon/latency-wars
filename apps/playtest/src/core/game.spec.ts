@@ -44,7 +44,7 @@ const resolution = (scenario: Scenario, turn: number, over = false, redMentions:
     { player_id: 'blue', report: `SECRET-BLUE-${turn}`, mentions: [{ unit_id: 'blue-line', observed_turn: turn - 1 }] },
     { player_id: 'red', report: `SECRET-RED-${turn}`, mentions: redMentions },
   ],
-  rulings: [{ situation: 'pass-through', ruling: 'they fight', rule_ids: ['OPEN-06'], basis: 'invented' }],
+  rulings: [{ situation: 'pass-through', ruling: 'they fight', rule_ids: ['MOVE-03'], basis: 'invented' }],
   game_over: over,
   outcome: over ? 'Blue wins' : '',
 });
@@ -123,7 +123,7 @@ describe('runPlaytest', () => {
     expect(events.filter((e) => e.type === 'gm_resolution')).toHaveLength(2);
     expect(gm.prompts.at(-1)?.label).toBe('debrief');
     expect(events.filter((e) => e.type === 'player_feedback')).toHaveLength(2);
-    expect(analyst.prompts[0]?.prompt).toContain('[invented] (OPEN-06) pass-through → they fight');
+    expect(analyst.prompts[0]?.prompt).toContain('[invented] (MOVE-03) pass-through → they fight');
     expect(analyst.prompts[0]?.prompt).toContain('Turn 1, blue: what is age?');
     expect(events.at(-1)).toEqual({ type: 'synthesis', report: 'REPORT' });
   });

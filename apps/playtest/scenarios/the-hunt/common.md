@@ -23,17 +23,16 @@
 These are stopgaps for things the rules leave as placeholders. They are not part of the design under test.
 
 - **Resources:** metals, fuel and power are abstracted away. Fleets have unlimited fuel.
-- **qBit production:** in the Economy phase, each player gains floor(Σ k × length² ÷ 16) qBits, summed over their links (k = 1 unless a bonus says otherwise). Every intact link produces (the link-cutting proposal in design doc 5.4 is not used here).
-- **qBit costs:** instant order 4, instant intel snapshot 5, ping 2. An instant intel snapshot shows everything all your units' sensors observed at the end of the previous turn, with age 0.
-- **Combat:** after Movement, opposing units in the same hex fight. Each side deals damage equal to half its total strength, rounded up, to the other side, simultaneously. The owner assigns damage to their units, largest first. A unit at 0 strength is destroyed. Nodes have strength 2 and deal no damage. Combat repeats each turn while opposing units share a hex.
+- **Link output:** k = 1 unless a zone bonus says otherwise. The link-cutting proposal in design doc 5.4 is not used here: every intact link produces.
+- **Damage** (the part of combat the rules leave per scenario): each side in an engagement group deals damage equal to half its total strength, rounded up. A unit at 0 strength is destroyed. Nodes have strength 2 and deal no damage. Combat repeats each turn while units stay engaged.
 - **Sensors:** a sensor sees an enemy unit's exact strength.
-- **Building nodes:** a fleet with a `Build(node, zone)` order that spends the Economy phase of two consecutive turns in an empty orbital zone builds a node there. On completion its owner names one of their existing nodes to link it to (link length = distance between them). It costs nothing.
+- **Reinforcements** (unit production is a placeholder in the rules): in each Economy phase, each player gets a new probe, as long as they have fewer than 3. On turns 3 and 6, each player also gets a new raider (a fast fleet: strength 2, speed 2). New units appear at their owner's node nearest the owner's flagship, with no order, Balanced doctrine and that node as home. Their owner learns of them through their status reports, at light speed like anything else.
+- **Probes:** strength 0, speed `V_FAST`, sensor range `SENSOR_FLEET`. A probe is never willing to fight, can't build or escort, and is destroyed by any engagement. It counts as a fleet for orders and status reports.
 - **Transmissions** (`OPEN-03`): sending orders and status reports does not reveal the sender.
+
+Everything else, including qBit costs, production, node building and links, is as the mechanics doc says.
 
 ## Victory
 
 - If your flagship is destroyed, you lose immediately.
-- Otherwise, after the final turn, the player with the highest qBit production per turn wins. Ties are broken by the number 
-of surviving fleets, counting the flagship but not nodes; most 
-wins. If still tied, the player whose flagship is closer to 
-the star at (0, 0) wins. Otherwise it's a draw.
+- Otherwise, after the final turn, the player with the highest qBit production per turn wins. Ties are broken by the total current strength of all surviving fleets, counting the flagship but not nodes (probes add 0); highest wins. If still tied, the player whose flagship is closer to the star at (0, 0) wins. Otherwise it's a draw.
