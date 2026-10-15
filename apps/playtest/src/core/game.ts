@@ -7,11 +7,15 @@ import { askFor } from './ask';
 import {
   type Applied,
   applyResolution,
+  deliverReportedLosses,
   type EngineState,
   knowledge,
   messagesArriving,
   payForEmission,
   quoteHijack,
+  recordOrders,
+  renderOrdersForGm,
+  renderOutbox,
   renderQbits,
   renderQbitsForGm,
   renderQuotes,
@@ -72,6 +76,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   engine = applied.engine;
 
   for (let turn = 1; turn <= maxRounds && !latest.game_over; turn++) {
+    engine = deliverReportedLosses(engine, scenario, turn);
     const reports = composeReports(engine, scenario, latest, turn);
     for (const [id, text] of reports) record({ type: 'report', turn, player: id, text });
 
@@ -82,7 +87,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
         const submission = await askFor(
           player(p.id),
           `turn ${turn}`,
-          prompts.playerTurnPrompt(turn, reports.get(p.id) ?? ''),
+          prompts.playerTurnPrompt(turn, maxRounds, reports.get(p.id) ?? ''),
           PlayerTurn,
           corrections(p.id, `turn ${turn}`),
         );
@@ -143,7 +148,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
         .filter((q) => q.kind === 'spoof' || q.kind === 'seize')
         .map((q) => quoteHijack(engine, scenario, p.id, turn, q));
       const paid = payForEmission(engine, scenario, p.id, turn, submission, quoted);
-      engine = paid.engine;
+      engine = recordOrders(paid.engine, p.id, turn, paid.submission.orders);
       submissions.set(p.id, paid.submission);
       if (paid.hijacks.length > 0) {
         hijacks.set(p.id, paid.hijacks);
@@ -158,6 +163,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       submissions,
       hijacks,
       engine.units,
+      renderOrdersForGm(engine, scenario, turn),
       renderQbitsForGm(engine, scenario, turn),
       applied.adjustments,
       turn === maxRounds,
@@ -205,8 +211,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
 
 /**
  * What each player is told for the Planning phase of `turn`: the GM's note
- * (rules answers), their qBits, the messages that have just reached them, and
- * the sensor picture.
+ * (rules answers), their qBits, the messages that have just reached them,
+ * their orders still in flight, and the sensor picture.
  */
 function composeReports(engine: EngineState, scenario: Scenario, resolution: GmResolution, turn: number): Map<string, string> {
   return new Map(
@@ -219,7 +225,8 @@ function composeReports(engine: EngineState, scenario: Scenario, resolution: GmR
             .join('\n')}`
         : '## Messages received\n\nNone.';
       const picture = renderSensorPicture(knowledge(engine, scenario, p.id, turn));
-      return [p.id, [note, renderQbits(engine, p.id, turn), messages, picture].filter(Boolean).join('\n\n')];
+      const outbox = renderOutbox(engine, scenario, p.id, turn);
+      return [p.id, [note, renderQbits(engine, p.id, turn), messages, outbox, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }

@@ -28,6 +28,7 @@ export async function loadScenario(workspaceRoot: string, scenario: string): Pro
     title: file.title,
     description: file.description,
     maxRounds: file.maxRounds,
+    map: { radius: file.map.radius, impassable: file.map.impassable.map(([q, r]) => ({ q, r })) },
     parameters: file.parameters,
     units: file.units.map(({ hex: [q, r], ...unit }) => ({ ...unit, hex: { q, r } })),
     rules: await Promise.all(

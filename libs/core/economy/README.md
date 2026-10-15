@@ -40,7 +40,7 @@ statementFor(ledger, 'blue', 1); // { opening, spends, refusals, decay, links, p
 ## Decisions and known limits
 
 - **Balances are floats.** `ECON-01` asks for exact balances, but `QBIT_DECAY` makes that impossible in binary floating point. `canAfford` allows `QBIT_TOLERANCE` of rounding error, and a balance spent down to within it reads exactly 0. Format balances for display; don't compare them with `===`.
-- **`k` comes from the caller.** Zone bonuses aren't in the rules yet, so `linkK` is a function the caller supplies, and it defaults to 1. The playtest builds it from a scenario's house rules.
+- **`k` comes from the caller.** Which zones carry a bonus depends on the map, so `linkK` is a function the caller supplies (`ECON-01`), and it defaults to 1. The playtest builds it from a scenario's `linkBonuses`.
 - **Which nodes produce is the caller's call.** `settleEconomy` produces from exactly the nodes it's given. `TURN-03` puts Combat before Economy and construction after production, so pass the nodes still standing after Combat, without any completed in the same phase.
 - **What a player may be told is not decided here.** The rules don't yet say whether a player knows their balance, income or individual links the moment they change, or only when the news arrives at light speed. A statement holds all of it, per link, and the caller decides what to show.
 - **Purchases are priced by the caller.** `spend` takes a cost. Fixed costs come from the parameters table; hijack pricing (`QBIT-07`) needs true positions and lives with whoever holds them.

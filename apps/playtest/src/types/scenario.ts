@@ -1,10 +1,12 @@
-import type { Unit } from '@latency-wars/domain';
+import type { Hex, Unit } from '@latency-wars/domain';
 import { z } from 'zod';
 
 /** A unit as the play-test tracks it: the domain's minimum plus what status reports carry. */
 export interface PlaytestUnit extends Unit {
   readonly name: string;
   readonly strength: number;
+  /** The rest of its status report (LIGHT-02): active order, doctrine. Written by the GM; shown only to its owner. */
+  readonly status?: string;
 }
 
 const UnitFile = z.object({
@@ -49,16 +51,18 @@ const QbitParameters = z.object({
   intelCost: z.number().nonnegative(),
   /** `QBIT_PING_COST` */
   pingCost: z.number().nonnegative(),
-  /**
-   * Zone bonuses, a house rule until the rules have them: a link with either
-   * end on one of these hexes takes the largest `k` among them. Every other
-   * link has k = 1.
-   */
+  /** The hexes with a zone bonus, and each one's `k` (ECON-01). */
   linkBonuses: z
     .array(z.object({ hex: z.tuple([z.number().int(), z.number().int()]), k: z.number().nonnegative() }))
     .default([]),
 });
 export type QbitParameters = z.infer<typeof QbitParameters>;
+
+/** The map's shape (SPACE-01): a hex disc around the star, and hexes no unit can enter. */
+const MapFile = z.object({
+  radius: z.number().int().positive(),
+  impassable: z.array(z.tuple([z.number().int(), z.number().int()])).default([]),
+});
 
 /** The on-disk format of `scenarios/<name>/scenario.json`. */
 export const ScenarioFile = z.object({
@@ -67,6 +71,8 @@ export const ScenarioFile = z.object({
   /** Workspace-relative rule documents every participant reads. */
   rules: z.array(z.string()).default(['design-doc.md', 'docs/game-mechanics.md']),
   maxRounds: z.number().int().positive(),
+  /** The map the engine checks movement against. */
+  map: MapFile,
   /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), hijack pricing and the qBit ledger. */
   parameters: z.object({
     c: z.number().positive(),
@@ -113,7 +119,9 @@ export interface Scenario {
   id: string;
   title: string;
   description: string;
+  /** How many turns the game lasts. A run's --rounds replaces the scenario's own. */
   maxRounds: number;
+  map: { radius: number; impassable: Hex[] };
   parameters: { c: number; trackDecay?: number; hijack: HijackParameters; qbits: QbitParameters };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];

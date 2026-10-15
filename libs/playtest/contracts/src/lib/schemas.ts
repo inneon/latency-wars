@@ -71,6 +71,13 @@ export const UnitState = z.object({
   q: z.number().int(),
   r: z.number().int(),
   strength: z.number().int().describe('Current strength. A unit that left the game this turn goes in `removed_units`, not here.'),
+  status: z
+    .string()
+    .optional()
+    .describe(
+      "What this unit's status report says beyond position and strength (LIGHT-02): its active order and progress, its doctrine, " +
+        'and anything else it would report, e.g. "Attack(red-raider): pursuing; Balanced". Its owner sees this when the report arrives, or from a ping.',
+    ),
   name: z.string().optional().describe('For a unit new to the game: its display name. Defaults to the id.'),
   speed: z.number().int().nonnegative().optional().describe('For a unit new to the game: hexes per turn. Required for a new fleet; 0 for a node.'),
   sensor_range: z
@@ -91,6 +98,13 @@ export const FleetMessage = z.object({
   instant_ack: z
     .boolean()
     .describe('True only for the ack of an instant order (ORD-09), which comes back by the next Planning phase whatever the distance.'),
+  reports_destroyed: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Ids of units this message reports destroyed this turn, such as the enemy a fleet just killed. Each must be in removed_units. ' +
+        'When the message arrives, its player sees those units marked destroyed.',
+    ),
 });
 export type FleetMessage = z.infer<typeof FleetMessage>;
 

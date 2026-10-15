@@ -43,10 +43,12 @@ export async function readRunConfig(argv: string[], now = new Date()): Promise<R
   }
   const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
+  // The game's length is part of what every participant is told, so --rounds replaces the scenario's own.
+  const maxRounds = args.rounds ?? scenario.maxRounds;
   return {
     workspaceRoot,
-    scenario,
-    maxRounds: args.rounds ?? scenario.maxRounds,
+    scenario: { ...scenario, maxRounds },
+    maxRounds,
     backend,
     remote,
     gm: args.gm,

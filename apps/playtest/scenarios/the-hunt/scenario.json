@@ -3,6 +3,10 @@
   "description": "A small two-player skirmish testing light delay, orders, feedback and doctrine. Each side has a flagship, two fleets and a two-node web. Contested magnetosphere zones in the middle tempt both sides to over-extend.",
   "rules": ["design-doc.md", "docs/game-mechanics.md"],
   "maxRounds": 10,
+  "map": {
+    "radius": 6,
+    "impassable": [[0, 0]]
+  },
   "parameters": {
     "c": 3,
     "trackDecay": 8,

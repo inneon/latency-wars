@@ -8,9 +8,12 @@ import {
   lightTravelTurns,
   type Observation,
   observationArrivalTurn,
+  orderDeliveryTurn,
   recordHeldTurns,
   recordInstantArrival,
   recordTurnEnd,
+  unitPath,
+  unitPresentAt,
   type VisibilityLog,
 } from '@latency-wars/visibility';
 import {
@@ -28,13 +31,15 @@ import {
 } from '@latency-wars/economy';
 import type { HijackQuote, IntelPurchase } from '../types/quotes';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
+import { furthestToward, type GameMap, illegalMove } from './movement';
 import type { EngineOverride, GmResolution, PlayerTurn, QbitPurchase, UnitState } from '@latency-wars/playtest-contracts';
 
 /*
  * The engine side of the strangler fig: the facts code owns, so the GM doesn't
  * have to work them out. Today that's positions, visibility (LIGHT-*), when
- * messages arrive (FB-04, ORD-09) and the qBit ledger (ECON-01, ECON-04,
- * QBIT-01); the GM still owns orders, combat and construction.
+ * messages and light orders arrive (FB-04, ORD-04, ORD-09), legal movement
+ * (MOVE-01, MOVE-02) and the qBit ledger (ECON-01, ECON-04, QBIT-01); the GM
+ * still owns what orders make units do, combat and construction.
  *
  * The GM decides what happens; the engine has the last word on what it
  * models. It never sends the GM back to redo a turn. It corrects what breaks
@@ -54,6 +59,22 @@ export interface QueuedMessage {
   readonly text: string;
   /** An instant order's ack (ORD-09): arrives in the next Planning phase, whatever the distance. */
   readonly instant: boolean;
+  /** Units this message reports destroyed, as they were when they went. Marked destroyed for its player when it arrives. */
+  readonly reportsDestroyed: readonly PlaytestUnit[];
+}
+
+/** An order a player sent, tracked so the engine knows when it lands (ORD-04, ORD-06). */
+export interface SentOrder {
+  readonly player: string;
+  /** The unit as the player named it. */
+  readonly unit: string;
+  /** The unit it names, if the engine could match it. */
+  readonly recipient?: string;
+  readonly order: string;
+  readonly sentTurn: number;
+  /** The flagship's hex when it was sent: the wavefront's centre (ORD-04). */
+  readonly from: Hex;
+  readonly instant: boolean;
 }
 
 export interface EngineState {
@@ -66,6 +87,9 @@ export interface EngineState {
   /** Every player's qBits: charged for purchases as they're made, settled in each Economy phase. */
   readonly ledger: QbitLedger<PlaytestUnit>;
   readonly economy: QbitParams<PlaytestUnit>;
+  readonly map: GameMap;
+  /** Every order sent, light or instant. */
+  readonly orders: readonly SentOrder[];
 }
 
 export function startEngine(scenario: Scenario): EngineState {
@@ -87,10 +111,12 @@ export function startEngine(scenario: Scenario): EngineState {
     messages: [],
     ledger: openLedger<PlaytestUnit>(1, Object.fromEntries(scenario.players.map((p) => [p.id, scenario.parameters.qbits.start]))),
     economy: qbitParams(scenario),
+    map: scenario.map,
+    orders: [],
   };
 }
 
-/** The ledger's parameters, with the scenario's zone bonuses as each link's `k`. */
+/** The ledger's parameters, with each link's `k` from the scenario's zone bonuses (ECON-01). */
 export function qbitParams(scenario: Scenario): QbitParams<PlaytestUnit> {
   const { divisor, decay, linkBonuses } = scenario.parameters.qbits;
   const bonusAt = (u: PlaytestUnit) => linkBonuses.filter((b) => b.hex[0] === u.hex.q && b.hex[1] === u.hex.r).map((b) => b.k);
@@ -136,31 +162,40 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
         adjustments.push(`Setup: ${r.id} as copied doesn't match the scenario; the scenario's starting units stand.`);
       }
     }
-    const messages = queueMessages(engine, resolution, players, turn, previous, adjustments);
+    const messages = queueMessages(engine, resolution, players, turn, [], adjustments);
     return { engine: { ...engine, messages }, adjustments, overrides };
   }
 
-  /** Where a unit can legally have got to from `from`, honouring a declared override. */
-  const reach = (unit: PlaytestUnit, from: Hex, to: Hex, what: string): Hex => {
-    const moved = hexDistance(from, to);
-    if (moved <= unit.speed) return to;
+  /**
+   * Where a unit can legally have got to, honouring a declared override:
+   * `to` if a legal path of no more than its speed reaches it (MOVE-01,
+   * MOVE-02), otherwise as far as it could get toward there. `legal` says
+   * which.
+   */
+  const reach = (unit: PlaytestUnit, to: Hex, what: string): { at: Hex; legal: boolean } => {
+    const problem = illegalMove(engine.map, unit.hex, to, unit.speed);
+    if (!problem) return { at: to, legal: true };
     const override = overrideFor(unit.id);
     if (override) {
       overrides.push(override);
-      return to;
+      return { at: to, legal: true };
     }
-    const legal = stepToward(from, to, unit.speed);
-    adjustments.push(
-      `${unit.id} ${what} ${formatHex(to)}, ${moved} hexes from ${formatHex(from)}, but its speed is ${unit.speed}. ` +
-        `The engine put it at ${formatHex(legal)}, as far as it could get toward there.`,
-    );
-    return legal;
+    const at = furthestToward(engine.map, unit.hex, to, unit.speed);
+    adjustments.push(`${unit.id} ${what} ${formatHex(to)}, but ${problem}. The engine put it at ${formatHex(at)}, as far as it could get toward there.`);
+    return { at, legal: false };
   };
 
   const units: PlaytestUnit[] = [];
   const removed: PlaytestUnit[] = [];
   const handled = new Set<string>();
   const removedIds = new Set(resolution.removed_units.map((r) => r.id));
+  /** A unit the GM said left the game somewhere it couldn't have reached: it never got there, so it lives on. */
+  const keepAlive = (before: PlaytestUnit, at: Hex, where: Hex, status: string | undefined) => {
+    adjustments.push(
+      `${before.id} can't have been destroyed at ${formatHex(where)}, because it couldn't get there; it is kept in the game at ${formatHex(at)} with strength ${before.strength}.`,
+    );
+    units.push({ ...before, hex: at, status: status ?? before.status });
+  };
 
   for (const r of resolution.units) {
     if (handled.has(r.id)) {
@@ -183,14 +218,18 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
     if (r.owner !== before.owner || r.class !== before.class) {
       adjustments.push(`${r.id} is a ${before.owner} ${before.class}, not a ${r.owner} ${r.class}; that can't change.`);
     }
-    const at = reach(before, before.hex, hex, 'moved to');
+    const { at, legal } = reach(before, hex, 'moved to');
     // Some units live at strength 0 (a probe); one that drops to it has been destroyed.
     if (r.strength < 0 || (r.strength === 0 && before.strength > 0)) {
+      if (!legal) {
+        keepAlive(before, at, hex, r.status);
+        continue;
+      }
       adjustments.push(`${r.id} dropped to strength ${r.strength}, so it has been treated as removed.`);
-      removed.push({ ...before, hex: at, strength: 0 });
+      removed.push({ ...before, hex: at, strength: 0, status: r.status ?? before.status });
       continue;
     }
-    units.push({ ...before, hex: at, strength: r.strength });
+    units.push({ ...before, hex: at, strength: r.strength, status: r.status ?? before.status });
   }
 
   for (const r of resolution.removed_units) {
@@ -201,7 +240,13 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
       adjustments.push(`${r.id} was in removed_units but wasn't in the game; ignored.`);
       continue;
     }
-    removed.push({ ...before, hex: reach(before, before.hex, { q: r.q, r: r.r }, 'was removed at'), strength: r.strength });
+    const where = { q: r.q, r: r.r };
+    const { at, legal } = reach(before, where, 'was removed at');
+    if (!legal) {
+      keepAlive(before, at, where, r.status);
+      continue;
+    }
+    removed.push({ ...before, hex: at, strength: r.strength, status: r.status ?? before.status });
   }
 
   for (const u of previous) {
@@ -223,7 +268,7 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
     roster,
     ledger: settleEconomy(engine.ledger, turn, producing, engine.economy),
   };
-  return { engine: { ...recorded, messages: queueMessages(recorded, resolution, players, turn, previous, adjustments) }, adjustments, overrides };
+  return { engine: { ...recorded, messages: queueMessages(recorded, resolution, players, turn, removed, adjustments) }, adjustments, overrides };
 }
 
 /** A unit joining the game: a built node (ECON-03) or a new fleet. Returns undefined if it can't join. */
@@ -248,43 +293,76 @@ function newUnit(r: UnitState, previous: readonly PlaytestUnit[], players: reado
   if (r.class !== 'node' && (r.speed === undefined || r.sensor_range === undefined)) {
     adjustments.push(`${r.id} is new and was missing its stats; it has speed ${speed} and sensor range ${sensorRange}, like ${like?.id}.`);
   }
-  return { id: r.id, name: r.name ?? r.id, owner: r.owner, class: r.class, hex: { q: r.q, r: r.r }, speed, sensorRange, strength: r.strength };
+  return { id: r.id, name: r.name ?? r.id, owner: r.owner, class: r.class, hex: { q: r.q, r: r.r }, speed, sensorRange, strength: r.strength, status: r.status };
 }
 
 /**
  * Queues this turn's messages from units (FB-04), dropping any no unit could
- * have sent. An instant order's ack (ORD-09) needs the unit to have been there
- * when the order arrived, at the start of the turn; if it wasn't, the player
- * gets "No answer" (FB-09) instead.
+ * have sent: a unit that left the game sends nothing.
+ *
+ * Every instant order sent this turn gets its ack in the next Planning phase
+ * (ORD-09). Acks go out in the Observation phase (FB-02), so a recipient that
+ * didn't survive the turn never sends one, and its player gets "No answer"
+ * (FB-09) whatever the GM wrote.
  */
 function queueMessages(
   engine: EngineState,
   resolution: GmResolution,
   players: readonly string[],
   turn: number,
-  startOfTurn: readonly PlaytestUnit[],
+  removed: readonly PlaytestUnit[],
   adjustments: string[],
 ): QueuedMessage[] {
   const queued = [...engine.messages];
+  const alive = (id: string) => engine.units.find((u) => u.id === id);
+  const instantOrders = engine.orders.filter((o) => o.instant && o.sentTurn === turn);
+  const acked = new Set<string>();
+
   for (const m of resolution.messages) {
     const known = engine.roster.get(m.from_unit);
     if (!known || !players.includes(known.owner)) {
       adjustments.push(`A message from ${m.from_unit}, which isn't a unit in the game, was dropped.`);
       continue;
     }
-    const base = { player: known.owner, fromUnit: known.id, fromName: known.name, sentTurn: turn };
+    const sender = alive(m.from_unit);
+    const base = { player: known.owner, fromUnit: known.id, fromName: known.name, sentTurn: turn, hex: (sender ?? known).hex };
     if (m.instant_ack) {
-      const there = startOfTurn.find((u) => u.id === m.from_unit);
-      if (!there) adjustments.push(`${m.from_unit} wasn't there to receive the instant order, so its ack became "No answer" (FB-09).`);
-      queued.push({ ...base, hex: (there ?? known).hex, text: there ? m.text : 'No answer (FB-09).', instant: true });
+      acked.add(known.id);
+      if (!sender) adjustments.push(`${m.from_unit} didn't survive the turn to send its ack, so the ack became "No answer" (FB-09).`);
+      queued.push({ ...base, text: sender ? m.text : 'No answer (FB-09).', instant: true, reportsDestroyed: [] });
       continue;
     }
-    const sender = engine.units.find((u) => u.id === m.from_unit);
     if (!sender) {
       adjustments.push(`A message from ${m.from_unit} was dropped: it isn't in the game at the end of the turn, so it can't send anything (FB-05).`);
       continue;
     }
-    queued.push({ ...base, hex: sender.hex, text: m.text, instant: false });
+    const reportsDestroyed: PlaytestUnit[] = [];
+    for (const id of m.reports_destroyed ?? []) {
+      const gone = removed.find((u) => u.id === id);
+      if (gone) reportsDestroyed.push(gone);
+      else adjustments.push(`${m.from_unit}'s message reports ${id} destroyed, but ${id} didn't leave the game this turn; that part is ignored.`);
+    }
+    queued.push({ ...base, text: m.text, instant: false, reportsDestroyed });
+  }
+
+  // Every instant order is answered (ORD-09), even if the GM wrote no ack for it.
+  for (const order of instantOrders) {
+    if (!order.recipient || acked.has(order.recipient)) continue;
+    acked.add(order.recipient);
+    const recipient = engine.roster.get(order.recipient);
+    if (!recipient) continue;
+    const survived = alive(order.recipient);
+    if (survived) adjustments.push(`No ack was recorded for the instant order to ${order.recipient}; its player is told an ack came back with no details.`);
+    queued.push({
+      player: order.player,
+      fromUnit: recipient.id,
+      fromName: recipient.name,
+      sentTurn: turn,
+      hex: recipient.hex,
+      text: survived ? 'Ack received; no details were recorded.' : 'No answer (FB-09).',
+      instant: true,
+      reportsDestroyed: [],
+    });
   }
   return queued;
 }
@@ -301,24 +379,139 @@ export function messagesArriving(engine: EngineState, scenario: Scenario, player
   return engine.messages.filter((m) => m.player === player && arrival(engine, scenario, m, turn) === turn);
 }
 
-/** The hex `steps` along the straight line from `from` toward `to` (hex line drawing, rounded in cube coordinates). */
-export function stepToward(from: Hex, to: Hex, steps: number): Hex {
-  const n = hexDistance(from, to);
-  if (n <= steps) return to;
-  // A tiny nudge breaks ties between equally near hexes consistently.
-  const t = steps / n;
-  const q = from.q + 1e-6 + (to.q - from.q) * t;
-  const r = from.r + 1e-6 + (to.r - from.r) * t;
-  const s = -q - r;
-  let rq = Math.round(q);
-  let rr = Math.round(r);
-  const rs = Math.round(s);
-  const dq = Math.abs(rq - q);
-  const dr = Math.abs(rr - r);
-  const ds = Math.abs(rs - s);
-  if (dq > dr && dq > ds) rq = -rr - rs;
-  else if (dr > ds) rr = -rq - rs;
-  return { q: rq, r: rr };
+/** Matches a unit as a player named it in an order (its id or its name) to one of their units. */
+export function findOwnUnit(engine: EngineState, player: string, ref: string): PlaytestUnit | undefined {
+  const wanted = ref.trim().toLowerCase().replace(/^`|`$/g, '');
+  return [...engine.roster.values()].find((u) => u.owner === player && (u.id.toLowerCase() === wanted || u.name.toLowerCase() === wanted));
+}
+
+/**
+ * Records the orders a player sent in the Emission phase of `turn`, from
+ * where their flagship is at the start of the turn (ORD-04). Call it after
+ * payment, so an instant order that wasn't paid for isn't recorded.
+ */
+export function recordOrders(engine: EngineState, player: string, turn: number, orders: PlayerTurn['orders']): EngineState {
+  const flagship = engine.units.find((u) => u.owner === player && u.class === 'flagship');
+  if (!flagship) return engine;
+  const sent = orders.map(
+    (o): SentOrder => ({
+      player,
+      unit: o.unit,
+      recipient: findOwnUnit(engine, player, o.unit)?.id,
+      order: o.order,
+      sentTurn: turn,
+      from: flagship.hex,
+      // The flagship's own orders are local, never instant (ORD-05).
+      instant: o.delivery === 'instant' && findOwnUnit(engine, player, o.unit)?.id !== flagship.id,
+    }),
+  );
+  return { ...engine, orders: [...engine.orders, ...sent] };
+}
+
+/** An order the engine has worked out lands in the Delivery phase of a turn. */
+export interface Delivery {
+  readonly order: SentOrder;
+  /** The recipient wasn't on the map at the start of the turn, so the order is lost (RES-01). */
+  readonly lost: boolean;
+}
+
+/**
+ * The orders delivered in `turn`: instant orders sent this turn (ORD-06), and
+ * light orders whose wavefront reaches their recipient this turn (ORD-04,
+ * ORD-05). An order whose recipient the engine couldn't match is left out:
+ * the GM rules on it.
+ */
+export function deliveries(engine: EngineState, scenario: Scenario, turn: number): Delivery[] {
+  const out: Delivery[] = [];
+  for (const order of engine.orders) {
+    if (!order.recipient) continue;
+    let arrives: number | undefined;
+    if (order.instant) arrives = order.sentTurn;
+    else {
+      const path = unitPath(engine.log, order.recipient);
+      arrives = path && orderDeliveryTurn(order.from, order.sentTurn, path, scenario.parameters.c, turn);
+    }
+    if (arrives === turn) out.push({ order, lost: !unitPresentAt(engine.log, order.recipient, turn) });
+  }
+  return out;
+}
+
+/** Orders still on their way at the start of `turn`: sent, not yet delivered, recipient still somewhere. */
+function inTransit(engine: EngineState, scenario: Scenario, turn: number): SentOrder[] {
+  return engine.orders.filter((o) => {
+    if (o.instant || !o.recipient || o.sentTurn > turn) return false;
+    const path = unitPath(engine.log, o.recipient);
+    if (!path) return false;
+    const arrived = orderDeliveryTurn(o.from, o.sentTurn, path, scenario.parameters.c, turn);
+    return arrived === undefined && unitPresentAt(engine.log, o.recipient, turn);
+  });
+}
+
+const orderLine = (o: SentOrder) => `${o.player} → \`${o.recipient ?? o.unit}\` (sent turn ${o.sentTurn}, ${o.instant ? 'instant' : 'light'}): ${o.order}`;
+
+/** The GM's view of orders for `turn`: what lands this turn, what's still on its way, and what the engine couldn't place. */
+export function renderOrdersForGm(engine: EngineState, scenario: Scenario, turn: number): string {
+  const landing = deliveries(engine, scenario, turn);
+  const delivered = landing.filter((d) => !d.lost).map((d) => `- ${orderLine(d.order)}`);
+  const lost = landing.filter((d) => d.lost).map((d) => `- ${orderLine(d.order)}: its recipient is no longer on the map, so the order is lost and no ack is sent (RES-01).`);
+  const travelling = inTransit(engine, scenario, turn).map((o) => `- ${orderLine(o)}`);
+  const unmatched = engine.orders.filter((o) => o.sentTurn === turn && !o.recipient).map((o) => `- ${o.player} → "${o.unit}": ${o.order}`);
+  const parts = [
+    `## Orders delivered in turn ${turn} (engine, authoritative: ORD-04, ORD-05, ORD-06)\n\nOnly these orders reach their fleets this turn. Resolve each in the Decision phase (RES-01 onwards).\n\n${[...delivered, ...lost].join('\n') || '- None.'}`,
+    `## Orders still in transit\n\nSent but not yet delivered. They don't affect anything this turn.\n\n${travelling.join('\n') || '- None.'}`,
+  ];
+  if (unmatched.length) parts.push(`## Orders the engine couldn't match to a unit\n\nRule on these yourself.\n\n${unmatched.join('\n')}`);
+  return parts.join('\n\n');
+}
+
+/**
+ * A player's light orders as they can see them (FB-07): each one's expected
+ * arrival and when its ack is due, worked out from what the player knows
+ * (their recipient's last confirmed position, and their flagship's position
+ * now), never from the true state. An order stays listed until a couple of
+ * turns after its ack was due.
+ */
+export function renderOutbox(engine: EngineState, scenario: Scenario, player: string, turn: number): string {
+  const { c } = scenario.parameters;
+  const known = knowledge(engine, scenario, player, turn);
+  const flagship = engine.units.find((u) => u.owner === player && u.class === 'flagship');
+  const lines: string[] = [];
+  for (const o of engine.orders) {
+    if (o.player !== player || o.instant || o.sentTurn >= turn || !flagship) continue;
+    const last = known.own.find((e) => e.unit.id === o.recipient);
+    if (!last) continue;
+    // Answered: a message from the recipient, sent no earlier than the order, has reached the player.
+    const answered = engine.messages.some(
+      (m) => m.player === player && m.fromUnit === o.recipient && m.sentTurn >= o.sentTurn && arrival(engine, scenario, m, turn) !== undefined,
+    );
+    if (answered) continue;
+    // ORD-04 if the recipient holds its confirmed position; the ack goes out in that turn's Observation phase (FB-02).
+    const expected = o.sentTurn + lightTravelTurns(hexDistance(o.from, last.unit.hex), c);
+    const ackDue = expected + 1 + lightTravelTurns(hexDistance(last.unit.hex, flagship.hex), c);
+    if (turn > ackDue + 2) continue;
+    const state =
+      turn <= expected ? `in transit: expected to arrive in turn ${expected}, ack due by turn ${ackDue}`
+      : turn <= ackDue ? `expected to have arrived in turn ${expected}; awaiting ack, due by turn ${ackDue}`
+      : `ack overdue: it was due by turn ${ackDue}`;
+    lines.push(`- To \`${o.recipient}\` (sent turn ${o.sentTurn}): ${o.order}. ${state}.`);
+  }
+  return `## Orders sent (FB-07)\n\nExpected times assume each fleet holds the position in its latest status report.\n\n${lines.join('\n') || '- None outstanding.'}`;
+}
+
+/**
+ * Records, for each message reaching its player in `turn`, the destructions
+ * it reports, so that the player's picture marks those units destroyed as
+ * the news arrives rather than when a sighting would.
+ */
+export function deliverReportedLosses(engine: EngineState, scenario: Scenario, turn: number): EngineState {
+  let next = engine;
+  for (const player of scenario.players.map((p) => p.id)) {
+    const observations = messagesArriving(engine, scenario, player, turn).flatMap((m) =>
+      m.reportsDestroyed.map((unit): Observation<PlaytestUnit> => ({ turn: m.sentTurn, observer: player, unit, removed: true })),
+    );
+    if (observations.length) next = { ...next, log: recordInstantArrival(next.log, player, turn, observations) };
+  }
+  return next;
 }
 
 /** What an instant intel purchase shows (FB-08, and the scenario's snapshot house rule). */
@@ -557,13 +750,16 @@ export function renderHijacksForGm(quotes: readonly HijackQuote[]): string {
 
 const describe = (u: PlaytestUnit) => `${u.name} (\`${u.id}\`, ${u.class}, strength ${u.strength})`;
 
-function line(e: KnowledgeEntry<PlaytestUnit>, cloud: boolean): string {
+/** A unit's own status report beyond position and strength (LIGHT-02). Only ever shown to its owner. */
+const status = (u: PlaytestUnit) => (u.status ? `; status: ${u.status}` : '');
+
+function line(e: KnowledgeEntry<PlaytestUnit>, own: boolean): string {
   if (e.removed) {
-    return `- ${describe(e.unit)} **gone**: seen leaving the game at ${formatHex(e.unit.hex)} at the end of turn ${e.observedTurn}${e.isNew ? ' **new**' : ''}`;
+    return `- ${describe(e.unit)} **destroyed**: last seen at ${formatHex(e.unit.hex)} at the end of turn ${e.observedTurn}${e.isNew ? ' **new**' : ''}`;
   }
   const seen = `at ${formatHex(e.unit.hex)} at the end of turn ${e.observedTurn} (age ${e.age})`;
-  const radius = cloud && e.possibilityRadius > 0 ? `; could now be up to ${e.possibilityRadius} hexes from there` : '';
-  return `- ${describe(e.unit)} ${seen}${radius}${e.isNew ? ' **new**' : ''}`;
+  const radius = !own && e.possibilityRadius > 0 ? `; could now be up to ${e.possibilityRadius} hexes from there` : '';
+  return `- ${describe(e.unit)} ${seen}${own ? status(e.unit) : radius}${e.isNew ? ' **new**' : ''}`;
 }
 
 /** A player's sensor picture, as appended to their report. */
@@ -572,10 +768,10 @@ export function renderSensorPicture(state: KnowledgeState<PlaytestUnit>): string
   const lost = state.contacts.filter((c) => c.lost);
   const parts = [
     `## Sensor picture (Planning phase, turn ${state.turn})`,
-    `Your units, from their latest status reports:\n${state.own.map((e) => line(e, false)).join('\n') || '- None.'}`,
-    `Contacts:\n${contacts.map((e) => line(e, true)).join('\n') || '- None.'}`,
+    `Your units, from their latest status reports:\n${state.own.map((e) => line(e, true)).join('\n') || '- None.'}`,
+    `Contacts:\n${contacts.map((e) => line(e, false)).join('\n') || '- None.'}`,
   ];
-  if (lost.length) parts.push(`Lost contacts:\n${lost.map((e) => line(e, true)).join('\n')}`);
+  if (lost.length) parts.push(`Lost contacts:\n${lost.map((e) => line(e, false)).join('\n')}`);
   if (state.silent.length) {
     parts.push(
       `Silent units (no status report since the turn shown; destroyed, jammed, comms-silent or just delayed):\n${state.silent
@@ -586,9 +782,14 @@ export function renderSensorPicture(state: KnowledgeState<PlaytestUnit>): string
   return parts.join('\n\n');
 }
 
+/** What instant intel shows: own units with their full status report (FB-08, LIGHT-02), and what was destroyed. */
 export function renderIntel(observations: readonly Observation<PlaytestUnit>[]): string {
   if (observations.length === 0) return '## Instant intel\n\nNothing.';
   return `## Instant intel (as of the end of turn ${observations[0]?.turn})\n\n${observations
-    .map((o) => `- ${describe(o.unit)} at ${formatHex(o.unit.hex)}`)
+    .map((o) => {
+      if (o.removed) return `- ${describe(o.unit)} **destroyed** at ${formatHex(o.unit.hex)} in turn ${o.turn}`;
+      const own = o.unit.owner === o.observer;
+      return `- ${describe(o.unit)} at ${formatHex(o.unit.hex)}${own ? status(o.unit) : ''}`;
+    })
     .join('\n')}`;
 }

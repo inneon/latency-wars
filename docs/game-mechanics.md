@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.3)
+# Latency Wars - Game Mechanics (v0.4)
 
 ## 0. About This Document
 
@@ -44,7 +44,7 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Confirmed position** | Where a player's own fleet was, per its latest status report. |
 | **Projected position** | Where a player's own fleet should be now, worked out from its confirmed position and the orders in force. |
 | **Step** | One slice of the Movement phase. A unit moves at most one hex per step. |
-| **Willing** | A unit that wants to fight a given enemy: it has an Attack order on it, or its doctrine would engage it (`MOVE-04`). |
+| **Willing** | A unit that wants to fight a given enemy (`MOVE-04`). |
 | **Engagement** | Two hostile units that come within `ENGAGE_RANGE` during Movement, at least one of them willing. Engaged units stop and fight. |
 | **Engagement group** | All units joined by engagements, plus any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight. Each group fights one combat. |
 | **Spoof / Seize** | qBit actions that override an enemy fleet's orders for one turn (`QBIT-02`, `QBIT-03`). |
@@ -69,7 +69,10 @@ All values are placeholders, to be tuned by playtesting.
 | `LEASH_RANGE` | Default pursuit range | 3 hexes | Distance from the target's last known position. |
 | `LEASH_TURNS` | Default pursuit duration | 3 turns | |
 | `REFLEX_RANGE` | Default range for automatic reactions | 2 hexes | |
-| `ENGAGE_RATIO` | Default engage threshold (Balanced) | 1.0 | Estimated own strength ÷ enemy strength. |
+| `ENGAGE_RATIO` | Engage threshold for the Balanced stance | 1.0 | A strength ratio (`AUTO-02`). |
+| `ENGAGE_RATIO_AGGRESSIVE` | Engage threshold for the Aggressive stance | 0.75 | |
+| `ENGAGE_RATIO_CAUTIOUS` | Engage threshold for the Cautious stance | 1.5 | |
+| `ENGAGE_RATIO_EVASIVE` | Engage threshold for the Evasive stance | 2.0 | |
 | `RETREAT_AT` | Default retreat threshold | 30% strength | |
 | `ENGAGE_RANGE` | Distance at which hostile units engage during Movement | 1 hex | `MOVE-03` |
 | `QBIT_DIVISOR` | Divides link output into qBits | 16 | `ECON-01`. With a length-8 link, 64 ÷ 16 = 4 qBits/turn. |
@@ -102,10 +105,12 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 | 4 | **Decision** | Each fleet works out its behaviour for the turn: it resolves newly delivered orders and applies doctrine (`RES-01`, `AUTO-03`). A spoofed or seized fleet follows the hijacker's order instead (`QBIT-02`, `QBIT-03`). |
 | 5 | **Movement** | All units move simultaneously, step by step. Engaged units stop (`MOVE-01`, `MOVE-03`). |
 | 6 | **Combat** | Each engagement group fights (`COMBAT-02`). |
-| 7 | **Economy** | qBit decay, then qBit production, construction and unit production (`ECON-04`, `ECON-01`, `ECON-03`; unit production is a placeholder). |
+| 7 | **Economy** | In this order: qBit decay, qBit production, construction, then unit production (`ECON-04`, `ECON-01`, `ECON-03`; unit production is a placeholder). |
 | 8 | **Observation** | Sensors record observations, including units destroyed in this turn's combat (`COMBAT-04`). Every unit emits its status report, plus any acks, queries or execution reports. All of these carry this turn as their observation turn. |
 
 *Why this order:* delivery happens before decision, so an order can affect behaviour in the turn it arrives. Observation is last, so what players see always describes the end of a turn.
+
+- **TURN-04** The game starts at turn 1. Every unit is treated as having held its starting hex, with no order, since long before then. Each player's knowledge state for turn 1 is what that history gives them (`LIGHT-05`): their flagship's own status at age 0, and everything else at the age its distance gives it.
 
 ---
 
@@ -125,16 +130,23 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ### 4.1 Movement and engagement
 - **MOVE-01** Movement resolves in steps, as many as the fastest speed on the map. A unit with speed `v` moves one hex in each of the first `v` steps. All units take each step simultaneously.
 - **MOVE-02** Before each step, a moving unit picks its next hex towards its destination by the shortest path (`RES-07`). A pursuing unit aims at its target's position at the start of that step (`RES-04`).
+  - When several next hexes are on a shortest path, it takes the one whose centre is nearest the straight line from where it is to its destination. Any tie left goes to the first in this order of directions: (+1, 0), (0, +1), (−1, +1), (−1, 0), (0, −1), (+1, −1).
+  - *Why:* players, and the client's projected positions (`LIGHT-12`), can predict every route.
 - **MOVE-03** After each step, two hostile units within `ENGAGE_RANGE` of each other **engage** if at least one of them is willing to fight the other (`MOVE-04`). Engaged units stop moving for the rest of the turn and fight in the Combat phase.
   - Two units that swap hexes, or whose paths cross, end the step adjacent, so they engage.
   - Engagement uses true positions, not anyone's knowledge. It is a physical event at the units' location.
-- **MOVE-04** A unit is **willing** to fight an enemy when:
+  - Engagement lasts for the turn only. Next turn every unit may move again, and engagement is checked afresh after each step.
+- **MOVE-04** A unit is **willing** to fight an enemy when any of these holds:
   - its active order is `Attack` on that enemy; or
-  - it has a `Defend` order and the enemy is within `ENGAGE_RANGE` of the defended hex; or
+  - it has a `Defend` order or fallback (`ORD-01`) and the enemy is within `ENGAGE_RANGE` of the defended hex; or
+  - it has an `Escort` order and the enemy is within `ENGAGE_RANGE` of the escorted unit (`RES-08`); or
+  - it is in the same hex as that enemy, and both are fleets (an enemy flagship counts); or
   - its doctrine would engage that enemy (`AUTO-03` priority 4).
 
-  Flagships and nodes are never willing (`FLAG-01`). An unwilling unit still fights back once engaged (`COMBAT-01`).
-  - *Why:* a faster pursuer catches a slower target, crossing paths causes a fight, and an equally fast target that runs early gets away. An Evasive fleet avoids a fight by never ending a step within range of an enemy that wants one.
+  Willingness is judged at each engagement check (`MOVE-03`), from positions and strengths at that moment, not fixed in the Decision phase.
+
+  Flagships and nodes are never willing (`FLAG-01`), and nor is a spoofed fleet (`QBIT-02`). An unwilling unit still fights back once engaged (`COMBAT-01`).
+  - *Why:* a faster pursuer catches a slower target, crossing paths causes a fight, hostile fleets can't share a hex without one whatever their orders, and an equally fast target that runs early gets away. An Evasive fleet avoids a fight by never ending a step within range of an enemy that wants one.
 
 ---
 
@@ -193,19 +205,25 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ## 6. Orders — **Proposed**
 
 ### 6.1 Structure
-- **ORD-01** An order expresses **intent**, not exact instructions. Every order has four parts. All but the objective have defaults, so a one-click order is always valid.
+- **ORD-01** An order expresses **intent**, not exact instructions. Every order has five parts. All but the objective have defaults, so a one-click order is always valid.
 
 | Part | Values | Default |
 |---|---|---|
 | **Objective** | `MoveTo(hex)`, `Attack(track)`, `Defend(hex or node)`, `Patrol(route)`, `Escort(fleet)`, `Build(node, zone)`, `Hold` | — |
 | **Commitment** | `Discretion`: may query or decline per doctrine. `AtAllCosts`: execute regardless. | `Discretion` |
 | **Leash** | Max pursuit range and duration | `LEASH_RANGE`, `LEASH_TURNS` |
-| **Fallback** | `HoldAndReport`, `ReturnHome`, `ResumePrevious`, `Doctrine` | `HoldAndReport` |
+| **Fallback** | `HoldAndReport`, `ReturnHome`, `ResumePrevious`, `Doctrine`, `MoveTo(hex)`, `Defend(hex or node)` | `HoldAndReport` |
+| **Doctrine change** | New values for any of the fleet's doctrine fields (`AUTO-01`) | None |
+
+  - A doctrine change takes effect when the order is accepted (`RES-01`). An order MAY be a doctrine change alone; it still counts as that fleet's order for the turn (`ORD-08`).
+  - A fleet carries out its fallback when its order completes, fails, is queried or loses its target (`RES-01`, `RES-05`, `RES-06`). `ResumePrevious` makes the previous order active again. Any other fallback takes the place of `AUTO-03` priority 5: instead of holding at or returning home, the fleet does its fallback until it gets a new order. `Doctrine` leaves priority 5 as it is. Survival and reflexes (priorities 2 and 4) still apply.
 
 - **ORD-02** `Attack` targets a **track**. The order carries the track's last known position as the sender knew it.
 - **ORD-03** Every order carries a **send turn** and an **order ID**.
 - **ORD-08** A player MAY send at most **one order per fleet per turn**, light or instant. To change their mind, a player sends a new order in a later turn.
   - *Why:* it removes any question of which of two same-turn orders wins (raised in the first play-test), without needing tie-break rules.
+- **ORD-10** A player MAY only order fleets they have had a status report from (`LIGHT-11`). A report seen through an intel snapshot (`FB-10`) or a ping (`FB-08`) counts.
+  - *Why:* a player learns of a new unit at light speed, like anything else.
 
 ### 6.2 Transmission and Delivery
 - **ORD-04** A light order sent in turn `T_s` from flagship hex `s` is delivered in the Delivery phase of the first turn `T_d ≥ T_s` where:
@@ -213,7 +231,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   `distance(s, U(T_d)) ≤ C × (T_d − T_s)`
 
   where `U(T_d)` is the recipient's position at the start of `T_d`. The wavefront is centred where it was emitted, so moving the flagship afterwards never changes when an order already sent arrives. Only the recipient's movement can. For a stationary recipient this is turn `T_s + L(d)` (`LIGHT-15`).
-- **ORD-05** Orders to local fleets are delivered in the same turn they are sent. The flagship's own orders (movement, doctrine changes) are orders like any other: always local, so delivered immediately. They count towards `ORD-08` and never cost qBits.
+- **ORD-05** Orders to local fleets (in the flagship's own hex) are delivered in the same turn they are sent. A fleet even one hex away isn't local: its orders take `L(1)` = 1 turn. The flagship's own orders (movement, doctrine changes) are orders like any other: always local, so delivered immediately. They count towards `ORD-08` and never cost qBits.
 - **ORD-06** Instant orders (qBits) are delivered in the Emission phase of the turn they are sent, whatever the distance. The recipient resolves them in that turn's Decision phase (section 7), so they take effect in that same turn's Movement and Combat.
 - **ORD-07** A fleet has at most one **active order**. A delivered order replaces the active order only if its send turn is later than the active order's. Otherwise it is discarded and acknowledged as **Stale**. (`ORD-08` means two orders to one fleet never share a send turn.)
   - *Why:* if the flagship moves, an order sent later from closer can arrive before an earlier one. Instant orders overtake light orders too. Ordering by send time keeps the player's latest intent in charge. The outbox warns when an order in flight has been overtaken (`FB-07`).
@@ -256,7 +274,10 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 - **RES-07** An objective tied to a hex (`MoveTo`, `Defend`, `Patrol`, `Build`) has the fleet move there at full speed by the shortest path until it is in place. Multi-turn work (such as a build countdown) starts with the first Economy phase the fleet spends in place (`ECON-03`).
   - A destination is never "too far". A unit, flagship included, moves up to its speed each turn until it arrives.
 
-### 7.4 Outcomes by situation
+### 7.4 Escorting
+- **RES-08** On accepting `Escort(fleet)`, the escort follows the escorted unit. Each step it heads for that unit's position at the start of the step, as a pursuer does (`MOVE-02`). It is willing to fight any enemy within `ENGAGE_RANGE` of the escorted unit (`MOVE-04`), whatever that enemy's orders. In the escorted unit's engagement group it takes damage aimed at that unit (`COMBAT-03`).
+
+### 7.5 Outcomes by situation
 
 | Situation at delivery | What the fleet does | What the player learns |
 |---|---|---|
@@ -307,17 +328,20 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 ## 9. Autonomy and Doctrine — **Proposed**
 
 ### 9.1 Doctrine
-- **AUTO-01** Every fleet has a **doctrine**, set when the fleet is formed or detached. The player MAY change it by order.
+- **AUTO-01** Every fleet has a **doctrine**, set when the fleet is formed or detached. The player MAY change it by order (`ORD-01`).
 
 | Field | Values | Default |
 |---|---|---|
 | **Stance** | `Aggressive`, `Balanced`, `Cautious`, `Evasive` | `Balanced` |
-| **Engage threshold** | Strength ratio | Set by stance (`ENGAGE_RATIO` for Balanced) |
+| **Engage threshold** | Strength ratio | Set by stance: `ENGAGE_RATIO_AGGRESSIVE`, `ENGAGE_RATIO`, `ENGAGE_RATIO_CAUTIOUS` or `ENGAGE_RATIO_EVASIVE` |
 | **Retreat threshold** | % strength | `RETREAT_AT` |
 | **Home** | Hex or node | Where the fleet was formed |
 | **Reflex range** | Hexes | `REFLEX_RANGE` |
 
+  - If a fleet's home node is destroyed, its home becomes its owner's surviving node nearest to the fleet. With no nodes left, its home is the hex it is in.
+
 - **AUTO-02** A fleet estimates enemy strength from its own sensors. How accurate the estimate is MAY depend on commander quality (`AUTO-06`).
+  - Its **strength ratio** is its own strength divided by the combined strength of the enemy units it senses within its reflex range that can deal damage (fleets and the flagship, not nodes). Doctrine compares this ratio with the engage threshold, both to engage and to evade (`AUTO-03`).
 
 ### 9.2 Behaviour priority
 - **AUTO-03** In the Decision phase, a fleet acts on the first of these that applies:
@@ -325,9 +349,12 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | Priority | Behaviour | Applies when |
 |---|---|---|
 | 1 | Active `AtAllCosts` order | Always |
-| 2 | **Survival:** retreat home; or evade | Retreat: strength < retreat threshold. Evade: stance is Cautious/Evasive and a local enemy exceeds the engage threshold. |
+| 2 | **Survival:** retreat home; or evade | Retreat: strength < retreat threshold. Evade: stance is Cautious/Evasive and the strength ratio is below the engage threshold. |
 | 3 | Active `Discretion` order | Always |
 | 4 | **Reflexes:** defend a node under attack within reflex range; engage enemies in sensor range | Engaging needs stance Aggressive/Balanced and a ratio ≥ engage threshold |
+
+  - An **evading** fleet moves away from the threats it can see: each step it goes to the hex furthest from the nearest damage-dealing enemy it senses.
+  - A node is **under attack** when the fleet senses an enemy unit within `ENGAGE_RANGE` of it. The fleet then acts as if it had a `Defend` order on that node for the turn.
 | 5 | Hold at, or return to, home | Otherwise |
 
 - **AUTO-04** If a higher-priority behaviour interrupts an active order, the order resumes when the interruption clears, provided it's still valid. The fleet reports **Diverted**.
@@ -374,7 +401,7 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
 
   Any other unit in that hex is a bystander: it neither fights nor stops moving.
 - **COMBAT-03** Where damage goes:
-  1. A unit with an `Attack` order deals its damage to its target.
+  1. A unit with an `Attack` order deals its damage to its target, if the target is in the group. Otherwise its damage is assigned under step 3.
   2. A fleet in the same group with an `Escort` order on that target takes the damage in its place first, up to its remaining strength. Any excess goes through to the target.
   3. All other damage is assigned by the receiving player.
   - *Why:* escorting the flagship is a deliberate choice that costs a fleet's orders, and an unescorted flagship can be assassinated. Screening exists, but only on purpose.
@@ -383,12 +410,15 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
 
 ### 11.2 Economy and the web
 - **ECON-01** In the Economy phase, each player gains `Σ (k × length²) ÷ QBIT_DIVISOR` qBits over all their links, exactly, with no rounding. Balances may hold fractions. A player can spend qBits only if their balance covers the cost.
+  - A link's `k` is 1, unless a node at either end is in a zone with a bonus. If both are, it takes the higher bonus: bonuses don't stack.
   - *Why:* rounding swallowed every small gain in play-tests, so expansion looked worthless. Length² still makes short links weak; that's intended.
 - **ECON-02** A completed node is linked to every other node its owner has. Every link produces.
   - *Why:* links cost nothing, so choosing them would be a trivial decision. Placement becomes the decision. A node in a contested zone links to the whole web, which makes it valuable and worth attacking.
 - **ECON-03** A fleet with a `Build(node, zone)` order builds a node after spending `BUILD_TURNS` Economy phases in an empty orbital zone (no node in it).
   - An Economy phase in which the builder fought doesn't count, but its progress isn't lost.
-  - Leaving the zone resets the progress. The builder being destroyed ends it.
+  - While builders of more than one player are in the same zone, none of them makes progress, but none loses it either.
+  - Progress resets if the builder leaves the zone for any reason (a spoof included) or its `Build` order is replaced. The builder being destroyed ends it.
+  - A node built in an Economy phase exists from then on, so units produced later in that phase MAY appear at it. It first produces in the next Economy phase (`TURN-03`).
   - Only fleets build, not the flagship (`FLAG-02`). A scenario MAY bar other unit classes from building.
 - **ECON-04** At the start of the Economy phase, before this turn's production is added, each player loses `QBIT_DECAY` of their unspent qBits.
   - *Why:* qBits have a half-life. Saving up is still possible, but each extra turn of saving pays off less, so nobody can stockpile for a sudden burst. Spare qBits are better spent now than kept.

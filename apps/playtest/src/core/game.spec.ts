@@ -76,7 +76,7 @@ function setup(
     if (label === 'debrief') return gmFeedback;
     const n = Number(label.split(' ')[1]);
     // On the speeding turn, the GM moves Blue Line two hexes; its speed is 1.
-    const units = unitStates(scenario).map((u) => (n === speedingOnTurn && u.id === 'blue-line' ? { ...u, q: 0, r: 0 } : u));
+    const units = unitStates(scenario).map((u) => (n === speedingOnTurn && u.id === 'blue-line' ? { ...u, q: 0, r: 2 } : u));
     return resolution(scenario, n, n === gameOverOnTurn, { units });
   });
   const player = (id: string) =>
@@ -123,7 +123,7 @@ describe('runPlaytest', () => {
     expect(red.prompts[1]?.prompt).toContain('Intel snapshot (FB-10): 5 qBits. Balance now 3.');
     expect(red.prompts[1]?.prompt).toContain('## Instant intel (as of the end of turn 0)');
     expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve', 'debrief']);
-    expect(gm.prompts[1]?.prompt).toContain('"orders"');
+    expect(gm.prompts[1]?.prompt).toContain('## Orders delivered in turn 1');
     expect(gm.prompts[1]?.prompt).toContain('| red | 3 | intel snapshot (5) | nothing | 4 |');
   });
 
@@ -156,9 +156,9 @@ describe('runPlaytest', () => {
 
     const resolve = gm.prompts.find((p) => p.label === 'turn 1 resolve')?.prompt ?? '';
     // The flagship's own order is local and free (ORD-05).
-    expect(resolve).toContain('"blue-flagship"');
-    expect(resolve).toContain('"blue-raider"');
-    expect(resolve).not.toContain('"blue-node-west"');
+    expect(resolve).toContain('blue → `blue-flagship` (sent turn 1, light)');
+    expect(resolve).toContain('blue → `blue-raider` (sent turn 1, instant)');
+    expect(resolve).not.toContain('blue → `blue-node-west`');
     expect(resolve).toContain('| blue | 0 | instant order to blue-line (4), instant order to blue-raider (4) | instant order to blue-node-west (4, refused: balance 0) | 4 |');
     expect(blue.prompts.find((p) => p.label === 'turn 2')?.prompt).toContain('refused instant order to blue-node-west (4, refused: balance 0)');
   });
@@ -235,11 +235,11 @@ describe('runPlaytest', () => {
 
     expect(events.filter((e) => e.type === 'correction')).toEqual([]);
     expect(events.filter((e) => e.type === 'engine')).toEqual([
-      expect.objectContaining({ turn: 1, adjustments: [expect.stringContaining('blue-line moved to (0, 0), 2 hexes from (-2, 2)')] }),
+      expect.objectContaining({ turn: 1, adjustments: [expect.stringContaining('blue-line moved to (0, 2), but getting from (-2, 2) to (0, 2) takes 2 steps')] }),
     ]);
     const nextResolve = gm.prompts.find((p) => p.label === 'turn 2 resolve')?.prompt ?? '';
     expect(nextResolve).toContain('The engine corrected your last resolution');
-    expect(nextResolve).toContain('blue-line moved to (0, 0)');
+    expect(nextResolve).toContain('blue-line moved to (0, 2)');
     expect(nextResolve).toMatch(/\| `blue-line` \| blue \| fleet \| \(-1, \d\) \|/);
   });
 

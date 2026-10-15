@@ -6,9 +6,9 @@
 import { hexDistance, type PlayerId, type Unit } from '@latency-wars/domain';
 
 /**
- * A link's `k`, the environmental multiplier on its output (ECON-01).
- * Zone bonuses aren't in the rules yet, so the caller decides: a scenario's
- * house rules, a test, eventually the rules themselves. Defaults to 1.
+ * A link's `k`, the environmental multiplier on its output (ECON-01). Which
+ * zones carry a bonus depends on the map, so the caller supplies it.
+ * Defaults to 1.
  */
 export type LinkK<N extends Unit = Unit> = (a: N, b: N) => number;
 

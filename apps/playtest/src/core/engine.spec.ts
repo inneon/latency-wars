@@ -3,6 +3,8 @@ import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { Scenario } from '../types/scenario';
 import {
   applyResolution,
+  deliverReportedLosses,
+  deliveries,
   type EngineState,
   intelObservations,
   knowledge,
@@ -10,13 +12,14 @@ import {
   payForEmission,
   quoteHijack,
   recordIntel,
+  recordOrders,
+  renderOrdersForGm,
+  renderOutbox,
   renderQuotes,
   renderSensorPicture,
   resolveIntel,
   startEngine,
-  stepToward,
 } from './engine';
-import { hexDistance } from '@latency-wars/domain';
 import { balanceOf, statementFor } from '@latency-wars/economy';
 import type { PlayerTurn } from '@latency-wars/playtest-contracts';
 
@@ -69,19 +72,33 @@ describe('applyResolution: units', () => {
   });
 
   it('moves a unit that went too far as far as it legally could, and says so', () => {
-    const { engine, adjustments } = play(resolution(states({ 'blue-line': [0, 0] }))); // 2 hexes at speed 1
-    const at = unit(engine, 'blue-line')?.hex ?? { q: NaN, r: NaN };
-    expect(hexDistance({ q: -2, r: 1 }, at)).toBe(1);
-    expect(hexDistance(at, { q: 0, r: 0 })).toBe(1);
-    expect(adjustments[0]).toEqual([expect.stringContaining('blue-line moved to (0, 0), 2 hexes from (-2, 2), but its speed is 1')]);
+    const { engine, adjustments } = play(resolution(states({ 'blue-line': [0, 2] }))); // 2 hexes at speed 1
+    expect(unit(engine, 'blue-line')?.hex).toEqual({ q: -1, r: 2 });
+    expect(adjustments[0]).toEqual([
+      expect.stringContaining('blue-line moved to (0, 2), but getting from (-2, 2) to (0, 2) takes 2 steps, and its speed is 1'),
+    ]);
+  });
+
+  it('counts steps around the star, not straight through it (MOVE-01, MOVE-02)', () => {
+    // (−1, 0) to (1, 0) is 2 hexes in a straight line, through the star, but 3 steps round it.
+    const dart = { id: 'blue-dart', owner: 'blue', class: 'fleet' as const, q: -1, r: 0, strength: 1, speed: 2, sensor_range: 2 };
+    const { engine, adjustments } = play(resolution([...states(), dart]), resolution([...states(), { ...dart, q: 1, r: 0 }]));
+    expect(adjustments[1]).toEqual([expect.stringContaining('the straight line is 2, but the way round the star or map edge is 3')]);
+    expect(unit(engine, 'blue-dart')?.hex).not.toEqual({ q: 1, r: 0 });
+  });
+
+  it("won't let a unit end its move on the star", () => {
+    const { engine, adjustments } = play(resolution(states({ 'blue-raider': [0, 0] })));
+    expect(unit(engine, 'blue-raider')?.hex).not.toEqual({ q: 0, r: 0 });
+    expect(adjustments[0]).toEqual([expect.stringContaining("(0, 0) can't be entered")]);
   });
 
   it('accepts a move the GM overrides, and reports the override', () => {
     let engine = startEngine(scenario);
     const override = { unit_id: 'blue-line', reason: 'Emergency burn', rule_ids: ['MOVE-01'] };
-    const applied = applyResolution(engine, resolution(states({ 'blue-line': [0, 0] }), { overrides: [override] }), players, 1);
+    const applied = applyResolution(engine, resolution(states({ 'blue-line': [0, 2] }), { overrides: [override] }), players, 1);
     engine = applied.engine;
-    expect(unit(engine, 'blue-line')?.hex).toEqual({ q: 0, r: 0 });
+    expect(unit(engine, 'blue-line')?.hex).toEqual({ q: 0, r: 2 });
     expect(applied.overrides).toEqual([override]);
     expect(applied.adjustments).toEqual([]);
   });
@@ -91,7 +108,7 @@ describe('applyResolution: units', () => {
     const { engine, adjustments } = play(resolution([...states(), probe]), resolution([...states(), { ...probe, q: -1, r: -1 }]));
     expect(adjustments[0]).toEqual([]);
     expect(unit(engine, 'blue-probe-1')).toMatchObject({ name: 'Blue Probe 1', speed: 2, sensorRange: 2, strength: 0 });
-    expect(adjustments[1]).toEqual([expect.stringContaining('blue-probe-1 moved to (-1, -1), 3 hexes')]);
+    expect(adjustments[1]).toEqual([expect.stringContaining('blue-probe-1 moved to (-1, -1), but getting from (-4, -1) to (-1, -1) takes 3 steps')]);
   });
 
   it('gives a new unit missing its stats those of a similar unit, and ignores impossible new units', () => {
@@ -150,7 +167,7 @@ describe('applyResolution: removed units', () => {
     expect(engine.roster.get('blue-raider')).toMatchObject({ hex: { q: -2, r: 3 }, speed: 2 });
   });
 
-  it('ignores unknown units, prefers removal over presence, and moves too-far removals back in range', () => {
+  it('ignores unknown units, prefers removal over presence, and keeps alive a unit removed where it could not be', () => {
     const { engine, adjustments } = play(
       resolution(states(), {
         removed: [
@@ -161,12 +178,27 @@ describe('applyResolution: removed units', () => {
       }),
     );
     expect(unit(engine, 'blue-line')).toBeUndefined();
-    expect(hexDistance(engine.roster.get('blue-raider')?.hex ?? { q: NaN, r: NaN }, { q: -1, r: 3 })).toBe(2);
+    expect(unit(engine, 'blue-raider')).toMatchObject({ strength: 2 });
     expect(adjustments[0]).toEqual([
       expect.stringContaining('blue-line was in both units and removed_units'),
       expect.stringContaining('blue-raider was in both units and removed_units'),
       expect.stringContaining("ghost was in removed_units but wasn't in the game"),
-      expect.stringContaining('blue-raider was removed at (0, 0), 3 hexes from (-1, 3)'),
+      expect.stringContaining("blue-raider was removed at (0, 0), but (0, 0) can't be entered"),
+      expect.stringContaining("blue-raider can't have been destroyed at (0, 0), because it couldn't get there; it is kept in the game"),
+    ]);
+  });
+
+  it('keeps alive a unit the GM destroyed beyond its reach, as in run 1 (18:19, turn 4)', () => {
+    // The GM had blue-probe-1 die 6 hexes away. Speed 2: it never got there, so it can't have died there.
+    const probe = { id: 'blue-probe-1', owner: 'blue', class: 'fleet' as const, q: -1, r: 4, strength: 0, speed: 2, sensor_range: 2 };
+    const { engine, adjustments } = play(
+      resolution([...states(), probe]),
+      resolution(states(), { removed: [{ ...probe, q: 0, r: -2 }] }),
+    );
+    expect(unit(engine, 'blue-probe-1')).toBeDefined();
+    expect(adjustments[1]).toEqual([
+      expect.stringContaining('blue-probe-1 was removed at (0, -2), but getting from (-1, 4) to (0, -2) takes'),
+      expect.stringContaining("blue-probe-1 can't have been destroyed at (0, -2)"),
     ]);
   });
 
@@ -178,10 +210,10 @@ describe('applyResolution: removed units', () => {
     const { engine } = play(resolution(present, { removed: [gone], overrides: [override] }), ...[2, 3, 4, 5].map(() => resolution(present)));
     // (1, −3) is 3 from Red's flagship: visible from turn 1 + 1 + 1 = 3, and still shown in turn 4.
     const red = renderSensorPicture(knowledge(engine, scenario, 'red', 4));
-    expect(red).toContain('Blue Raider (`blue-raider`, fleet, strength 0) **gone**: seen leaving the game at (1, -3) at the end of turn 1');
+    expect(red).toContain('Blue Raider (`blue-raider`, fleet, strength 0) **destroyed**: last seen at (1, -3) at the end of turn 1');
     // Blue had no sensor within range of (1, −3), so Blue only ever sees silence.
     const blue = renderSensorPicture(knowledge(engine, scenario, 'blue', 6));
-    expect(blue).not.toContain('**gone**');
+    expect(blue).not.toContain('**destroyed**');
     expect(blue).toContain('Blue Raider (`blue-raider`): silent since turn 1');
   });
 });
@@ -213,23 +245,8 @@ describe('applyResolution: messages', () => {
       resolution(present, { messages: [ack('blue-raider', 'Failed: the recipient does not exist', true)] }),
     );
     expect(adjustments[0]).toEqual([expect.stringContaining('A message from blue-raider was dropped')]);
-    expect(adjustments[1]).toEqual([expect.stringContaining('its ack became "No answer"')]);
+    expect(adjustments[1]).toEqual([expect.stringContaining('the ack became "No answer"')]);
     expect(messagesArriving(engine, scenario, 'blue', 3)).toEqual([expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' })]);
-  });
-});
-
-describe('stepToward', () => {
-  it('stops `steps` hexes along the line, getting closer to the target', () => {
-    for (const [from, to, steps] of [
-      [{ q: -2, r: 1 }, { q: 3, r: -2 }, 2],
-      [{ q: 0, r: 0 }, { q: 0, r: 5 }, 1],
-      [{ q: 4, r: -4 }, { q: -4, r: 4 }, 3],
-    ] as const) {
-      const at = stepToward(from, to, steps);
-      expect(hexDistance(from, at)).toBe(steps);
-      expect(hexDistance(at, to)).toBe(hexDistance(from, to) - steps);
-    }
-    expect(stepToward({ q: 0, r: 0 }, { q: 1, r: 0 }, 3)).toEqual({ q: 1, r: 0 });
   });
 });
 
@@ -392,5 +409,138 @@ describe('the qBit ledger', () => {
     expect(paid.submission.orders).toEqual(submission.orders);
     expect(balanceOf(paid.engine.ledger, 'blue')).toBe(1);
     expect(paid.hijacks.map((q) => q.refused)).toEqual([undefined, 'It costs 3 and your balance was 1 (QBIT-01).', 'flagship']);
+  });
+});
+
+describe('orders: when they land, and when the player hears back', () => {
+  const order = (unit: string, text = 'Hold', delivery: 'light' | 'instant' = 'light'): PlayerTurn['orders'][number] => ({ unit, order: text, delivery });
+  const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text, instant_ack: false });
+
+  it('delivers a light order when its wavefront reaches the recipient (ORD-04), and a local one at once (ORD-05)', () => {
+    let engine = startEngine(scenario);
+    // Blue Line is 1 hex from Blue's flagship, Blue Node West 4: with C = 3, one turn and two turns.
+    engine = recordOrders(engine, 'blue', 1, [order('blue-line'), order('Blue Node West'), order('blue-flagship', 'MoveTo(-3, 3)')]);
+    const landing = (turn: number) => deliveries(engine, scenario, turn).map((d) => d.order.recipient);
+    expect(landing(1)).toEqual(['blue-flagship']);
+    engine = applyResolution(engine, resolution(states()), players, 1).engine;
+    expect(landing(2)).toEqual(['blue-line']);
+    engine = applyResolution(engine, resolution(states()), players, 2).engine;
+    expect(landing(3)).toEqual(['blue-node-west']);
+    expect(renderOrdersForGm(engine, scenario, 3)).toContain('blue → `blue-node-west` (sent turn 1, light): Hold');
+  });
+
+  it('loses an order whose recipient is gone when it arrives (RES-01)', () => {
+    let engine = startEngine(scenario);
+    engine = recordOrders(engine, 'blue', 1, [order('blue-node-west')]);
+    const gone = { id: 'blue-node-west', owner: 'blue', class: 'node' as const, q: -4, r: -1, strength: 0 };
+    engine = applyResolution(engine, resolution(states().filter((u) => u.id !== gone.id), { removed: [gone] }), players, 1).engine;
+    engine = applyResolution(engine, resolution(states().filter((u) => u.id !== gone.id)), players, 2).engine;
+    expect(deliveries(engine, scenario, 3)).toEqual([expect.objectContaining({ lost: true })]);
+    expect(renderOrdersForGm(engine, scenario, 3)).toContain('so the order is lost and no ack is sent (RES-01)');
+  });
+
+  it("settles when an order's ack and the fleet's status report become visible (LIGHT-03, FB-02, FB-04)", () => {
+    // The timeline Red doubted in run 3: an order to a fleet 1 hex away.
+    // Sent turn 1. Delivered turn 2 (1 ≤ 3 × (2 − 1)). Acked in turn 2's Observation phase,
+    // so visible when 1 ≤ 3 × (T − 1 − 2): turn 4. Its turn-2 status report arrives with it.
+    let engine = startEngine(scenario);
+    engine = recordOrders(engine, 'blue', 1, [order('blue-line', 'Defend(blue-flagship)')]);
+    engine = applyResolution(engine, resolution(states()), players, 1).engine;
+    expect(deliveries(engine, scenario, 2).map((d) => d.order.recipient)).toEqual(['blue-line']);
+    expect(renderOutbox(engine, scenario, 'blue', 2)).toContain('in transit: expected to arrive in turn 2, ack due by turn 4');
+    engine = applyResolution(engine, resolution(states(), { messages: [ack('blue-line', 'Accepted: Defend(blue-flagship)')] }), players, 2).engine;
+    expect(renderOutbox(engine, scenario, 'blue', 3)).toContain('awaiting ack, due by turn 4');
+    expect(messagesArriving(engine, scenario, 'blue', 3)).toEqual([]);
+    expect(knowledge(engine, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-line')?.observedTurn).toBe(1);
+    engine = applyResolution(engine, resolution(states()), players, 3).engine;
+    expect(messagesArriving(engine, scenario, 'blue', 4)).toEqual([expect.objectContaining({ fromUnit: 'blue-line', sentTurn: 2 })]);
+    expect(knowledge(engine, scenario, 'blue', 4).own.find((e) => e.unit.id === 'blue-line')?.observedTurn).toBe(2);
+    // Answered, so it leaves the list.
+    expect(renderOutbox(engine, scenario, 'blue', 4)).toContain('- None outstanding.');
+  });
+
+  it('a moving flagship hears sooner when it closes in, and later when it pulls away (LIGHT-03)', () => {
+    // Blue Node West is 4 hexes from Blue's flagship. Its turn-1 report: from 4 away it arrives
+    // in turn 1 + 1 + 2 = 4; with the flagship 1 hex closer at the start of turn 3 (3 away), in turn 3.
+    const closer = resolution(states({ 'blue-flagship': [-4, 2] }));
+    const { engine } = play(resolution(states()), closer, resolution(states({ 'blue-flagship': [-4, 2] })));
+    expect(knowledge(engine, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-node-west')?.observedTurn).toBe(1);
+    const stay = play(resolution(states()), resolution(states()), resolution(states())).engine;
+    expect(knowledge(stay, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-node-west')?.observedTurn).toBe(0);
+  });
+});
+
+describe('instant orders and acks (ORD-06, ORD-09)', () => {
+  const instant = (unit: string): PlayerTurn['orders'][number] => ({ unit, order: 'Hold', delivery: 'instant' });
+  const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text, instant_ack: true });
+
+  it('delivers an instant order in the turn it is sent', () => {
+    const engine = recordOrders(startEngine(scenario), 'blue', 1, [instant('blue-node-north')]);
+    expect(deliveries(engine, scenario, 1)).toEqual([expect.objectContaining({ lost: false })]);
+  });
+
+  it('answers "No answer" when the recipient is destroyed that turn, whatever the GM wrote', () => {
+    let engine = recordOrders(startEngine(scenario), 'blue', 1, [instant('blue-raider')]);
+    const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: -1, r: 3, strength: 0 };
+    const applied = applyResolution(
+      engine,
+      resolution(states().filter((u) => u.id !== 'blue-raider'), { removed: [gone], messages: [ack('blue-raider', 'Accepted')] }),
+      players,
+      1,
+    );
+    engine = applied.engine;
+    expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' })]);
+    expect(applied.adjustments).toEqual([expect.stringContaining("blue-raider didn't survive the turn to send its ack")]);
+  });
+
+  it('still answers when the GM forgot the ack: "No answer" if the recipient is gone, a bare ack if not', () => {
+    let engine = recordOrders(startEngine(scenario), 'blue', 1, [instant('blue-raider'), instant('blue-line')]);
+    const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: -1, r: 3, strength: 0 };
+    const applied = applyResolution(engine, resolution(states().filter((u) => u.id !== 'blue-raider'), { removed: [gone] }), players, 1);
+    engine = applied.engine;
+    expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([
+      expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' }),
+      expect.objectContaining({ fromUnit: 'blue-line', text: 'Ack received; no details were recorded.' }),
+    ]);
+    expect(applied.adjustments).toEqual([expect.stringContaining('No ack was recorded for the instant order to blue-line')]);
+  });
+});
+
+describe('destroyed units in the picture', () => {
+  it('marks a unit destroyed when the message reporting it arrives, not a sighting later (run 3, turn 6)', () => {
+    // Red Flagship destroys Blue Raider one hex away. The flagship's own report is local and arrives
+    // next turn; the sighting of the raider's end is 1 hex away and would only arrive a turn later.
+    const flagshipAt = { 'red-flagship': [3, -2] as [number, number] };
+    const raider = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: 2, r: -1, strength: 0 };
+    const override = { unit_id: 'blue-raider', reason: 'test setup', rule_ids: [] };
+    const report: FleetMessage = { from_unit: 'red-flagship', text: 'Engaged blue-raider: destroyed it', instant_ack: false, reports_destroyed: ['blue-raider'] };
+    let engine = applyResolution(
+      startEngine(scenario),
+      resolution(states(flagshipAt).filter((u) => u.id !== 'blue-raider'), { removed: [raider], messages: [report], overrides: [override] }),
+      players,
+      1,
+    ).engine;
+    engine = deliverReportedLosses(engine, scenario, 2);
+    expect(messagesArriving(engine, scenario, 'red', 2)).toEqual([expect.objectContaining({ fromUnit: 'red-flagship' })]);
+    expect(renderSensorPicture(knowledge(engine, scenario, 'red', 2))).toContain('Blue Raider (`blue-raider`, fleet, strength 0) **destroyed**');
+  });
+
+  it("ignores a reported kill that didn't happen", () => {
+    const report: FleetMessage = { from_unit: 'red-line', text: 'Destroyed blue-line', instant_ack: false, reports_destroyed: ['blue-line'] };
+    const { adjustments } = play(resolution(states(), { messages: [report] }));
+    expect(adjustments[0]).toEqual([expect.stringContaining("reports blue-line destroyed, but blue-line didn't leave the game this turn")]);
+  });
+});
+
+describe('status reports (LIGHT-02)', () => {
+  it("shows a unit's status to its owner, in the picture and from a ping, and never to the enemy", () => {
+    const withStatus = states().map((u) => ({ ...u, status: `${u.id}: Hold; Balanced` }));
+    let engine = play(resolution(withStatus)).engine;
+    expect(renderSensorPicture(knowledge(engine, scenario, 'blue', 2))).toContain('status: blue-flagship: Hold; Balanced');
+    const pinged = resolveIntel(engine, scenario, 'blue', 2, [{ kind: 'ping', target: 'blue-line' }]);
+    expect(pinged.text).toContain('Blue Line (`blue-line`, fleet, strength 4) at (-2, 2); status: blue-line: Hold; Balanced');
+    // Red sees Blue's units only as contacts, without their orders.
+    engine = play(resolution(withStatus.map((u) => (u.id === 'blue-line' ? { ...u, q: 1, r: -1 } : u)))).engine;
+    expect(renderSensorPicture(knowledge(engine, scenario, 'red', 2))).not.toContain('blue-line: Hold');
   });
 });
