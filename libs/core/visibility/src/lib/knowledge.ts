@@ -26,15 +26,15 @@ export interface KnowledgeEntry<U extends Unit = Unit> {
   readonly age: number;
   /** Arrived this turn: it wasn't in the previous turn's knowledge state. */
   readonly isNew: boolean;
-  /** Radius of the possibility cloud (LIGHT-09). Zero for a destroyed unit. */
+  /** Radius of the possibility cloud (LIGHT-09). Zero for a removed unit. */
   readonly possibilityRadius: number;
-  /** The unit was seen being destroyed (COMBAT-04). `unit` is where and as it died. */
-  readonly destroyed: boolean;
+  /** The unit was seen leaving the game. `unit` is where and as it was last. */
+  readonly removed: boolean;
 }
 
 /** An enemy unit's track (LIGHT-08). */
 export interface Contact<U extends Unit = Unit> extends KnowledgeEntry<U> {
-  /** Marked Lost (LIGHT-10). Never for a destroyed unit: there is nothing left to track. */
+  /** Marked Lost (LIGHT-10). Never for a removed unit: there is nothing left to track. */
   readonly lost: boolean;
 }
 
@@ -59,7 +59,7 @@ export interface KnowledgeState<U extends Unit = Unit> {
    * unit had stayed where it was last seen; a unit that has moved away since
    * can be flagged while its report is merely delayed (FB-07 "Delayed"), and
    * clears when the report lands. That ambiguity is deliberate (FB-06). A unit
-   * the player has seen destroyed is not silent: its fate is known.
+   * the player has seen leave the game is not silent: its fate is known.
    */
   readonly silent: readonly SilentUnit<U>[];
 }
@@ -113,26 +113,26 @@ export function knowledgeState<U extends Unit>(
   const contacts: Contact<U>[] = [];
   for (const { observation, arrivedTurn } of latest.values()) {
     const age = turn - 1 - observation.turn;
-    const destroyed = observation.destroyed === true;
+    const removed = observation.removed === true;
     const entry: KnowledgeEntry<U> = {
       unit: observation.unit,
       observedTurn: observation.turn,
       arrivedTurn,
       age,
       isNew: arrivedTurn === turn,
-      possibilityRadius: destroyed ? 0 : age * observation.unit.speed,
-      destroyed,
+      possibilityRadius: removed ? 0 : age * observation.unit.speed,
+      removed,
     };
     if (observation.unit.owner === player) {
       own.push(entry);
     } else {
-      contacts.push({ ...entry, lost: !destroyed && params.trackDecay !== undefined && age > params.trackDecay });
+      contacts.push({ ...entry, lost: !removed && params.trackDecay !== undefined && age > params.trackDecay });
     }
   }
 
   const silent: SilentUnit<U>[] = [];
   for (const lastHeard of own) {
-    if (lastHeard.destroyed) continue;
+    if (lastHeard.removed) continue;
     const nextReportTurn = lastHeard.observedTurn + 1;
     const due = observationArrivalTurn(lastHeard.unit.hex, nextReportTurn, flagship, params.c, turn);
     if (due !== undefined) {

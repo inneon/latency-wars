@@ -1,7 +1,7 @@
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { Scenario } from '../types/scenario';
 import type { UnitState } from '@latency-wars/playtest-contracts';
-import { checkMentions, intelObservations, knowledge, readUnits, recordTurn, renderSensorPicture, startEngine } from './engine';
+import { checkMentions, intelObservations, knowledge, readRemoved, readUnits, recordTurn, renderSensorPicture, startEngine } from './engine';
 
 let scenario: Scenario;
 beforeAll(async () => {
@@ -28,8 +28,43 @@ describe('readUnits', () => {
     const { errors } = readUnits(scenario.units, tooFar, players);
     expect(errors).toEqual([
       expect.stringContaining('blue-line moved 2 hexes'),
-      expect.stringContaining("ghost isn't in the game"),
+      expect.stringContaining('ghost is new to the game: give its speed and sensor_range'),
     ]);
+  });
+
+  it('lets a reinforcement join when it comes with its stats', () => {
+    const probe = { id: 'blue-probe-1', owner: 'blue', class: 'fleet' as const, q: -4, r: -1, strength: 0, speed: 2, sensor_range: 2, name: 'Blue Probe 1' };
+    const { units, errors } = readUnits(scenario.units, [...states(), probe], players);
+    expect(errors).toEqual([]);
+    expect(units.at(-1)).toMatchObject({ id: 'blue-probe-1', name: 'Blue Probe 1', class: 'fleet', speed: 2, sensorRange: 2, strength: 0 });
+    // Once in, it is held to its stats like any other unit.
+    const next = readUnits(units, [...states(), { ...probe, q: -1, r: -1 }], players);
+    expect(next.errors).toEqual([expect.stringContaining('blue-probe-1 moved 3 hexes')]);
+  });
+
+  it('rejects a new unit without stats, a new flagship, and a new unit for a non-player', () => {
+    const { errors } = readUnits(
+      scenario.units,
+      [
+        ...states(),
+        { id: 'raider-x', owner: 'red', class: 'fleet', q: 1, r: -4, strength: 2 },
+        { id: 'flag-x', owner: 'red', class: 'flagship', q: 1, r: -4, strength: 3, speed: 1, sensor_range: 3 },
+        { id: 'probe-x', owner: 'green', class: 'fleet', q: 1, r: -4, strength: 0, speed: 2, sensor_range: 2 },
+      ],
+      players,
+    );
+    expect(errors).toEqual([
+      expect.stringContaining('raider-x is new to the game: give its speed and sensor_range'),
+      expect.stringContaining('flag-x is a new flagship'),
+      expect.stringContaining("probe-x is new, but its owner green isn't a player"),
+    ]);
+  });
+
+  it('allows a unit that lives at strength 0, but not one that dropped to it', () => {
+    const probe = { id: 'blue-probe-1', owner: 'blue', class: 'fleet' as const, q: -4, r: -1, strength: 0, speed: 2, sensor_range: 2 };
+    const { units } = readUnits(scenario.units, [...states(), probe], players);
+    const { errors } = readUnits(units, [...states({ 'blue-line': [-2, 1] }).map((u) => (u.id === 'blue-line' ? { ...u, strength: 0 } : u)), probe], players);
+    expect(errors).toEqual([expect.stringContaining('blue-line has dropped to strength 0')]);
   });
 
   it('lets a newly built node join', () => {
@@ -87,5 +122,49 @@ describe('intel and the sensor picture', () => {
     engine = recordTurn(engine, 3, readUnits(engine.units, states().filter((u) => u.id !== 'blue-raider'), players).units);
     const picture = renderSensorPicture(knowledge(engine, scenario, 'blue', 4));
     expect(picture).toContain('Blue Raider (`blue-raider`): silent since turn 1');
+  });
+});
+
+describe('readRemoved', () => {
+  it('accepts a known unit at a reachable hex, and keeps its fixed stats', () => {
+    const present = states().filter((u) => u.id !== 'blue-raider');
+    const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: -2, r: 3, strength: 0 };
+    const { removed, errors } = readRemoved(scenario.units, present, [gone]);
+    expect(errors).toEqual([]);
+    expect(removed[0]).toMatchObject({ id: 'blue-raider', name: 'Blue Raider', hex: { q: -2, r: 3 }, strength: 0, speed: 2 });
+  });
+
+  it('rejects unknown, duplicated, still-present and too-far units', () => {
+    const present = states().filter((u) => u.id !== 'blue-raider');
+    const { errors } = readRemoved(scenario.units, present, [
+      { id: 'ghost', owner: 'red', class: 'fleet', q: 0, r: 0, strength: 0 },
+      { id: 'blue-line', owner: 'blue', class: 'fleet', q: -2, r: 1, strength: 0 },
+      { id: 'blue-raider', owner: 'blue', class: 'fleet', q: 0, r: 0, strength: 0 },
+      { id: 'blue-raider', owner: 'blue', class: 'fleet', q: 0, r: 0, strength: 0 },
+    ]);
+    expect(errors).toEqual([
+      expect.stringContaining('ghost is in removed_units but was never in the game'),
+      expect.stringContaining('blue-line is in both units and removed_units'),
+      expect.stringContaining('blue-raider was removed at (0, 0), 4 hexes from (-3, 4)'),
+      expect.stringContaining('blue-raider is listed twice in removed_units'),
+    ]);
+  });
+});
+
+describe('removed units in play', () => {
+  it('a player who saw a unit go is told so, and its owner out of range sees silence', () => {
+    let engine = startEngine(scenario);
+    // Blue Raider dies next to Red Node South (1, −4) at the end of turn 1, at (1, −3).
+    const present = states().filter((u) => u.id !== 'blue-raider');
+    const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: 1, r: -3, strength: 0 };
+    engine = recordTurn(engine, 1, readUnits(engine.units, present, players).units, readRemoved(engine.units, present, [gone]).removed);
+    for (let t = 2; t <= 5; t++) engine = recordTurn(engine, t, readUnits(engine.units, present, players).units);
+    // (1, −3) is 5 from Red's flagship: visible from turn 1 + 1 + 2 = 4.
+    const red = renderSensorPicture(knowledge(engine, scenario, 'red', 4));
+    expect(red).toContain('Blue Raider (`blue-raider`, fleet, strength 0) **gone**: seen leaving the game at (1, -3) at the end of turn 1');
+    // Blue had no sensor within range of (1, −3), so Blue only ever sees silence.
+    const blue = renderSensorPicture(knowledge(engine, scenario, 'blue', 6));
+    expect(blue).not.toContain('**gone**');
+    expect(blue).toContain('Blue Raider (`blue-raider`): silent since turn 1');
   });
 });

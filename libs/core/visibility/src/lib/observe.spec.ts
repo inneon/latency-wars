@@ -47,10 +47,10 @@ describe('observe (LIGHT-01, LIGHT-02)', () => {
     const redFlag = unit('red-flag', 'red', 'flagship', hex(9, 0));
     const observations = observe(7, [redLine, blueFlag, redFlag], [blueRaider]);
     const wreck = (observer: string) => observations.find((o) => o.observer === observer && o.unit.id === 'blue-raider');
-    expect(wreck('red')).toMatchObject({ turn: 7, destroyed: true, unit: blueRaider });
+    expect(wreck('red')).toMatchObject({ turn: 7, removed: true, unit: blueRaider });
     expect(wreck('blue')).toBeUndefined();
-    // Living units carry no `destroyed` flag at all.
-    expect(observations.find((o) => o.unit.id === 'red-line')).not.toHaveProperty('destroyed');
+    // Units still in the game carry no `removed` flag at all.
+    expect(observations.find((o) => o.unit.id === 'red-line')).not.toHaveProperty('removed');
     // The wreck is not a sensor: Blue sees neither it nor the adjacent Red Line through it.
     expect(seenBy(observations, 'blue')).toEqual(['blue-flag']);
   });

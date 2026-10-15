@@ -48,6 +48,10 @@ export function knowledge(engine: EngineState, scenario: Scenario, player: strin
  * Turns the GM's end-of-turn units into engine units, checking them against
  * the previous state. Speed, sensor range and name can't change, so they're
  * carried over rather than trusted from the GM.
+ *
+ * A unit with an id the game hasn't seen joins: a built node (ECON-03), or a
+ * reinforcement under whatever production rule the scenario uses. How it got
+ * there is the GM's business; here it only needs its fixed stats.
  */
 export function readUnits(
   previous: readonly PlaytestUnit[],
@@ -70,11 +74,21 @@ export function readUnits(
     const before = previous.find((u) => u.id === r.id);
 
     if (!before) {
-      if (r.class !== 'node' || !players.includes(r.owner)) {
-        errors.push(`Unit ${r.id} isn't in the game. Only a newly built node can have a new id, owned by one of: ${players.join(', ')}.`);
+      if (!players.includes(r.owner)) {
+        errors.push(`Unit ${r.id} is new, but its owner ${r.owner} isn't a player. Players: ${players.join(', ')}.`);
         continue;
       }
-      units.push({ id: r.id, name: r.id, owner: r.owner, class: 'node', hex, speed: 0, sensorRange: nodeSensorRange, strength: r.strength });
+      if (r.class === 'flagship') {
+        errors.push(`Unit ${r.id} is a new flagship. Each player has exactly one, from the scenario.`);
+        continue;
+      }
+      const speed = r.class === 'node' ? 0 : r.speed;
+      const sensorRange = r.sensor_range ?? (r.class === 'node' ? nodeSensorRange : undefined);
+      if (speed === undefined || sensorRange === undefined) {
+        errors.push(`Unit ${r.id} is new to the game: give its speed and sensor_range.`);
+        continue;
+      }
+      units.push({ id: r.id, name: r.name ?? r.id, owner: r.owner, class: r.class, hex, speed, sensorRange, strength: r.strength });
       continue;
     }
 
@@ -87,7 +101,10 @@ export function readUnits(
     } else if (moved > before.speed) {
       errors.push(`Unit ${r.id} moved ${moved} hexes, from ${formatHex(before.hex)} to ${formatHex(hex)}, but its speed is ${before.speed}.`);
     }
-    if (r.strength < 1) errors.push(`Unit ${r.id} has strength ${r.strength}. Leave destroyed units out of the list.`);
+    if (r.strength < 0) errors.push(`Unit ${r.id} has strength ${r.strength}.`);
+    else if (r.strength === 0 && before.strength > 0) {
+      errors.push(`Unit ${r.id} has dropped to strength 0. A destroyed unit goes in removed_units, not units.`);
+    }
     units.push({ ...before, hex, strength: r.strength });
   }
 
@@ -95,6 +112,43 @@ export function readUnits(
     for (const u of previous) if (!seen.has(u.id)) errors.push(`Unit ${u.id} is missing from units.`);
   }
   return { units, errors };
+}
+
+/**
+ * Turns the GM's list of units that left the game this turn into engine
+ * units, at the hex where each was last. Why they left is the GM's business.
+ */
+export function readRemoved(
+  previous: readonly PlaytestUnit[],
+  present: readonly UnitState[],
+  reported: readonly UnitState[],
+): { removed: PlaytestUnit[]; errors: string[] } {
+  const errors: string[] = [];
+  const removed: PlaytestUnit[] = [];
+  const seen = new Set<string>();
+  for (const r of reported) {
+    if (seen.has(r.id)) {
+      errors.push(`Unit ${r.id} is listed twice in removed_units.`);
+      continue;
+    }
+    seen.add(r.id);
+    const before = previous.find((u) => u.id === r.id);
+    if (!before) {
+      errors.push(`Unit ${r.id} is in removed_units but was never in the game.`);
+      continue;
+    }
+    if (present.some((u) => u.id === r.id)) {
+      errors.push(`Unit ${r.id} is in both units and removed_units.`);
+      continue;
+    }
+    const hex = { q: r.q, r: r.r };
+    const moved = hexDistance(before.hex, hex);
+    if (moved > before.speed) {
+      errors.push(`Unit ${r.id} was removed at ${formatHex(hex)}, ${moved} hexes from ${formatHex(before.hex)}, but its speed is ${before.speed}.`);
+    }
+    removed.push({ ...before, hex, strength: r.strength });
+  }
+  return { removed, errors };
 }
 
 /** Problems with text that tells `player` about units it can't know about yet (LIGHT-05). */
@@ -136,13 +190,21 @@ export function recordIntel(
   return { ...engine, log: recordInstantArrival(engine.log, player, turn, observations) };
 }
 
-export function recordTurn(engine: EngineState, turn: number, units: readonly PlaytestUnit[]): EngineState {
-  return { log: recordTurnEnd(engine.log, turn, units), units };
+export function recordTurn(
+  engine: EngineState,
+  turn: number,
+  units: readonly PlaytestUnit[],
+  removed: readonly PlaytestUnit[] = [],
+): EngineState {
+  return { log: recordTurnEnd(engine.log, turn, units, removed), units };
 }
 
 const describe = (u: PlaytestUnit) => `${u.name} (\`${u.id}\`, ${u.class}, strength ${u.strength})`;
 
 function line(e: KnowledgeEntry<PlaytestUnit>, cloud: boolean): string {
+  if (e.removed) {
+    return `- ${describe(e.unit)} **gone**: seen leaving the game at ${formatHex(e.unit.hex)} at the end of turn ${e.observedTurn}${e.isNew ? ' **new**' : ''}`;
+  }
   const seen = `at ${formatHex(e.unit.hex)} at the end of turn ${e.observedTurn} (age ${e.age})`;
   const radius = cloud && e.possibilityRadius > 0 ? `; could now be up to ${e.possibilityRadius} hexes from there` : '';
   return `- ${describe(e.unit)} ${seen}${radius}${e.isNew ? ' **new**' : ''}`;

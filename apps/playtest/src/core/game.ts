@@ -8,6 +8,7 @@ import {
   type EngineState,
   intelObservations,
   knowledge,
+  readRemoved,
   readUnits,
   recordIntel,
   recordTurn,
@@ -167,9 +168,12 @@ function assessResolution(
 ): { errors: string[]; engine: EngineState } {
   const players = scenario.players.map((p) => p.id);
   const { units, errors } = readUnits(engine.units, resolution.units, players, { exact: turn === 0 });
+  const { removed, errors: removedErrors } = readRemoved(engine.units, resolution.units, resolution.removed_units);
+  errors.push(...removedErrors);
+  if (turn === 0 && removed.length > 0) errors.push('Nothing is removed at setup.');
   // Recorded even when there are errors: if the GM's version is accepted
   // anyway, the game continues from it. Setup always starts from the scenario.
-  const next = turn === 0 ? engine : recordTurn(engine, turn, units);
+  const next = turn === 0 ? engine : recordTurn(engine, turn, units, removed);
   for (const r of resolution.player_reports) {
     if (!players.includes(r.player_id)) errors.push(`There is a report for ${r.player_id}, who isn't a player.`);
   }

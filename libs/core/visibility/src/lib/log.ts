@@ -36,9 +36,10 @@ export function emptyLog<U extends Unit = Unit>(): VisibilityLog<U> {
 }
 
 /**
- * Record the true state of every surviving unit at the end of `turn`
- * (after phase 8), plus the units destroyed in that turn's combat, at the
- * hex where they died (COMBAT-04). Returns a new log; the input is untouched.
+ * Record the true state of every unit still in the game at the end of `turn`
+ * (after phase 8), plus the units that left the game this turn (destroyed,
+ * or gone for any other reason), at the hex where they were last. Returns a
+ * new log; the input is untouched.
  *
  * Call it first with the starting state as the end of turn 0 (or whatever
  * turn precedes the first one played), then once per turn, in order. A gap
@@ -49,14 +50,14 @@ export function recordTurnEnd<U extends Unit>(
   log: VisibilityLog<U>,
   turn: number,
   units: readonly U[],
-  destroyed: readonly U[] = [],
+  removed: readonly U[] = [],
 ): VisibilityLog<U> {
   if (log.lastTurn !== undefined && turn !== log.lastTurn + 1) {
     throw new RangeError(`recordTurnEnd: expected turn ${log.lastTurn + 1}, got ${turn}`);
   }
-  for (const d of destroyed) {
-    if (units.some((u) => u.id === d.id)) {
-      throw new RangeError(`recordTurnEnd: unit ${d.id} is listed as both surviving and destroyed in turn ${turn}`);
+  for (const gone of removed) {
+    if (units.some((u) => u.id === gone.id)) {
+      throw new RangeError(`recordTurnEnd: unit ${gone.id} is listed as both present and removed in turn ${turn}`);
     }
   }
 
@@ -81,7 +82,7 @@ export function recordTurnEnd<U extends Unit>(
     lastTurn: turn,
     paths,
     flagships,
-    observations: [...log.observations, ...observe(turn, units, destroyed)],
+    observations: [...log.observations, ...observe(turn, units, removed)],
   };
 }
 

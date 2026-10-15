@@ -1,5 +1,5 @@
 /**
- * Sensors (LIGHT-01, LIGHT-02, COMBAT-04): *whether* something is seen.
+ * Sensors (LIGHT-01, LIGHT-02): *whether* something is seen.
  * When it becomes visible is `light.ts`'s job.
  */
 import { hexDistance, type PlayerId, type Unit } from '@latency-wars/domain';
@@ -13,25 +13,29 @@ import { hexDistance, type PlayerId, type Unit } from '@latency-wars/domain';
 export interface Observation<U extends Unit = Unit> {
   readonly turn: number;
   readonly observer: PlayerId;
-  /** The unit as it was at the end of `turn`, including its hex. For a destroyed unit, where and as it died. */
+  /** The unit as it was at the end of `turn`, including its hex. For a removed unit, where and as it was last. */
   readonly unit: U;
-  /** Set when the unit was seen being destroyed in this turn's combat (COMBAT-04). */
-  readonly destroyed?: true;
+  /**
+   * Set when the unit was seen leaving the game this turn. Why it left
+   * (destroyed in combat, COMBAT-04; anything else the rules add) is not the
+   * sensor's concern: from here on there is nothing to track.
+   */
+  readonly removed?: true;
 }
 
 /**
  * Everything every player's sensors record at the end of `turn` (phase 8),
- * given the true state of every surviving unit at that moment, and the units
- * destroyed in that turn's combat, at the hex where they died.
+ * given the true state of every unit still in the game at that moment, and
+ * the units that left the game this turn, at the hex where they were last.
  *
- * Every surviving unit observes itself (LIGHT-02): distance 0 is within any
- * sensor range. A destroyed unit observes nothing; it is observed, as
- * destroyed, by any surviving sensor in range (COMBAT-04).
+ * Every remaining unit observes itself (LIGHT-02): distance 0 is within any
+ * sensor range. A removed unit observes nothing; it is observed, as removed,
+ * by any remaining sensor in range (COMBAT-04 for the destroyed case).
  */
 export function observe<U extends Unit>(
   turn: number,
   units: readonly U[],
-  destroyed: readonly U[] = [],
+  removed: readonly U[] = [],
 ): Observation<U>[] {
   const players = [...new Set(units.map((u) => u.owner))];
   const observations: Observation<U>[] = [];
@@ -41,8 +45,8 @@ export function observe<U extends Unit>(
     for (const unit of units) {
       if (sees(unit)) observations.push({ turn, observer, unit });
     }
-    for (const unit of destroyed) {
-      if (sees(unit)) observations.push({ turn, observer, unit, destroyed: true });
+    for (const unit of removed) {
+      if (sees(unit)) observations.push({ turn, observer, unit, removed: true });
     }
   }
   return observations;

@@ -52,12 +52,22 @@ export type Ruling = z.infer<typeof Ruling>;
 
 /** One unit's true state at the end of a turn. The engine tracks positions and visibility from these. */
 export const UnitState = z.object({
-  id: z.string().describe('The unit id from the scenario. A newly built node gets a new id.'),
+  id: z
+    .string()
+    .describe('The unit id from the scenario, or a new id for a unit that joined this turn (a built node, a reinforcement).'),
   owner: z.string().describe('Player id.'),
   class: z.enum(['flagship', 'fleet', 'node']),
   q: z.number().int(),
   r: z.number().int(),
-  strength: z.number().int().describe('Current strength. Leave destroyed units out of the list instead.'),
+  strength: z.number().int().describe('Current strength. A unit that left the game this turn goes in `removed_units`, not here.'),
+  name: z.string().optional().describe('For a unit new to the game: its display name. Defaults to the id.'),
+  speed: z.number().int().nonnegative().optional().describe('For a unit new to the game: hexes per turn. Required for a new fleet; 0 for a node.'),
+  sensor_range: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe('For a unit new to the game: sensor range in hexes. Required for a new fleet; a node defaults to the other nodes’.'),
 });
 export type UnitState = z.infer<typeof UnitState>;
 
@@ -83,7 +93,13 @@ export const GmResolution = z.object({
     ),
   units: z
     .array(UnitState)
-    .describe('Every surviving unit at the end of this turn (after phase 8), with its true position and strength.'),
+    .describe('Every unit still in the game at the end of this turn (after phase 8), with its true position and strength.'),
+  removed_units: z
+    .array(UnitState)
+    .describe(
+      'Every unit that left the game this turn (destroyed in combat, or gone for any other reason the rules allow), ' +
+        'at the hex where it was last and with its final strength. Sensors in range see it go (COMBAT-04). Empty if none.',
+    ),
   player_reports: z
     .array(
       z.object({

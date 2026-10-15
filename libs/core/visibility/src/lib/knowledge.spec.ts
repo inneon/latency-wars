@@ -196,15 +196,32 @@ describe('knowledgeState: silence (FB-05)', () => {
   });
 });
 
-describe('knowledgeState: destroyed units (COMBAT-04)', () => {
+describe('knowledgeState: units that appear mid-game', () => {
+  it('the owner learns of a new unit through its first status report, at light speed', () => {
+    // A probe appears at Blue Node West (−4, −1), 3 from Blue's flagship, at the end of turn 3.
+    const probe = unit('blue-probe-1', 'blue', 'fleet', hex(-4, -1), { strength: 0, speed: 2 });
+    let log = recordHeldTurns(emptyLog<TestUnit>(), -3, 2, theHuntUnits);
+    for (let turn = 3; turn <= 5; turn++) log = recordTurnEnd(log, turn, [...theHuntUnits, probe]);
+    expect(knowledgeState(log, 'blue', 4, params).own.map((e) => e.unit.id)).not.toContain('blue-probe-1');
+    // 3 + 1 + L(3) = 5.
+    expect(knowledgeState(log, 'blue', 5, params).own.find((e) => e.unit.id === 'blue-probe-1')).toMatchObject({
+      observedTurn: 3,
+      arrivedTurn: 5,
+      isNew: true,
+    });
+    expect(knowledgeState(log, 'red', 5, params).contacts.map((c) => c.unit.id)).not.toContain('blue-probe-1');
+  });
+});
+
+describe('knowledgeState: removed units (destroyed in combat, COMBAT-04)', () => {
   // The scout dies at (9, 0) at the end of turn 6, with Red adjacent at (10, 0).
   const log = lineScenario({ through: 12, scoutDiesAt: 6, recordWreck: true });
 
-  it('the player who saw the kill gets a destroyed entry, not a track to chase', () => {
+  it('the player who saw the kill gets a removed entry, not a track to chase', () => {
     // Red's flagship is at (20, 0), 11 from the wreck: 6 + 1 + L(11) = 11.
     const red = knowledgeState(log, 'red', 11, params);
     const wreck = red.contacts.find((c) => c.unit.id === 'scout');
-    expect(wreck).toMatchObject({ observedTurn: 6, arrivedTurn: 11, destroyed: true, possibilityRadius: 0, lost: false });
+    expect(wreck).toMatchObject({ observedTurn: 6, arrivedTurn: 11, removed: true, possibilityRadius: 0, lost: false });
     expect(wreck?.unit.strength).toBe(0);
     // Never Lost, however old.
     expect(knowledgeState(log, 'red', 13, { c: 3, trackDecay: 1 }).contacts.find((c) => c.unit.id === 'scout')?.lost).toBe(false);
@@ -213,7 +230,7 @@ describe('knowledgeState: destroyed units (COMBAT-04)', () => {
   it('the owner with no sensor in range sees silence, not a wreck', () => {
     // Blue's only other sensor is its flagship at (0, 0), 9 from the wreck: out of range.
     const blue = knowledgeState(log, 'blue', 11, params);
-    expect(blue.own.find((e) => e.unit.id === 'scout')).toMatchObject({ observedTurn: 5, destroyed: false });
+    expect(blue.own.find((e) => e.unit.id === 'scout')).toMatchObject({ observedTurn: 5, removed: false });
     expect(blue.silent.map((s) => s.unitId)).toEqual(['scout']);
   });
 
@@ -228,7 +245,7 @@ describe('knowledgeState: destroyed units (COMBAT-04)', () => {
     }
     // The wreck report from (9, 0) reaches Blue's flagship in 6 + 1 + 3 = 10.
     const blue = knowledgeState(withWitness, 'blue', 10, params);
-    expect(blue.own.find((e) => e.unit.id === 'scout')).toMatchObject({ observedTurn: 6, destroyed: true });
+    expect(blue.own.find((e) => e.unit.id === 'scout')).toMatchObject({ observedTurn: 6, removed: true });
     expect(blue.silent).toEqual([]);
   });
 });

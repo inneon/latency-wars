@@ -40,6 +40,7 @@ const resolution = (scenario: Scenario, turn: number, over = false, redMentions:
   true_state: `state ${turn}`,
   // Nobody moves.
   units: unitStates(scenario),
+  removed_units: [],
   player_reports: [
     { player_id: 'blue', report: `SECRET-BLUE-${turn}`, mentions: [{ unit_id: 'blue-line', observed_turn: turn - 1 }] },
     { player_id: 'red', report: `SECRET-RED-${turn}`, mentions: redMentions },

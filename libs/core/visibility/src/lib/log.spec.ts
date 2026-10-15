@@ -41,27 +41,38 @@ describe('recordTurnEnd', () => {
     expect(() => recordTurnEnd(log, 0, theHuntUnits)).toThrow(/expected turn 1/);
   });
 
-  it('records destroyed units as observations but not as positions', () => {
+  it('records removed units as observations but not as positions', () => {
     const log = recordTurnEnd(emptyLog(), 0, theHuntUnits);
     const wreck = moved(theHunt.blueRaider, hex(2, -1)); // next to Red Line at (2, −1)
     const survivors = theHuntUnits.filter((u) => u.id !== 'Blue Raider');
     const next = recordTurnEnd(log, 1, survivors, [wreck]);
     const seen = next.observations.filter((o) => o.turn === 1 && o.unit.id === 'Blue Raider');
     expect(seen.map((o) => o.observer)).toEqual(['red']);
-    expect(seen[0]?.destroyed).toBe(true);
+    expect(seen[0]?.removed).toBe(true);
     expect(unitPath(next, 'Blue Raider')).toHaveLength(1);
     expect(unitPresentAt(next, 'Blue Raider', 2)).toBe(false);
   });
 
-  it('rejects a unit that is both surviving and destroyed', () => {
+  it('rejects a unit that is both present and removed', () => {
     const log = recordTurnEnd(emptyLog(), 0, theHuntUnits);
-    expect(() => recordTurnEnd(log, 1, theHuntUnits, [theHunt.blueRaider])).toThrow(/both surviving and destroyed/);
+    expect(() => recordTurnEnd(log, 1, theHuntUnits, [theHunt.blueRaider])).toThrow(/both present and removed/);
   });
 
   it('rejects two flagships for one player, and a unit listed twice', () => {
     const second = unit('Blue Flagship 2', 'blue', 'flagship', hex(0, 0));
     expect(() => recordTurnEnd(emptyLog(), 0, [theHunt.blueFlag, second])).toThrow(/more than one flagship/);
     expect(() => recordTurnEnd(emptyLog(), 0, [theHunt.blueLine, theHunt.blueLine])).toThrow(/appears twice/);
+  });
+
+  it('a unit that first appears in a later turn is tracked from then, however it got there', () => {
+    const probe = unit('blue-probe-1', 'blue', 'fleet', hex(-4, -1), { strength: 0, speed: 2 });
+    let log = recordHeldTurns(emptyLog(), 0, 2, theHuntUnits);
+    log = recordTurnEnd(log, 3, [...theHuntUnits, probe]);
+    expect(unitPath(log, 'blue-probe-1')).toEqual([{ turn: 4, hex: hex(-4, -1) }]);
+    expect(unitPresentAt(log, 'blue-probe-1', 3)).toBe(false);
+    expect(unitPresentAt(log, 'blue-probe-1', 4)).toBe(true);
+    // It reports itself from the turn it appears, and is seen by anything in range.
+    expect(log.observations.filter((o) => o.unit.id === 'blue-probe-1').map((o) => [o.turn, o.observer])).toEqual([[3, 'blue']]);
   });
 
   it('a unit’s path stops when it leaves the log', () => {
