@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { PlaytestEvent } from '../types/events';
 import type { RunConfig } from '../types/run-config';
 import type { AgentUsage } from '../types/usage';
-import { renderReport, renderTranscript } from './render';
+import { formatDuration, renderReport, renderTranscript } from './render';
 
 /** Everything a run writes: progress to the console, and files to the output directory. */
 export class RunWriter {
@@ -13,6 +13,7 @@ export class RunWriter {
   /** Someone is playing a seat, so progress must not give anything away. */
   private readonly quiet: boolean;
   private lastTurnShown = 0;
+  private readonly startedAt = Date.now();
 
   constructor(private readonly config: RunConfig) {
     mkdirSync(config.outDir, { recursive: true });
@@ -61,12 +62,13 @@ export class RunWriter {
     const { outDir, scenario } = this.config;
     const report = path.join(outDir, 'report.md');
     const transcript = path.join(outDir, 'transcript.md');
+    const duration = formatDuration(Date.now() - this.startedAt);
     writeFileSync(transcript, renderTranscript(scenario, this.events));
-    writeFileSync(report, renderReport(scenario, this.events, usage));
+    writeFileSync(report, renderReport(scenario, this.events, usage, duration));
 
     const cost = usage.reduce((sum, u) => sum + (u.costUsd ?? 0), 0);
     const priced = usage.some((u) => u.costUsd != null);
-    console.log(`\n${priced ? `Estimated cost $${cost.toFixed(2)}. ` : ''}Output:`);
+    console.log(`\nRan in ${duration}.${priced ? ` Estimated cost $${cost.toFixed(2)}.` : ''} Output:`);
     console.log(`  ${this.relative(report)}`);
     console.log(`  ${this.relative(transcript)}`);
   }

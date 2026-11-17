@@ -130,9 +130,21 @@ function feedbackSection(title: string, f: Feedback | GmFeedback): string {
   return parts.join('\n\n');
 }
 
-export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage: AgentUsage[]): string {
+/** Wall-clock time as `25min 15s`, `1h 3min 5s` or `42s`. */
+export function formatDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const min = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${min}min ${s}s`;
+  if (min > 0) return `${min}min ${s}s`;
+  return `${s}s`;
+}
+
+export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage: AgentUsage[], duration?: string): string {
   const name = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
   const out = [`# Play-test report: ${scenario.title}`];
+  if (duration) out.push(`_Ran in ${duration}._`);
 
   const warnings = events.filter((e) => e.type === 'warning');
   if (warnings.length) {
