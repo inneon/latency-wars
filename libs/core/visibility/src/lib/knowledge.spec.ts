@@ -175,19 +175,21 @@ describe('knowledgeState: instant arrivals', () => {
 });
 
 describe('knowledgeState: silence (FB-05)', () => {
-  it('flags an own unit once the report it should have sent is overdue', () => {
+  it('flags an own unit once its report is overdue even had it moved straight away at full speed', () => {
     const log = lineScenario({ through: 12, scoutDiesAt: 6 });
-    // Last report: end of turn 5, arrives 5 + 1 + 3 = 9. The turn-6 report would arrive in 10.
+    // Last report: end of turn 5, 9 hexes away, arrives 5 + 1 + 3 = 9. Had the scout held, the turn-6 report
+    // would arrive in 10; had it run away, it could be 10 or more hexes out, arriving in 11.
     const t9 = knowledgeState(log, 'blue', 9, params);
     expect(t9.own.find((e) => e.unit.id === 'scout')).toMatchObject({ observedTurn: 5, age: 3 });
     expect(t9.silent).toEqual([]);
+    expect(knowledgeState(log, 'blue', 10, params).silent).toEqual([]);
 
-    const t10 = knowledgeState(log, 'blue', 10, params);
-    expect(t10.silent).toHaveLength(1);
-    expect(t10.silent[0]).toMatchObject({ unitId: 'scout', sinceTurn: 6 });
-    expect(t10.silent[0]?.lastHeard).toMatchObject({ observedTurn: 5 });
+    const t11 = knowledgeState(log, 'blue', 11, params);
+    expect(t11.silent).toHaveLength(1);
+    expect(t11.silent[0]).toMatchObject({ unitId: 'scout', sinceTurn: 6 });
+    expect(t11.silent[0]?.lastHeard).toMatchObject({ observedTurn: 5 });
     // The last known state is still reported (LIGHT-10 keeps history), just stale.
-    expect(t10.own.find((e) => e.unit.id === 'scout')).toMatchObject({ observedTurn: 5, age: 4 });
+    expect(t11.own.find((e) => e.unit.id === 'scout')).toMatchObject({ observedTurn: 5, age: 5 });
   });
 
   it('never flags a unit whose reports are arriving on time', () => {

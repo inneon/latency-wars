@@ -85,9 +85,9 @@ function describe(e: PlaytestEvent): string {
         e.submission.qbit_purchases.length ? ` and ${e.submission.qbit_purchases.length} qBit purchase(s)` : ''
       }`;
     case 'quotes':
-      return `Turn ${e.turn}: quotes for ${e.player}${e.intel.length ? ` (with ${e.intel.filter((i) => i.bought).length} intel purchase(s))` : ''}`;
+      return `Turn ${e.turn}: quotes for ${e.player}${e.intel.length ? ` (with ${e.intel.filter((i) => i.bought).length} scan(s))` : ''}`;
     case 'hijacks':
-      return `Turn ${e.turn}: ${e.player} bought ${e.quotes.filter((q) => !q.refused).length} hijack(s)`;
+      return `Turn ${e.turn}: ${e.player} bought ${e.quotes.filter((q) => !q.refused).length} spoof(s) and ${e.oversights.filter((o) => !o.refused).length} oversight(s)`;
     case 'gm_resolution':
       return `Turn ${e.turn}: GM resolved the turn (${e.resolution.rulings.length} ruling(s))${
         e.resolution.game_over ? ` — game over: ${e.resolution.outcome}` : ''
@@ -108,6 +108,8 @@ function describe(e: PlaytestEvent): string {
       return `${e.player} gave feedback`;
     case 'gm_feedback':
       return 'GM gave feedback';
+    case 'ranking':
+      return `After turn ${e.turn}: private ranking recorded for the analyst`;
     case 'synthesis':
       return 'Analyst wrote the report';
     case 'warning':

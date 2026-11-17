@@ -1,5 +1,5 @@
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
-import type { Agent, JsonSchema } from '../types/agent';
+import type { Agent, JsonSchema, PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import type { Feedback, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
@@ -67,23 +67,30 @@ function setup(
   gameOverOnTurn: number,
   {
     speedingOnTurn = 0,
+    stubOnTurn = 0,
     purchases = {},
     orders = {},
-  }: { speedingOnTurn?: number; purchases?: Record<string, PlayerTurn['qbit_purchases']>; orders?: Record<string, PlayerTurn['orders']> } = {},
+  }: {
+    speedingOnTurn?: number;
+    stubOnTurn?: number;
+    purchases?: Record<string, PlayerTurn['qbit_purchases']>;
+    orders?: Record<string, PlayerTurn['orders']>;
+  } = {},
 ) {
   const gm = new ScriptedAgent('gm', (label) => {
     if (label === 'setup') return resolution(scenario, 0);
-    if (label === 'debrief') return gmFeedback;
     const n = Number(label.split(' ')[1]);
     // On the speeding turn, the GM moves Blue Line two hexes; its speed is 1.
     const units = unitStates(scenario).map((u) => (n === speedingOnTurn && u.id === 'blue-line' ? { ...u, q: 0, r: 2 } : u));
+    // On the stub turn, the GM's first reply leaves every unit out; its correction puts them back.
+    if (n === stubOnTurn && !label.includes('correction')) return resolution(scenario, n, n === gameOverOnTurn, { units: [] });
     return resolution(scenario, n, n === gameOverOnTurn, { units });
   });
   const player = (id: string) =>
     new ScriptedAgent(id, (label) => {
       if (label === 'debrief') return feedback;
-      // Red buys instant intel on turn 1.
-      if (id === 'red' && label === 'turn 1' && !purchases[`${id}:${label}`]) return turn([{ kind: 'snapshot' }]);
+      // Red scans its flagship on turn 1.
+      if (id === 'red' && label === 'turn 1' && !purchases[`${id}:${label}`]) return turn([{ kind: 'scan', target: 'red-flagship' }]);
       // Scripted purchases are asked for, then repeated in the final submission, as a real player would.
       const key = `${id}:${label.replace(' final', '')}`;
       return turn(purchases[key], orders[key]);
@@ -91,7 +98,20 @@ function setup(
   const blue = player('blue');
   const red = player('red');
   const analyst = new ScriptedAgent('analyst', () => 'REPORT');
-  return { gm, blue, red, analyst, agents: { gm, players: new Map([['blue', blue], ['red', red]]), analyst } };
+  const gmDebriefers: ScriptedAgent[] = [];
+  const newGmDebriefer = () => {
+    const debriefer = new ScriptedAgent('gm', () => gmFeedback);
+    gmDebriefers.push(debriefer);
+    return debriefer;
+  };
+  return {
+    gm,
+    blue,
+    red,
+    analyst,
+    gmDebriefers,
+    agents: { gm, newGmDebriefer, players: new Map([['blue', blue], ['red', red]]), analyst },
+  };
 }
 
 describe('runPlaytest', () => {
@@ -113,18 +133,18 @@ describe('runPlaytest', () => {
     expect(redSaw).not.toContain('SECRET-BLUE');
   });
 
-  it('charges for instant intel and shows it before the player commits orders, without asking the GM', async () => {
+  it('charges for scans and shows them before the player commits orders, without asking the GM', async () => {
     const { gm, red, agents } = setup(scenario, 99);
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario, agents, maxRounds: 1, emit: (e) => events.push(e) });
 
     expect(red.prompts.map((p) => p.label)).toEqual(['turn 1', 'turn 1 final', 'debrief']);
-    // The-hunt: 8 qBits to start, QBIT_INTEL_COST 5.
-    expect(red.prompts[1]?.prompt).toContain('Intel snapshot (FB-10): 5 qBits. Balance now 3.');
-    expect(red.prompts[1]?.prompt).toContain('## Instant intel (as of the end of turn 0)');
-    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve', 'debrief']);
+    // The-hunt: 8 qBits to start; a scan of the flagship itself costs the base QBIT_SCAN_COST, 1.
+    expect(red.prompts[1]?.prompt).toContain('Scan `red-flagship` (FB-11): 1 qBits (base 1 + distance 0). Balance now 7.');
+    expect(red.prompts[1]?.prompt).toContain('## Scan results (as of the end of turn 0, age 0)');
+    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve']);
     expect(gm.prompts[1]?.prompt).toContain('## Orders delivered in turn 1');
-    expect(gm.prompts[1]?.prompt).toContain('| red | 3 | intel snapshot (5) | nothing | 4 |');
+    expect(gm.prompts[1]?.prompt).toContain('| red | 7 | scan red-flagship (1) | nothing | 4 |');
   });
 
   it("keeps the qBit ledger and puts each player's balance and statement in their report", async () => {
@@ -134,14 +154,14 @@ describe('runPlaytest', () => {
 
     const report = (agent: typeof blue, n: number) => agent.prompts.find((p) => p.label === `turn ${n}`)?.prompt ?? '';
     expect(report(blue, 1)).toContain('## qBits\n\nBalance: 8 qBits.');
-    // Blue: 8 decays by 8/3, then 4 is produced. Red spent 5 on intel first: 3 decays by 1, then 4.
+    // Blue: 8 decays by 8/3, then 4 is produced. Red spent 1 on a scan first: 7 decays by 7/3, then 4.
     expect(report(blue, 2)).toContain('Balance: 9.33 qBits.\nTurn 1: opened at 8; spent nothing; decay −2.67; production +4; closed at 9.33.');
-    expect(report(red, 2)).toContain('Turn 1: opened at 8; spent intel snapshot (5); decay −1; production +4; closed at 6.');
+    expect(report(red, 2)).toContain('Turn 1: opened at 8; spent scan red-flagship (1); decay −2.33; production +4; closed at 8.67.');
     expect(events.filter((e) => e.type === 'qbits').map((e) => e.type === 'qbits' && e.turn)).toEqual([1, 2]);
   });
 
   it("refuses an instant order the player can't afford, so the GM never sees it", async () => {
-    // Blue sends three instant orders on turn 1 with 8 qBits: two are paid for (QBIT_ORDER_COST 4), the third isn't sent.
+    // Blue sends three instant orders on turn 1 with 8 qBits: two are paid for (3 + 1 each), the third (3 + 2) isn't sent.
     const { gm, blue, agents } = setup(scenario, 99, {
       orders: {
         'blue:turn 1': [
@@ -159,43 +179,60 @@ describe('runPlaytest', () => {
     expect(resolve).toContain('blue → `blue-flagship` (sent turn 1, light)');
     expect(resolve).toContain('blue → `blue-raider` (sent turn 1, instant)');
     expect(resolve).not.toContain('blue → `blue-node-west`');
-    expect(resolve).toContain('| blue | 0 | instant order to blue-line (4), instant order to blue-raider (4) | instant order to blue-node-west (4, refused: balance 0) | 4 |');
-    expect(blue.prompts.find((p) => p.label === 'turn 2')?.prompt).toContain('refused instant order to blue-node-west (4, refused: balance 0)');
+    expect(resolve).toContain('| blue | 0 | instant order to blue-line (4), instant order to blue-raider (4) | instant order to blue-node-west (5, refused: balance 0) | 4 |');
+    expect(blue.prompts.find((p) => p.label === 'turn 2')?.prompt).toContain('refused instant order to blue-node-west (5, refused: balance 0)');
   });
 
-  it('quotes a hijack before it is bought, and hands the bought ones to the GM priced', async () => {
+  it('quotes a spoof before it is bought, and hands the bought ones to the GM priced', async () => {
     // Red asks to spoof Blue Line on turn 1 with no track on it: quoted as refused, so nothing reaches the GM.
-    // Blue asks to seize Red Line on turn 2 with no track either. Neither has a fresh track in this static game,
+    // Blue asks to spoof Red Line on turn 2 with no track either. Neither has a fresh track in this static game,
     // so both are refused; the flow is what's under test here, pricing is covered in the engine's tests.
     const { gm, blue, red, agents } = setup(scenario, 99, {
       purchases: {
         'red:turn 1': [{ kind: 'spoof', target: 'blue-line', order: 'Hold' }],
-        'blue:turn 2': [{ kind: 'seize', target: 'red-line', order: 'Attack(blue-line)' }],
+        'blue:turn 2': [{ kind: 'spoof', target: 'red-line', order: 'Hold' }],
       },
     });
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario, agents, maxRounds: 2, emit: (e) => events.push(e) });
 
-    // A quote needs no GM call unless intel was asked for too.
-    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve', 'turn 2 resolve', 'debrief']);
+    // A quote needs no GM call.
+    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve', 'turn 2 resolve']);
     expect(red.prompts.map((p) => p.label)).toEqual(['turn 1', 'turn 1 final', 'turn 2', 'debrief']);
     expect(red.prompts[1]?.prompt).toContain('spoof `blue-line` → Hold: refused. You have no track on blue-line.');
-    expect(blue.prompts.find((p) => p.label === 'turn 2 final')?.prompt).toContain('seize `red-line`');
+    expect(blue.prompts.find((p) => p.label === 'turn 2 final')?.prompt).toContain('spoof `red-line`');
     expect(events.filter((e) => e.type === 'quotes').map((e) => e.type === 'quotes' && [e.turn, e.player, e.intel.length === 0])).toEqual([
       [1, 'red', true],
       [2, 'blue', true],
     ]);
     // Refused purchases are not bought, so the GM is told nothing about them.
-    expect(gm.prompts.map((p) => p.prompt).join('\n')).not.toContain('Hijacks bought');
+    expect(gm.prompts.map((p) => p.prompt).join('\n')).not.toContain('Spoofs bought');
+  });
+
+  it('quotes oversight, charges it in Emission and tells the GM (QBIT-09)', async () => {
+    // Blue oversees Blue Line, 1 hex from its flagship, at strength 1: 1 + 1 qBits.
+    const { gm, blue, agents } = setup(scenario, 99, {
+      purchases: { 'blue:turn 1': [{ kind: 'oversee', target: 'blue-line', strength: 1 }] },
+    });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents, maxRounds: 1, emit: (e) => events.push(e) });
+
+    expect(blue.prompts.find((p) => p.label === 'turn 1 final')?.prompt).toContain('oversee `blue-line` at strength 1: 2 qBits (distance 1 + strength 1)');
+    const resolve = gm.prompts.find((p) => p.label === 'turn 1 resolve')?.prompt ?? '';
+    expect(resolve).toContain('Oversight bought (QBIT-09)');
+    expect(resolve).toContain('`blue-line` at strength 1');
+    expect(events.filter((e) => e.type === 'hijacks').map((e) => e.type === 'hijacks' && [e.player, e.quotes.length, e.oversights.length])).toEqual([['blue', 0, 1]]);
   });
 
   it('stops when the GM declares game over, then debriefs everyone and writes a synthesis', async () => {
-    const { gm, analyst, agents } = setup(scenario, 2);
+    const { gm, gmDebriefers, analyst, agents } = setup(scenario, 2);
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario, agents, maxRounds: 10, emit: (e) => events.push(e) });
 
     expect(events.filter((e) => e.type === 'gm_resolution')).toHaveLength(2);
-    expect(gm.prompts.at(-1)?.label).toBe('debrief');
+    expect(gm.prompts.at(-1)?.label).toBe('turn 2 resolve');
+    expect(gmDebriefers.flatMap((d) => d.prompts.map((p) => p.label))).toEqual(['debrief']);
+    expect(events.filter((e) => e.type === 'gm_feedback')).toHaveLength(1);
     expect(events.filter((e) => e.type === 'player_feedback')).toHaveLength(2);
     expect(analyst.prompts[0]?.prompt).toContain('[invented] (MOVE-03) pass-through → they fight');
     expect(analyst.prompts[0]?.prompt).toContain('Turn 1, blue: what is age?');
@@ -228,6 +265,19 @@ describe('runPlaytest', () => {
     expect(red.prompts.map((p) => p.prompt).join('\n')).not.toContain('ACK-FROM-LINE');
   });
 
+  it('sends a resolution that leaves units out back to the GM, even when it ends the game', async () => {
+    const { gm, agents } = setup(scenario, 1, { stubOnTurn: 1 });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents, maxRounds: 2, emit: (e) => events.push(e) });
+
+    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve', 'turn 1 resolve (correction 1)']);
+    expect(events.filter((e) => e.type === 'correction')).toEqual([
+      expect.objectContaining({ agent: 'gm', label: 'turn 1 resolve', problems: expect.stringContaining('blue-flagship') }),
+    ]);
+    // The corrected reply accounts for every unit, so the engine keeps nobody in place.
+    expect(events.filter((e) => e.type === 'engine')).toEqual([]);
+  });
+
   it("corrects a GM's illegal move itself, and tells the GM next turn instead of sending the turn back", async () => {
     const { gm, agents } = setup(scenario, 99, { speedingOnTurn: 1 });
     const events: PlaytestEvent[] = [];
@@ -243,16 +293,55 @@ describe('runPlaytest', () => {
     expect(nextResolve).toMatch(/\| `blue-line` \| blue \| fleet \| \(-1, \d\) \|/);
   });
 
+  it("debriefs the GM in a new conversation, with the game's record instead of its turns", async () => {
+    const { gmDebriefers, agents } = setup(scenario, 2);
+    await runPlaytest({ scenario, agents, maxRounds: 10, emit: () => undefined });
+
+    const debrief = gmDebriefers[0]?.prompts[0]?.prompt ?? '';
+    expect(debrief).toContain('Blue wins');
+    expect(debrief).toContain('state 2');
+    expect(debrief).toContain('[invented] (MOVE-03) pass-through → they fight');
+    expect(debrief).toContain('Turn 1, blue: what is age?');
+    expect(debrief).toContain('Step out of the GM role');
+    expect(debrief).not.toContain('Resolve turn');
+    expect(debrief).not.toContain('<debrief_feedback>');
+  });
+
+  /** A GM debriefer that rejects its first `failures` debriefs with `error`. */
+  const failingDebriefs = (agents: PlaytestAgents, failures: number, error: string) => {
+    let attempts = 0;
+    const newGmDebriefer = () => {
+      const agent = agents.newGmDebriefer();
+      return {
+        id: agent.id,
+        send: (label: string, prompt: string, schema?: JsonSchema) =>
+          ++attempts <= failures ? Promise.reject(new Error(error)) : agent.send(label, prompt, schema),
+      };
+    };
+    return { agents: { ...agents, newGmDebriefer }, attempts: () => attempts };
+  };
+
+  it("asks again in a new conversation when the model's safeguards decline the GM's debrief", async () => {
+    const { agents } = setup(scenario, 1);
+    const failing = failingDebriefs(agents, 1, 'claude exited with code 1: {"stop_reason":"refusal"}');
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents: failing.agents, maxRounds: 1, emit: (e) => events.push(e) });
+
+    expect(failing.attempts()).toBe(2);
+    expect(events.filter((e) => e.type === 'gm_feedback')).toHaveLength(1);
+    expect(events).toContainEqual({
+      type: 'warning',
+      message: "The model's safeguards declined the GM's debrief, so it was asked again in a new conversation.",
+    });
+  });
+
   it("keeps everyone else's feedback, and still writes the report, when one debrief fails", async () => {
     const { agents } = setup(scenario, 1);
-    const failingGm = {
-      id: 'gm',
-      send: (label: string, prompt: string, schema?: JsonSchema) =>
-        label === 'debrief' ? Promise.reject(new Error('safeguards flagged this message\n{"details":1}')) : agents.gm.send(label, prompt, schema),
-    };
+    const failing = failingDebriefs(agents, 2, 'safeguards flagged this message\n{"details":1}');
     const events: PlaytestEvent[] = [];
-    await runPlaytest({ scenario, agents: { ...agents, gm: failingGm }, maxRounds: 1, emit: (e) => events.push(e) });
+    await runPlaytest({ scenario, agents: failing.agents, maxRounds: 1, emit: (e) => events.push(e) });
 
+    expect(failing.attempts()).toBe(2);
     expect(events.filter((e) => e.type === 'gm_feedback')).toEqual([]);
     expect(events.filter((e) => e.type === 'player_feedback')).toHaveLength(2);
     expect(events).toContainEqual({
@@ -260,5 +349,15 @@ describe('runPlaytest', () => {
       message: "The GM's debrief failed, so it is missing: safeguards flagged this message (declined by the model's safeguards)",
     });
     expect(events.at(-1)).toEqual({ type: 'synthesis', report: 'REPORT' });
+  });
+
+  it("doesn't retry a GM debrief that failed for any other reason", async () => {
+    const { agents } = setup(scenario, 1);
+    const failing = failingDebriefs(agents, 1, 'network down');
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents: failing.agents, maxRounds: 1, emit: (e) => events.push(e) });
+
+    expect(failing.attempts()).toBe(1);
+    expect(events).toContainEqual({ type: 'warning', message: "The GM's debrief failed, so it is missing: network down" });
   });
 });

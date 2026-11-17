@@ -25,11 +25,10 @@ describe('movement on the map', () => {
     expect(furthestToward(map, { q: 0, r: 2 }, { q: 0, r: 3 }, 2)).toEqual({ q: 0, r: 3 });
   });
 
-  it('takes the next hex nearest the straight line to its destination (MOVE-02)', () => {
-    // From (−3, 0) the line to (0, 3) runs between (−2, 0) and (−3, 1), so the direction order decides;
-    // from (−2, 0), (−2, 1) is nearer the line than (−1, 0).
+  it('takes the first next hex on a shortest path in the order of directions (MOVE-02)', () => {
+    // From (−3, 0) to (0, 3), (+1, 0) comes first; from (−2, 0) it does again, ahead of (0, +1).
     expect(furthestToward(map, { q: -3, r: 0 }, { q: 0, r: 3 }, 1)).toEqual({ q: -2, r: 0 });
-    expect(furthestToward(map, { q: -3, r: 0 }, { q: 0, r: 3 }, 2)).toEqual({ q: -2, r: 1 });
+    expect(furthestToward(map, { q: -3, r: 0 }, { q: 0, r: 3 }, 2)).toEqual({ q: -1, r: 0 });
   });
 
   it('breaks a tie between equal routes by the order of directions (MOVE-02)', () => {

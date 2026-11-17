@@ -12,7 +12,7 @@ Import with `@latency-wars/economy`. Types for hexes and units come from `@laten
 |---|---|---|
 | `webLinks(units, player, linkK?)` | ECON-02 | Every link a player's nodes form, with length, `k` and raw output |
 | `webOutput(links)` | ECON-01 | Total raw output, before `QBIT_DIVISOR` |
-| `qbitIncome(units, player, params)` | ECON-01 | qBits a web produces per turn, without touching a ledger |
+| `qbitIncome(units, player, params)` | ECON-01 | qBits a player produces per turn (their web, plus any flat income), without touching a ledger |
 | `openLedger(firstTurn, balances)` | — | A ledger with each player's starting balance |
 | `spend(ledger, player, turn, label, cost)` | QBIT-01 | Charge a purchase, or record it as refused if the balance doesn't cover it |
 | `canAfford(ledger, player, cost)`, `balanceOf(ledger, player)` | QBIT-01 | The checks behind `spend` |
@@ -28,7 +28,7 @@ const params = { qbitDivisor: 16, qbitDecay: 1 / 3, linkK: myScenarioK };
 let ledger = openLedger<MyUnit>(1, { blue: 8, red: 8 });
 
 // Planning and Emission of turn 1, in the order purchases happen:
-const bought = spend(ledger, 'blue', 1, 'ping blue-line', 2);
+const bought = spend(ledger, 'blue', 1, 'scan blue-line', 2);
 ledger = bought.ledger;
 bought.outcome.accepted; // false if the balance didn't cover it; nothing was taken
 
@@ -42,8 +42,9 @@ statementFor(ledger, 'blue', 1); // { opening, spends, refusals, decay, links, p
 - **Balances are floats.** `ECON-01` asks for exact balances, but `QBIT_DECAY` makes that impossible in binary floating point. `canAfford` allows `QBIT_TOLERANCE` of rounding error, and a balance spent down to within it reads exactly 0. Format balances for display; don't compare them with `===`.
 - **`k` comes from the caller.** Which zones carry a bonus depends on the map, so `linkK` is a function the caller supplies (`ECON-01`), and it defaults to 1. The playtest builds it from a scenario's `linkBonuses`.
 - **Which nodes produce is the caller's call.** `settleEconomy` produces from exactly the nodes it's given. `TURN-03` puts Combat before Economy and construction after production, so pass the nodes still standing after Combat, without any completed in the same phase.
-- **What a player may be told is not decided here.** The rules don't yet say whether a player knows their balance, income or individual links the moment they change, or only when the news arrives at light speed. A statement holds all of it, per link, and the caller decides what to show.
-- **Purchases are priced by the caller.** `spend` takes a cost. Fixed costs come from the parameters table; hijack pricing (`QBIT-07`) needs true positions and lives with whoever holds them.
+- **What a player may be told is not decided here.** `LIGHT-18` lets a player see their balance and total production at once, but never per node or per link. A statement holds all of it, per link, and the caller decides what to show.
+- **Flat income is a scenario's, not a rule's.** `QbitParams.flatIncome` gives a player qBits every Economy phase whatever their web, for scenarios with supply from outside the system. It is added to production, so a statement's `production` is web plus flat income.
+- **Purchases are priced by the caller.** `spend` takes a cost. `QBIT-08` prices every action from the buyer's flagship and what they know, so it lives with whoever holds the knowledge state.
 
 ## Running unit tests
 

@@ -62,31 +62,11 @@ export function furthestToward(map: GameMap, from: Hex, to: Hex, steps: number):
   const remaining = (h: Hex) => left.get(key(h))?.steps ?? Infinity;
   let at = from;
   for (let i = 0; i < steps && Number.isFinite(remaining(at)) && remaining(at) > 0; i++) {
-    const onPath = NEIGHBOURS.map((d) => ({ q: at.q + d.q, r: at.r + d.r })).filter((n) => remaining(n) === remaining(at) - 1);
+    // Of the next hexes on a shortest path, the first in NEIGHBOURS order (MOVE-02).
     const here = at;
-    const offLine = (h: Hex) => distanceToSegment(h, here, target);
-    const nearest = Math.min(...onPath.map(offLine));
-    // A tie, allowing for rounding, goes to the first in NEIGHBOURS order.
-    at = onPath.find((n) => offLine(n) - nearest < 1e-9) ?? at;
+    at = NEIGHBOURS.map((d) => ({ q: here.q + d.q, r: here.r + d.r })).find((n) => remaining(n) === remaining(here) - 1) ?? here;
   }
   return at;
-}
-
-/** A hex's centre on the plane, with neighbouring centres 1 apart. */
-function centre(h: Hex): { x: number; y: number } {
-  return { x: h.q + h.r / 2, y: (h.r * Math.sqrt(3)) / 2 };
-}
-
-/** How far `h`'s centre is from the straight line between the centres of `a` and `b`. */
-function distanceToSegment(h: Hex, a: Hex, b: Hex): number {
-  const p = centre(h);
-  const s = centre(a);
-  const e = centre(b);
-  const dx = e.x - s.x;
-  const dy = e.y - s.y;
-  const lengthSq = dx * dx + dy * dy;
-  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - s.x) * dx + (p.y - s.y) * dy) / lengthSq));
-  return Math.hypot(p.x - (s.x + t * dx), p.y - (s.y + t * dy));
 }
 
 function nearestEnterable(map: GameMap, h: Hex): Hex {

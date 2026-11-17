@@ -57,6 +57,14 @@ describe('settleEconomy', () => {
     expect(statementFor(ledger, 'red', 1)?.links.map((l) => [l.a.id, l.b.id])).toEqual([['red-east', 'red-south']]);
   });
 
+  it('adds a flat income to whatever the web produces, nodes or none', () => {
+    const flat = { ...params, flatIncome: { blue: 6 } };
+    const ledger = settleEconomy(start(), 1, [], flat);
+    expect(statementFor(ledger, 'blue', 1)).toMatchObject({ production: 6, links: [], closing: 8 - 8 / 3 + 6 });
+    expect(statementFor(ledger, 'red', 1)?.production).toBe(0);
+    expect(qbitIncome(webs, 'blue', flat)).toBe(4 + 6);
+  });
+
   it('uses the caller’s link k', () => {
     const ledger = settleEconomy(start(), 1, webs, { ...params, linkK: () => 2 });
     expect(statementFor(ledger, 'blue', 1)?.production).toBe(8);

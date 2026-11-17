@@ -29,7 +29,7 @@ import {
   spend,
   statementFor,
 } from '@latency-wars/economy';
-import type { HijackQuote, IntelPurchase } from '../types/quotes';
+import type { HijackQuote, IntelPurchase, OversightQuote, RankingRow } from '../types/quotes';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
 import { furthestToward, type GameMap, illegalMove } from './movement';
 import type { EngineOverride, GmResolution, PlayerTurn, QbitPurchase, UnitState } from '@latency-wars/playtest-contracts';
@@ -116,13 +116,14 @@ export function startEngine(scenario: Scenario): EngineState {
   };
 }
 
-/** The ledger's parameters, with each link's `k` from the scenario's zone bonuses (ECON-01). */
+/** The ledger's parameters, with each link's `k` from the scenario's zone bonuses (ECON-01) and any flat income. */
 export function qbitParams(scenario: Scenario): QbitParams<PlaytestUnit> {
-  const { divisor, decay, linkBonuses } = scenario.parameters.qbits;
+  const { divisor, decay, linkBonuses, flatIncome } = scenario.parameters.qbits;
   const bonusAt = (u: PlaytestUnit) => linkBonuses.filter((b) => b.hex[0] === u.hex.q && b.hex[1] === u.hex.r).map((b) => b.k);
   return {
     qbitDivisor: divisor,
     qbitDecay: decay,
+    flatIncome,
     linkK: (a, b) => {
       const bonuses = [...bonusAt(a), ...bonusAt(b)];
       return bonuses.length ? Math.max(...bonuses) : 1;
@@ -144,10 +145,26 @@ export interface Applied {
 }
 
 /**
+ * The units a GM resolution doesn't account for: in play at the start of the
+ * turn, but in neither `units` nor `removed_units`. The engine could only keep
+ * them where they were, which hides whatever happened to them, so the GM is
+ * asked again. Returns the problem to send back, or nothing.
+ */
+export function unaccountedUnits(engine: EngineState, resolution: GmResolution): string[] {
+  const listed = new Set([...resolution.units, ...resolution.removed_units].map((u) => u.id));
+  const missing = engine.units.filter((u) => !listed.has(u.id)).map((u) => u.id);
+  if (missing.length === 0) return [];
+  return [
+    `These units were in play at the start of the turn but are in neither units nor removed_units: ${missing.join(', ')}. List every unit still in play in units, with its position, strength and status, even if nothing happened to it, and every unit that left the game this turn in removed_units. That holds on the last turn and when the game is over too.`,
+  ];
+}
+
+/**
  * Applies a GM resolution of `turn` to the engine: its units, its removed
  * units and its messages. Whatever breaks a hard rule is corrected, never
- * sent back. Turn 0 is setup: the scenario's units stand, whatever the GM
- * copied.
+ * sent back; only `unaccountedUnits` is checked before, while the GM can
+ * still be asked again. Turn 0 is setup: the scenario's units stand,
+ * whatever the GM copied.
  */
 export function applyResolution(engine: EngineState, resolution: GmResolution, players: readonly string[], turn: number): Applied {
   const adjustments: string[] = [];
@@ -300,10 +317,11 @@ function newUnit(r: UnitState, previous: readonly PlaytestUnit[], players: reado
  * Queues this turn's messages from units (FB-04), dropping any no unit could
  * have sent: a unit that left the game sends nothing.
  *
- * Every instant order sent this turn gets its ack in the next Planning phase
- * (ORD-09). Acks go out in the Observation phase (FB-02), so a recipient that
- * didn't survive the turn never sends one, and its player gets "No answer"
- * (FB-09) whatever the GM wrote.
+ * Every instant order sent this turn gets a receipt in the next Planning
+ * phase that says only Delivered or No answer (ORD-09, LIGHT-18). The ack the
+ * GM wrote travels home at light speed like any other message. Acks go out in
+ * the Observation phase (FB-02), so a recipient that didn't survive the turn
+ * sends nothing, and its player gets "No answer" (FB-09).
  */
 function queueMessages(
   engine: EngineState,
@@ -326,11 +344,10 @@ function queueMessages(
     }
     const sender = alive(m.from_unit);
     const base = { player: known.owner, fromUnit: known.id, fromName: known.name, sentTurn: turn, hex: (sender ?? known).hex };
-    if (m.instant_ack) {
+    if (m.instant_ack && !acked.has(known.id)) {
       acked.add(known.id);
-      if (!sender) adjustments.push(`${m.from_unit} didn't survive the turn to send its ack, so the ack became "No answer" (FB-09).`);
-      queued.push({ ...base, text: sender ? m.text : 'No answer (FB-09).', instant: true, reportsDestroyed: [] });
-      continue;
+      if (!sender) adjustments.push(`${m.from_unit} didn't survive the turn to send its ack, so its player is told "No answer" (FB-09).`);
+      queued.push({ ...base, text: sender ? RECEIPT : NO_ANSWER, instant: true, reportsDestroyed: [] });
     }
     if (!sender) {
       adjustments.push(`A message from ${m.from_unit} was dropped: it isn't in the game at the end of the turn, so it can't send anything (FB-05).`);
@@ -352,19 +369,46 @@ function queueMessages(
     const recipient = engine.roster.get(order.recipient);
     if (!recipient) continue;
     const survived = alive(order.recipient);
-    if (survived) adjustments.push(`No ack was recorded for the instant order to ${order.recipient}; its player is told an ack came back with no details.`);
     queued.push({
       player: order.player,
       fromUnit: recipient.id,
       fromName: recipient.name,
       sentTurn: turn,
       hex: recipient.hex,
-      text: survived ? 'Ack received; no details were recorded.' : 'No answer (FB-09).',
+      text: survived ? RECEIPT : NO_ANSWER,
       instant: true,
       reportsDestroyed: [],
     });
   }
   return queued;
+}
+
+/** All an instant order's or spoof's receipt says (ORD-09, QBIT-02, LIGHT-18). */
+const RECEIPT = 'Delivered.';
+const NO_ANSWER = 'No answer (FB-09).';
+
+/**
+ * Queues the receipts for the spoofs `player` bought in `turn` (QBIT-02): each
+ * reaches them in the next Planning phase over the entangled channel, and says
+ * only whether the spoof landed.
+ */
+export function queueSpoofReceipts(engine: EngineState, player: string, turn: number, quotes: readonly HijackQuote[]): EngineState {
+  const receipts = quotes
+    .filter((q) => !q.refused)
+    .map((q): QueuedMessage => {
+      const target = engine.roster.get(q.target);
+      return {
+        player,
+        fromUnit: target?.id ?? q.target,
+        fromName: target?.name ?? q.target,
+        hex: target?.hex ?? { q: 0, r: 0 },
+        sentTurn: turn,
+        text: `Spoof → ${q.order}: ${q.fails ? NO_ANSWER : RECEIPT}`,
+        instant: true,
+        reportsDestroyed: [],
+      };
+    });
+  return receipts.length ? { ...engine, messages: [...engine.messages, ...receipts] } : engine;
 }
 
 /** The Planning phase in which a queued message reaches its player, if it has by `through`. */
@@ -468,8 +512,8 @@ export function renderOrdersForGm(engine: EngineState, scenario: Scenario, turn:
  * A player's light orders as they can see them (FB-07): each one's expected
  * arrival and when its ack is due, worked out from what the player knows
  * (their recipient's last confirmed position, and their flagship's position
- * now), never from the true state. An order stays listed until a couple of
- * turns after its ack was due.
+ * now), never from the true state. An order stays listed until its ack has
+ * arrived or its recipient is Silent (FB-07).
  */
 export function renderOutbox(engine: EngineState, scenario: Scenario, player: string, turn: number): string {
   const { c } = scenario.parameters;
@@ -477,18 +521,21 @@ export function renderOutbox(engine: EngineState, scenario: Scenario, player: st
   const flagship = engine.units.find((u) => u.owner === player && u.class === 'flagship');
   const lines: string[] = [];
   for (const o of engine.orders) {
-    if (o.player !== player || o.instant || o.sentTurn >= turn || !flagship) continue;
+    if (o.player !== player || o.instant || o.sentTurn >= turn || !flagship || !o.recipient) continue;
     const last = known.own.find((e) => e.unit.id === o.recipient);
-    if (!last) continue;
-    // Answered: a message from the recipient, sent no earlier than the order, has reached the player.
-    const answered = engine.messages.some(
-      (m) => m.player === player && m.fromUnit === o.recipient && m.sentTurn >= o.sentTurn && arrival(engine, scenario, m, turn) !== undefined,
-    );
+    if (!last || last.removed || known.silent.some((s) => s.unitId === o.recipient)) continue;
+    // Answered: the recipient's ack, sent at the end of the turn the order was delivered (FB-02), has reached the player.
+    const path = unitPath(engine.log, o.recipient);
+    const delivered = path && orderDeliveryTurn(o.from, o.sentTurn, path, c, turn);
+    const answered =
+      delivered !== undefined &&
+      engine.messages.some(
+        (m) => m.player === player && m.fromUnit === o.recipient && !m.instant && m.sentTurn === delivered && arrival(engine, scenario, m, turn) !== undefined,
+      );
     if (answered) continue;
     // ORD-04 if the recipient holds its confirmed position; the ack goes out in that turn's Observation phase (FB-02).
     const expected = o.sentTurn + lightTravelTurns(hexDistance(o.from, last.unit.hex), c);
     const ackDue = expected + 1 + lightTravelTurns(hexDistance(last.unit.hex, flagship.hex), c);
-    if (turn > ackDue + 2) continue;
     const state =
       turn <= expected ? `in transit: expected to arrive in turn ${expected}, ack due by turn ${ackDue}`
       : turn <= ackDue ? `expected to have arrived in turn ${expected}; awaiting ack, due by turn ${ackDue}`
@@ -514,17 +561,27 @@ export function deliverReportedLosses(engine: EngineState, scenario: Scenario, t
   return next;
 }
 
-/** What an instant intel purchase shows (FB-08, and the scenario's snapshot house rule). */
-export function intelObservations(
-  engine: EngineState,
-  player: string,
-  turn: number,
-  bought: { snapshot: boolean; pings: readonly string[] },
-): Observation<PlaytestUnit>[] {
+/**
+ * The price of a qBit action on a unit `player` believes is at `at` (QBIT-08):
+ * the base cost plus the light travel time from their flagship, where it
+ * stands at the start of the turn.
+ */
+export function qbitPrice(engine: EngineState, scenario: Scenario, player: string, base: number, at: Hex): { cost: number; breakdown: string } {
+  const flagship = engine.units.find((u) => u.owner === player && u.class === 'flagship');
+  const distance = flagship ? lightTravelTurns(hexDistance(flagship.hex, at), scenario.parameters.c) : 0;
+  return { cost: base + distance, breakdown: `base ${base} + distance ${distance}` };
+}
+
+/**
+ * What a scan of `unitId` shows (FB-11): everything that unit's sensors
+ * observed at the end of the previous turn, itself included. Empty if it
+ * wasn't on the map then, so it doesn't answer (FB-09).
+ */
+export function scanObservations(engine: EngineState, player: string, turn: number, unitId: string): Observation<PlaytestUnit>[] {
   const previous = engine.log.observations.filter((o) => o.observer === player && o.turn === turn - 1);
-  return previous.filter(
-    (o) => bought.snapshot || (bought.pings.includes(o.unit.id) && o.unit.owner === player),
-  );
+  const self = previous.find((o) => o.unit.id === unitId && !o.removed);
+  if (!self) return [];
+  return previous.filter((o) => hexDistance(o.unit.hex, self.unit.hex) <= self.unit.sensorRange);
 }
 
 export function recordIntel(
@@ -537,66 +594,77 @@ export function recordIntel(
 }
 
 /**
- * Charges `player` for the instant intel they asked for in the Planning phase
- * of `turn` (FB-08, FB-10, QBIT-01), in the order asked, and records what it
- * shows. Unaffordable requests are refused and cost nothing. A ping to a unit
- * that's no longer on the map is charged and gets "No answer" (FB-09).
+ * Charges `player` for the scans they asked for in the Planning phase of
+ * `turn` (FB-11, QBIT-01, QBIT-08), in the order asked, and records what they
+ * show. A player can only scan their own units that they've had a report
+ * from (ORD-10). Unaffordable scans are refused and cost nothing. A scan of a
+ * unit that's no longer on the map is charged and gets "No answer" (FB-09).
  */
-export function resolveIntel(
+export function resolveScans(
   engine: EngineState,
   scenario: Scenario,
   player: string,
   turn: number,
   requests: readonly QbitPurchase[],
 ): { engine: EngineState; purchases: IntelPurchase[]; text: string } {
-  const { intelCost, pingCost } = scenario.parameters.qbits;
+  const known = knowledge(engine, scenario, player, turn);
   let ledger = engine.ledger;
   const purchases: IntelPurchase[] = [];
-  let snapshot = false;
-  const pings: string[] = [];
+  const scanned: string[] = [];
   for (const request of requests) {
-    if (request.kind !== 'snapshot' && request.kind !== 'ping') continue;
-    const target = request.target ?? '';
-    const what = request.kind === 'snapshot' ? 'Intel snapshot (FB-10)' : `Ping \`${target}\` (FB-08)`;
-    const refuse = (why: string) => purchases.push({ kind: request.kind as 'snapshot' | 'ping', target: request.target, cost: 0, bought: false, note: `${what}: refused. ${why}` });
-    if (request.kind === 'snapshot' ? snapshot : pings.includes(target)) {
-      refuse('You already bought that this turn.');
+    if (request.kind !== 'scan') continue;
+    const ref = request.target ?? '';
+    const unit = findOwnUnit(engine, player, ref);
+    const what = `Scan \`${unit?.id ?? ref}\` (FB-11)`;
+    const refuse = (why: string) => purchases.push({ kind: 'scan', target: request.target, cost: 0, bought: false, note: `${what}: refused. ${why}` });
+    if (!unit) {
+      refuse(ref ? `${ref} isn't one of your units.` : 'No unit given.');
       continue;
     }
-    if (request.kind === 'ping' && engine.roster.get(target)?.owner !== player) {
-      refuse(target ? `${target} isn't one of your units.` : 'No unit given.');
+    if (scanned.includes(unit.id)) {
+      refuse('You already scanned it this turn.');
       continue;
     }
-    const cost = request.kind === 'snapshot' ? intelCost : pingCost;
-    const charged = spend(ledger, player, turn, request.kind === 'snapshot' ? 'intel snapshot' : `ping ${target}`, cost);
+    const last = known.own.find((e) => e.unit.id === unit.id);
+    if (!last) {
+      refuse(`You haven't had a status report from ${unit.id} yet (ORD-10).`);
+      continue;
+    }
+    if (last.removed) {
+      refuse(`You already know ${unit.id} was destroyed.`);
+      continue;
+    }
+    const { cost, breakdown } = qbitPrice(engine, scenario, player, scenario.parameters.qbits.scanCost, last.unit.hex);
+    const charged = spend(ledger, player, turn, `scan ${unit.id}`, cost);
     ledger = charged.ledger;
     if (!charged.outcome.accepted) {
-      refuse(`It costs ${formatQbits(cost)} and your balance is ${formatQbits(charged.outcome.balance)} (QBIT-01).`);
+      refuse(`It costs ${formatQbits(cost)} (${breakdown}) and your balance is ${formatQbits(charged.outcome.balance)} (QBIT-01).`);
       continue;
     }
-    const balance = `Balance now ${formatQbits(charged.outcome.balanceAfter)}.`;
-    if (request.kind === 'snapshot') {
-      snapshot = true;
-      purchases.push({ kind: 'snapshot', cost, bought: true, note: `${what}: ${formatQbits(cost)} qBits. ${balance}` });
-    } else {
-      pings.push(target);
-      const answered = engine.units.some((u) => u.id === target);
-      purchases.push({ kind: 'ping', target, cost, bought: true, note: `${what}: ${formatQbits(cost)} qBits.${answered ? '' : ' No answer (FB-09).'} ${balance}` });
-    }
+    scanned.push(unit.id);
+    const answered = scanObservations(engine, player, turn, unit.id).length > 0;
+    purchases.push({
+      kind: 'scan',
+      target: unit.id,
+      cost,
+      bought: true,
+      note: `${what}: ${formatQbits(cost)} qBits (${breakdown}).${answered ? '' : ' No answer (FB-09).'} Balance now ${formatQbits(charged.outcome.balanceAfter)}.`,
+    });
   }
-  const observations = snapshot || pings.length ? intelObservations(engine, player, turn, { snapshot, pings }) : [];
+  const observations = [...new Set(scanned.flatMap((id) => scanObservations(engine, player, turn, id)))];
   const recorded = observations.length ? recordIntel({ ...engine, ledger }, player, turn, observations) : { ...engine, ledger };
-  const parts = [`## Instant intel purchases\n\n${purchases.map((p) => `- ${p.note}`).join('\n')}`];
-  if (snapshot || pings.length) parts.push(renderIntel(observations));
+  const parts = [`## Scans\n\n${purchases.map((p) => `- ${p.note}`).join('\n')}`];
+  if (scanned.length) parts.push(renderIntel(observations));
   return { engine: recorded, purchases, text: parts.join('\n\n') };
 }
 
 /**
  * Charges `player` for the Emission phase of `turn` (TURN-03, QBIT-01): each
- * instant order in the order listed, then each hijack bought. What they can't
- * afford is refused and costs nothing: a refused instant order isn't sent at
- * all, and a refused hijack isn't bought. Orders to the player's own flagship
- * are local and free (ORD-05), however they're marked.
+ * instant order in the order listed, then each oversight, then each spoof, at
+ * QBIT-08's prices. What they can't afford is refused and costs nothing: a
+ * refused instant order isn't sent at all, and a refused spoof or oversight
+ * isn't bought. Orders to the player's own flagship are local and free
+ * (ORD-05), however they're marked.
  */
 export function payForEmission(
   engine: EngineState,
@@ -605,8 +673,10 @@ export function payForEmission(
   turn: number,
   submission: PlayerTurn,
   hijacks: readonly HijackQuote[],
-): { engine: EngineState; submission: PlayerTurn; hijacks: HijackQuote[] } {
+  oversights: readonly OversightQuote[] = [],
+): { engine: EngineState; submission: PlayerTurn; hijacks: HijackQuote[]; oversights: OversightQuote[] } {
   let ledger = engine.ledger;
+  const known = knowledge(engine, scenario, player, turn);
   const flagship = engine.units.find((u) => u.owner === player && u.class === 'flagship');
   const isFlagship = (unit: string) => flagship !== undefined && [flagship.id, flagship.name].some((n) => n.toLowerCase() === unit.trim().toLowerCase());
   const orders: PlayerTurn['orders'] = [];
@@ -615,10 +685,27 @@ export function payForEmission(
       orders.push(order);
       continue;
     }
-    const charged = spend(ledger, player, turn, `instant order to ${order.unit}`, scenario.parameters.qbits.orderCost);
+    // Priced to where the player last heard the fleet was; an order the engine can't match pays the base cost.
+    const recipient = findOwnUnit(engine, player, order.unit);
+    const last = recipient && known.own.find((e) => e.unit.id === recipient.id);
+    const base = scenario.parameters.qbits.orderCost;
+    const { cost } = last ? qbitPrice(engine, scenario, player, base, last.unit.hex) : { cost: base };
+    const charged = spend(ledger, player, turn, `instant order to ${order.unit}`, cost);
     ledger = charged.ledger;
     if (charged.outcome.accepted) orders.push(order);
   }
+  const overseen = new Set<string>();
+  const paidOversights = oversights.map((o): OversightQuote => {
+    if (o.refused || o.cost === undefined) return o;
+    if (overseen.has(o.target)) return { ...o, cost: undefined, refused: `${o.target} already has oversight this turn (QBIT-09).` };
+    const charged = spend(ledger, player, turn, `oversee ${o.target} (strength ${o.strength})`, o.cost);
+    ledger = charged.ledger;
+    if (!charged.outcome.accepted) {
+      return { ...o, refused: `It costs ${formatQbits(o.cost)} and your balance was ${formatQbits(charged.outcome.balance)} (QBIT-01).` };
+    }
+    overseen.add(o.target);
+    return o;
+  });
   const paid = hijacks.map((q): HijackQuote => {
     if (q.refused || q.cost === undefined) return q;
     const charged = spend(ledger, player, turn, `${q.kind} ${q.target}`, q.cost);
@@ -626,7 +713,39 @@ export function payForEmission(
     if (charged.outcome.accepted) return q;
     return { ...q, refused: `It costs ${formatQbits(q.cost)} and your balance was ${formatQbits(charged.outcome.balance)} (QBIT-01).` };
   });
-  return { engine: { ...engine, ledger }, submission: { ...submission, orders }, hijacks: paid };
+  return { engine: { ...engine, ledger }, submission: { ...submission, orders }, hijacks: paid, oversights: paidOversights };
+}
+
+/**
+ * Settles every spoof bought this turn against the oversight bought on each
+ * fleet it reaches (QBIT-09): it lands on a fleet only if it is stronger than
+ * that fleet's oversight. A spoof blocked on every fleet it reaches is marked
+ * as failing, so its buyer gets "No answer"; one blocked on some lists them.
+ */
+export function settleCommandContest(
+  hijacks: ReadonlyMap<string, readonly HijackQuote[]>,
+  oversights: ReadonlyMap<string, readonly OversightQuote[]>,
+): Map<string, HijackQuote[]> {
+  const guard = new Map<string, number>();
+  for (const list of oversights.values()) for (const o of list) if (!o.refused) guard.set(o.target, o.strength);
+  return new Map(
+    [...hijacks].map(([player, list]) => [
+      player,
+      list.map((q): HijackQuote => {
+        if (q.refused || q.fails) return q;
+        const strength = q.strength ?? 0;
+        const reaches = q.reaches ?? [q.target];
+        const blocked = reaches.flatMap((unit) => {
+          const oversight = guard.get(unit);
+          return oversight !== undefined && strength <= oversight ? [{ unit, oversight }] : [];
+        });
+        if (blocked.length === 0) return q;
+        if (blocked.length < reaches.length) return { ...q, blocked };
+        const against = blocked.map((b) => `${b.unit} at ${b.oversight}`).join(', ');
+        return { ...q, blocked, fails: `blocked by oversight on every fleet it reached: spoof strength ${strength} against ${against} (QBIT-09).` };
+      }),
+    ]),
+  );
 }
 
 /** A qBit amount for people to read. Balances are kept unrounded; this is display only. */
@@ -646,9 +765,9 @@ export function renderStatement(s: QbitStatement<PlaytestUnit>): string {
 
 /**
  * The qBit section of a player's report for the Planning phase of `turn`:
- * their balance and last turn's statement. Not the per-link breakdown, which
- * would tell them which of their nodes still stand before the news could
- * arrive; whether even the total should wait for light is open.
+ * their balance and last turn's statement, as totals only (LIGHT-18). Never
+ * the per-link breakdown, which would tell them which of their nodes still
+ * stand before the news could arrive.
  */
 export function renderQbits(engine: EngineState, player: string, turn: number): string {
   const last = statementFor(engine.ledger, player, turn - 1);
@@ -657,7 +776,7 @@ export function renderQbits(engine: EngineState, player: string, turn: number): 
   return `## qBits\n\n${lines.join('\n')}`;
 }
 
-/** The ledger as the GM needs it to resolve `turn`: balances after this turn's purchases, and income for scoring. */
+/** The ledger as the GM needs it to resolve `turn`: balances after this turn's purchases, and each web's income. */
 export function renderQbitsForGm(engine: EngineState, scenario: Scenario, turn: number): string {
   const rows = scenario.players.map((p) => {
     const mine = engine.ledger.pending.filter((x) => x.player === p.id);
@@ -667,9 +786,9 @@ export function renderQbitsForGm(engine: EngineState, scenario: Scenario, turn: 
     return `| ${p.id} | ${formatQbits(balanceOf(engine.ledger, p.id))} | ${spent} | ${refused} | ${formatQbits(income)} |`;
   });
   return [
-    `The qBit ledger for turn ${turn}, kept by the engine (authoritative). Purchases are already paid for. A refused instant order was not sent and isn't in the orders below; a refused hijack isn't listed. The engine applies decay and production in the Economy phase from the nodes you report, so don't keep balances yourself.`,
+    `The qBit ledger for turn ${turn}, kept by the engine (authoritative). Purchases are already paid for. A refused instant order was not sent and isn't in the orders below; a refused spoof isn't listed. The engine applies decay and production in the Economy phase from the nodes you report, so don't keep balances yourself.`,
     '',
-    '| Player | Balance after purchases | Spent this turn | Refused this turn | Income per turn (current web) |',
+    '| Player | Balance after purchases | Spent this turn | Refused this turn | Income per turn (current web, plus any flat income) |',
     '|---|---|---|---|---|',
     ...rows,
   ].join('\n');
@@ -678,74 +797,143 @@ export function renderQbitsForGm(engine: EngineState, scenario: Scenario, turn: 
 const SPOOF_ORDERS = /^\s*(MoveTo|Hold|ReturnHome)\b/i;
 
 /**
- * Prices a spoof or seize for `player` in the Planning phase of `turn`, from
- * true positions at the start of the turn (QBIT-07), and checks what QBIT-04
- * needs. What the player can see for themselves (a stale track, a flagship)
- * is refused outright; what only the true state shows is marked as failing
- * for the GM, and still charged.
+ * Prices a spoof for `player` in the Planning phase of `turn` from what they
+ * know: their flagship and their track on the target (QBIT-08), plus the
+ * strength they add (QBIT-09). Checks what QBIT-04 needs. What the player can
+ * see for themselves (a stale track, a flagship) is refused outright; what
+ * only the true state shows is marked as failing for the GM, and still
+ * charged. Oversight is settled later, once everyone has bought
+ * (`settleCommandContest`).
  */
 export function quoteHijack(engine: EngineState, scenario: Scenario, player: string, turn: number, purchase: QbitPurchase): HijackQuote {
-  const kind = purchase.kind === 'spoof' ? 'spoof' : 'seize';
+  const kind = 'spoof';
   const target = purchase.target ?? '';
   const order = purchase.order ?? '';
   const refuse = (refused: string): HijackQuote => ({ kind, target, order, refused });
+  if (purchase.kind !== 'spoof') return refuse(`${purchase.kind} isn't a spoof.`);
   if (!target) return refuse('No target given.');
-  if (!order) return refuse('No order given for the hijacked fleet.');
-  if (kind === 'spoof' && !SPOOF_ORDERS.test(order)) return refuse('A spoof can only order MoveTo, Hold or ReturnHome (QBIT-02).');
+  if (!order) return refuse('No order given for the spoofed fleet.');
+  if (!SPOOF_ORDERS.test(order)) return refuse('A spoof can only order MoveTo, Hold or ReturnHome (QBIT-02).');
 
   const known = knowledge(engine, scenario, player, turn);
   if (known.own.some((e) => e.unit.id === target)) return refuse(`${target} is your own unit.`);
   const track = known.contacts.find((c) => c.unit.id === target);
   if (!track) return refuse(`You have no track on ${target}.`);
-  if (track.unit.class === 'flagship') return refuse(`${target} is a flagship, which can't be hijacked (QBIT-04).`);
+  if (track.unit.class === 'flagship') return refuse(`${target} is a flagship, which can't be spoofed (QBIT-04).`);
   if (track.unit.class === 'node') return refuse(`${target} is a node, not a fleet.`);
   if (track.removed) return refuse(`Your last sight of ${target} was it leaving the game.`);
-  const { hijack, c } = scenario.parameters;
+  const { hijack } = scenario.parameters;
   if (track.age > hijack.maxTrackAge) {
-    return refuse(`Your track on ${target} is ${track.age} turns old; a hijack needs one no older than ${hijack.maxTrackAge} (QBIT-04).`);
+    return refuse(`Your track on ${target} is ${track.age} turns old; a spoof needs one no older than ${hijack.maxTrackAge} (QBIT-04).`);
   }
-
-  // Reach and home turf use true positions at the start of this turn.
+  const strength = Math.max(0, Math.floor(purchase.strength ?? 0));
+  const price = qbitPrice(engine, scenario, player, hijack.spoofCost, track.unit.hex);
+  const cost = price.cost + strength;
+  const breakdown = `${price.breakdown} + strength ${strength}`;
   const truth = engine.units.find((u) => u.id === target);
-  const at = truth?.hex ?? track.unit.hex;
-  const anchors = (owner: string) => engine.units.filter((u) => u.owner === owner && (u.class === 'node' || u.class === 'flagship'));
-  const reach = Math.min(...anchors(player).map((u) => hexDistance(u.hex, at)));
-  const reachCost = Number.isFinite(reach) ? lightTravelTurns(reach, c) : 0;
-  const homeTurf = anchors(track.unit.owner).some((u) => hexDistance(u.hex, at) <= hijack.homeTurfRange);
-  const surcharge = homeTurf ? hijack.homeTurfSurcharge : 0;
-  const base = kind === 'spoof' ? hijack.spoofCost : hijack.seizeCost;
-  const cost = base + reachCost + surcharge;
-  const breakdown = `base ${base} + reach ${reachCost} + home turf ${surcharge}`;
+  if (!truth) return { kind, target, order, strength, cost, breakdown, fails: `${target} is no longer on the map.`, reaches: [] };
+  // Every fleet of the target's owner in its hex, the target first (QBIT-02).
+  const others = engine.units
+    .filter((u) => u.id !== target && u.owner === truth.owner && u.class === 'fleet' && hexDistance(u.hex, truth.hex) === 0)
+    .map((u) => u.id)
+    .sort();
+  return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target, ...others] };
+}
 
-  let fails: string | undefined;
-  if (!truth) fails = `${target} is no longer on the map.`;
-  else {
-    const ownersFlagship = engine.units.find((u) => u.owner === truth.owner && u.class === 'flagship');
-    if (ownersFlagship && hexDistance(ownersFlagship.hex, truth.hex) === 0) fails = `${target} is local to its own flagship (QBIT-04).`;
-  }
-  return { kind, target, order, cost, breakdown, fails };
+/**
+ * Prices oversight of one of `player`'s fleets for `turn` (QBIT-09): the light
+ * travel time from their flagship to where they last heard the fleet was
+ * (QBIT-08), plus the strength they choose.
+ */
+export function quoteOversight(engine: EngineState, scenario: Scenario, player: string, turn: number, purchase: QbitPurchase): OversightQuote {
+  const ref = purchase.target ?? '';
+  const strength = Math.floor(purchase.strength ?? 0);
+  const unit = findOwnUnit(engine, player, ref);
+  const target = unit?.id ?? ref;
+  const refuse = (refused: string): OversightQuote => ({ target, strength, refused });
+  if (!unit) return refuse(ref ? `${ref} isn't one of your units.` : 'No unit given.');
+  if (unit.class !== 'fleet') return refuse(`${unit.id} is a ${unit.class}, which can't be spoofed, so it needs no oversight (QBIT-04).`);
+  if (strength < 1) return refuse('Oversight needs a strength of at least 1 (QBIT-09).');
+  const last = knowledge(engine, scenario, player, turn).own.find((e) => e.unit.id === unit.id);
+  if (!last) return refuse(`You haven't had a status report from ${unit.id} yet (ORD-10).`);
+  if (last.removed) return refuse(`You already know ${unit.id} was destroyed.`);
+  const price = qbitPrice(engine, scenario, player, 0, last.unit.hex);
+  return { target, strength, cost: price.cost + strength, breakdown: `distance ${price.cost} + strength ${strength}` };
 }
 
 /** The quotes as the player sees them: prices and refusals, never what the true state shows. */
-export function renderQuotes(quotes: readonly HijackQuote[]): string {
-  if (quotes.length === 0) return '';
-  const lines = quotes.map((q) => {
-    const what = `${q.kind} \`${q.target}\` → ${q.order}`;
-    if (q.refused) return `- ${what}: refused. ${q.refused}`;
-    return `- ${what}: ${q.cost} qBits (${q.breakdown}). Include it in your final submission to buy it at this price.`;
-  });
-  return `## Hijack quotes (QBIT-07)\n\n${lines.join('\n')}`;
+export function renderQuotes(quotes: readonly HijackQuote[], oversights: readonly OversightQuote[] = []): string {
+  if (quotes.length === 0 && oversights.length === 0) return '';
+  const lines = [
+    ...quotes.map((q) => {
+      const what = `${q.kind} \`${q.target}\` → ${q.order}`;
+      if (q.refused) return `- ${what}: refused. ${q.refused}`;
+      return `- ${what}: ${q.cost} qBits (${q.breakdown}). Include it in your final submission to buy it.`;
+    }),
+    ...oversights.map((o) => {
+      const what = `oversee \`${o.target}\` at strength ${o.strength}`;
+      if (o.refused) return `- ${what}: refused. ${o.refused}`;
+      return `- ${what}: ${o.cost} qBits (${o.breakdown}). Include it in your final submission to buy it.`;
+    }),
+  ];
+  return `## Spoof and oversight quotes (QBIT-08, QBIT-09)\n\n${lines.join('\n')}`;
 }
 
-/** The hijacks a player bought, as the GM sees them: prices, and what fails on the true state. */
-export function renderHijacksForGm(quotes: readonly HijackQuote[]): string {
+/**
+ * The spoofs and oversight a player bought, as the GM sees them: prices, which
+ * spoofs land, and which fail on the true state or were blocked (QBIT-09).
+ */
+export function renderHijacksForGm(quotes: readonly HijackQuote[], oversights: readonly OversightQuote[] = []): string {
   const bought = quotes.filter((q) => !q.refused);
-  if (bought.length === 0) return '';
-  const lines = bought.map((q) => {
-    const fate = q.fails ? ` It fails on the true state: ${q.fails} It was paid for anyway (QBIT-07).` : '';
-    return `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown}).${fate}`;
+  const overseen = oversights.filter((o) => !o.refused);
+  const parts: string[] = [];
+  if (bought.length) {
+    const ids = (units: readonly string[]) => units.map((u) => `\`${u}\``).join(', ');
+    const lines = bought.map((q) => {
+      const blocked = q.blocked ?? [];
+      const landed = (q.reaches ?? [q.target]).filter((u) => !blocked.some((b) => b.unit === u));
+      const stopped = blocked.length
+        ? ` Blocked by oversight on ${blocked.map((b) => `\`${b.unit}\` (strength ${b.oversight} against ${q.strength ?? 0})`).join(', ')}.`
+        : '';
+      const fate = q.fails
+        ? ` It does not land: ${q.fails} It was paid for anyway, and the spoofer is told "No answer" (QBIT-02).`
+        : ` It lands on ${ids(landed)}: ${landed.length > 1 ? 'each carries' : 'it carries'} out this order this turn (QBIT-02).${stopped}`;
+      return `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown}).${fate}`;
+    });
+    parts.push(
+      `Spoofs bought, priced and settled against oversight by the engine (authoritative, QBIT-08, QBIT-09). A spoof reaches every fleet of the target's owner in the target's hex (QBIT-02), and is settled on each separately. The engine sends each spoofer its receipt; don't write one. A blocked spoof has no effect on that fleet, but its status report records the attempt (QBIT-06):\n${lines.join('\n')}`,
+    );
+  }
+  if (overseen.length) {
+    parts.push(`Oversight bought (QBIT-09):\n${overseen.map((o) => `- \`${o.target}\` at strength ${o.strength}`).join('\n')}`);
+  }
+  return parts.join('\n\n');
+}
+
+/**
+ * Where each player stands when the game stops, for the analyst only (never
+ * shown to players): least flagship damage first, then most fleet strength,
+ * then most production.
+ */
+export function ranking(engine: EngineState, scenario: Scenario): RankingRow[] {
+  const rows = scenario.players.map((p): RankingRow => {
+    const start = scenario.units.find((u) => u.owner === p.id && u.class === 'flagship')?.strength ?? 0;
+    const flagship = engine.units.find((u) => u.owner === p.id && u.class === 'flagship');
+    return {
+      player: p.id,
+      flagshipDamage: flagship ? start - flagship.strength : start,
+      flagshipDestroyed: !flagship,
+      fleetStrength: engine.units.filter((u) => u.owner === p.id && u.class !== 'node').reduce((sum, u) => sum + u.strength, 0),
+      production: qbitIncome(engine.units, p.id, engine.economy),
+    };
   });
-  return `Hijacks bought, priced by the engine and already paid for (authoritative, QBIT-07):\n${lines.join('\n')}`;
+  return rows.sort(
+    (a, b) =>
+      Number(a.flagshipDestroyed) - Number(b.flagshipDestroyed) ||
+      a.flagshipDamage - b.flagshipDamage ||
+      b.fleetStrength - a.fleetStrength ||
+      b.production - a.production,
+  );
 }
 
 const describe = (u: PlaytestUnit) => `${u.name} (\`${u.id}\`, ${u.class}, strength ${u.strength})`;
@@ -774,7 +962,7 @@ export function renderSensorPicture(state: KnowledgeState<PlaytestUnit>): string
   if (lost.length) parts.push(`Lost contacts:\n${lost.map((e) => line(e, false)).join('\n')}`);
   if (state.silent.length) {
     parts.push(
-      `Silent units (no status report since the turn shown; destroyed, jammed, comms-silent or just delayed):\n${state.silent
+      `Silent units (no status report since the turn shown, even allowing for full-speed movement away; destroyed, jammed or comms-silent, FB-05):\n${state.silent
         .map((s) => `- ${s.lastHeard.unit.name} (\`${s.unitId}\`): silent since turn ${s.sinceTurn}`)
         .join('\n')}`,
     );
@@ -782,10 +970,10 @@ export function renderSensorPicture(state: KnowledgeState<PlaytestUnit>): string
   return parts.join('\n\n');
 }
 
-/** What instant intel shows: own units with their full status report (FB-08, LIGHT-02), and what was destroyed. */
+/** What a scan shows: own units with their full status report (FB-11, LIGHT-02), and what was destroyed. */
 export function renderIntel(observations: readonly Observation<PlaytestUnit>[]): string {
-  if (observations.length === 0) return '## Instant intel\n\nNothing.';
-  return `## Instant intel (as of the end of turn ${observations[0]?.turn})\n\n${observations
+  if (observations.length === 0) return '## Scan results\n\nNothing.';
+  return `## Scan results (as of the end of turn ${observations[0]?.turn}, age 0)\n\n${observations
     .map((o) => {
       if (o.removed) return `- ${describe(o.unit)} **destroyed** at ${formatHex(o.unit.hex)} in turn ${o.turn}`;
       const own = o.unit.owner === o.observer;

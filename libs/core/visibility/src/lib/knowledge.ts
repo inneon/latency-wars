@@ -1,9 +1,9 @@
 /**
  * A player's knowledge state (LIGHT-05): what they may be told, and nothing
- * else. The silence rule here goes slightly beyond the doc; see `silent`.
+ * else.
  */
-import type { PlayerId, Unit, UnitId } from '@latency-wars/domain';
-import { observationArrivalTurn } from './light';
+import { type Hex, hexDistance, type PlayerId, type Unit, type UnitId } from '@latency-wars/domain';
+import { observationArrivalTurn, type Path, positionAt } from './light';
 import { flagshipPath, type VisibilityLog } from './log';
 import type { Observation } from './observe';
 
@@ -55,11 +55,10 @@ export interface KnowledgeState<U extends Unit = Unit> {
   /** Enemy units (anything not owned by `player`). */
   readonly contacts: readonly Contact<U>[];
   /**
-   * Own units whose next status report is overdue. Overdue is judged as if the
-   * unit had stayed where it was last seen; a unit that has moved away since
-   * can be flagged while its report is merely delayed (FB-07 "Delayed"), and
-   * clears when the report lands. That ambiguity is deliberate (FB-06). A unit
-   * the player has seen leave the game is not silent: its fate is known.
+   * Own units whose next status report is overdue (FB-05): it would have
+   * arrived by now even if the unit had moved at full speed straight away from
+   * the flagship. What it means stays ambiguous (FB-06). A unit the player has
+   * seen leave the game is not silent: its fate is known.
    */
   readonly silent: readonly SilentUnit<U>[];
 }
@@ -134,11 +133,24 @@ export function knowledgeState<U extends Unit>(
   for (const lastHeard of own) {
     if (lastHeard.removed) continue;
     const nextReportTurn = lastHeard.observedTurn + 1;
-    const due = observationArrivalTurn(lastHeard.unit.hex, nextReportTurn, flagship, params.c, turn);
-    if (due !== undefined) {
+    // Overdue only if the report would have arrived even had the unit spent that turn moving straight away from the flagship (FB-05).
+    const overdue = reportOverdue(lastHeard.unit.hex, lastHeard.unit.speed, nextReportTurn, flagship, params.c, turn);
+    if (overdue) {
       silent.push({ unitId: lastHeard.unit.id, sinceTurn: nextReportTurn, lastHeard });
     }
   }
 
   return { player, turn, own, contacts, silent };
+}
+
+/**
+ * Whether a report made at the end of `reportTurn`, by a unit last seen at
+ * `lastHex` one turn earlier and able to move `speed` hexes in between, would
+ * have reached the flagship by `through` wherever the unit went.
+ */
+function reportOverdue(lastHex: Hex, speed: number, reportTurn: number, flagship: Path, c: number, through: number): boolean {
+  for (let turn = reportTurn + 1; turn <= through; turn++) {
+    if (hexDistance(lastHex, positionAt(flagship, turn)) + speed <= c * (turn - 1 - reportTurn)) return true;
+  }
+  return false;
 }

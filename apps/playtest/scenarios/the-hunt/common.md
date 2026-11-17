@@ -34,5 +34,6 @@ Everything else, including qBit costs, production, node building and links, is a
 
 ## Victory
 
-- If your flagship is destroyed, you lose immediately.
-- Otherwise, after the final turn, the player with the highest qBit production per turn wins. Ties are broken by the total current strength of all surviving fleets, counting the flagship but not nodes (probes add 0); highest wins. If still tied, the player whose flagship is closer to the star at (0, 0) wins. Otherwise it's a draw.
+- Destroy the enemy flagship to win. A player whose flagship is destroyed loses immediately.
+- If both flagships are destroyed in the same turn, the game is a draw.
+- If neither flagship has been destroyed by the end of the final turn, the game is a draw. There are no tie-breaks.

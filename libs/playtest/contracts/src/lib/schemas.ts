@@ -6,13 +6,28 @@ import { z } from 'zod';
 /** Something a player spends qBits on in Planning (QBIT-01), other than an instant order. */
 export const QbitPurchase = z.object({
   kind: z
-    .enum(['snapshot', 'ping', 'spoof', 'seize'])
-    .describe('snapshot: instant intel (FB-10). ping: one of your units (FB-08). spoof / seize: hijack an enemy fleet (QBIT-02, QBIT-03).'),
-  target: z.string().optional().describe('The unit id: yours for a ping, the enemy fleet for a spoof or seize. Not used for a snapshot.'),
+    .enum(['scan', 'spoof', 'oversee'])
+    .describe(
+      'scan: what one of your units saw at the end of last turn, at age 0 (FB-11). spoof: override an enemy fleet for this turn (QBIT-02). ' +
+        'oversee: protect one of your fleets from spoofs this turn (QBIT-09).',
+    ),
+  target: z
+    .string()
+    .optional()
+    .describe('The unit id: one of yours (fleet, node or flagship) for a scan, the enemy fleet for a spoof, one of your fleets for oversight.'),
   order: z
     .string()
     .optional()
-    .describe('Spoof or seize only: the order the hijacked fleet carries out this turn. A spoof allows MoveTo, Hold or ReturnHome (QBIT-02).'),
+    .describe('Spoof only: the order the spoofed fleet carries out this turn: MoveTo, Hold or ReturnHome (QBIT-02).'),
+  strength: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      'The command strength, in qBits paid on top of the price (QBIT-09). Spoof: optional, default 0. Oversee: required, at least 1. ' +
+        'A spoof on an overseen fleet lands only if its strength is greater than the oversight\'s.',
+    ),
 });
 export type QbitPurchase = z.infer<typeof QbitPurchase>;
 
@@ -23,10 +38,10 @@ export const PlayerTurn = z.object({
   qbit_purchases: z
     .array(QbitPurchase)
     .describe(
-      'qBit purchases for this Planning phase: intel snapshots, pings, spoofs and seizes. Instant orders are not listed here; ' +
-        "mark them in orders. The first time a turn's submission lists any purchase, it is a request for quotes: intel is bought and " +
-        'shown to you then, spoofs and seizes are only priced, and your orders are ignored until you submit again. ' +
-        'Spoofs and seizes in that final submission are bought at the quoted prices. Leave empty to buy nothing.',
+      'qBit purchases for this Planning phase: scans, spoofs and oversight, priced by QBIT-08. Instant orders are not listed here; ' +
+        "mark them in orders. The first time a turn's submission lists any purchase, it is a request for quotes: scans are bought and " +
+        'shown to you then, spoofs and oversight are only priced, and your orders are ignored until you submit again. ' +
+        'Spoofs and oversight in that final submission are bought; scans there are ignored. Leave empty to buy nothing.',
     ),
   orders: z
     .array(
@@ -76,7 +91,7 @@ export const UnitState = z.object({
     .optional()
     .describe(
       "What this unit's status report says beyond position and strength (LIGHT-02): its active order and progress, its doctrine, " +
-        'and anything else it would report, e.g. "Attack(red-raider): pursuing; Balanced". Its owner sees this when the report arrives, or from a ping.',
+        'and anything else it would report, e.g. "Attack(red-raider): pursuing; Balanced". Its owner sees this when the report arrives, or from a scan.',
     ),
   name: z.string().optional().describe('For a unit new to the game: its display name. Defaults to the id.'),
   speed: z.number().int().nonnegative().optional().describe('For a unit new to the game: hexes per turn. Required for a new fleet; 0 for a node.'),
@@ -91,13 +106,16 @@ export type UnitState = z.infer<typeof UnitState>;
 
 /** A message a unit sends home this turn. The engine decides when it arrives. */
 export const FleetMessage = z.object({
-  from_unit: z.string().describe('The unit sending it: the fleet that acks, queries, reports or fought.'),
+  from_unit: z.string().describe('The unit sending it: the fleet that acks, reports or fought.'),
   text: z
     .string()
     .describe('The message as the player will read it, e.g. "Accepted: Attack(red-raider)" or "Engaged red-line at (1, -1): lost 2 strength".'),
   instant_ack: z
     .boolean()
-    .describe('True only for the ack of an instant order (ORD-09), which comes back by the next Planning phase whatever the distance.'),
+    .describe(
+      'True only for the ack of an instant order. The engine sends its player a receipt that says only Delivered by the next Planning ' +
+        'phase (ORD-09), and delivers this text at light speed like any other message.',
+    ),
   reports_destroyed: z
     .array(z.string())
     .optional()
@@ -119,7 +137,10 @@ export type EngineOverride = z.infer<typeof EngineOverride>;
 export const GmResolution = z.object({
   resolution_log: z
     .string()
-    .describe('Your private working: walk through each phase in order, with the calculations (distances, delivery checks, combat).'),
+    .describe(
+      'A write-up of the turn for the designer, phase by phase: what happened in each phase, with the distances, deliveries, ' +
+        'engagements and damage it depends on. Players never see it.',
+    ),
   true_state: z
     .string()
     .describe(
@@ -155,7 +176,7 @@ export const GmResolution = z.object({
     ),
   rulings: z.array(Ruling).describe('Every ruling you had to make this turn. Include routine explicit ones only if notable.'),
   game_over: z.boolean(),
-  outcome: z.string().describe('If the game is over, who won and why. Otherwise an empty string.'),
+  outcome: z.string().describe('If the game is over, who won and why, or that it is a draw. Otherwise an empty string.'),
 }).meta({ title: 'GmResolution' });
 export type GmResolution = z.infer<typeof GmResolution>;
 

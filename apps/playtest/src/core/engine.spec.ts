@@ -6,19 +6,25 @@ import {
   deliverReportedLosses,
   deliveries,
   type EngineState,
-  intelObservations,
   knowledge,
   messagesArriving,
   payForEmission,
+  queueSpoofReceipts,
   quoteHijack,
+  quoteOversight,
+  ranking,
   recordIntel,
   recordOrders,
+  renderHijacksForGm,
   renderOrdersForGm,
   renderOutbox,
   renderQuotes,
   renderSensorPicture,
-  resolveIntel,
+  resolveScans,
+  scanObservations,
+  settleCommandContest,
   startEngine,
+  unaccountedUnits,
 } from './engine';
 import { balanceOf, statementFor } from '@latency-wars/economy';
 import type { PlayerTurn } from '@latency-wars/playtest-contracts';
@@ -63,6 +69,18 @@ function play(...turns: GmResolution[]): { engine: EngineState; adjustments: str
   return { engine, adjustments };
 }
 const unit = (engine: EngineState, id: string) => engine.units.find((u) => u.id === id);
+
+describe('unaccountedUnits', () => {
+  it('names every unit in play that a resolution neither lists nor removes', () => {
+    const engine = startEngine(scenario);
+    expect(unaccountedUnits(engine, resolution(states()))).toEqual([]);
+    const raider = states().find((u) => u.id === 'blue-raider');
+    const partial = resolution(states().filter((u) => !['blue-raider', 'red-line'].includes(u.id)), { removed: raider ? [{ ...raider, strength: 0 }] : [] });
+    const problems = unaccountedUnits(engine, partial);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('neither units nor removed_units: red-line.');
+  });
+});
 
 describe('applyResolution: units', () => {
   it('accepts legal moves and keeps the fixed stats from the previous state', () => {
@@ -232,9 +250,11 @@ describe('applyResolution: messages', () => {
     expect(messagesArriving(engine, scenario, 'red', 3)).toEqual([]);
   });
 
-  it("delivers an instant order's ack next turn, whatever the distance (ORD-09)", () => {
+  it("sends an instant order's receipt next turn, whatever the distance, and its ack at light speed (ORD-09)", () => {
+    // Blue Node North is 4 hexes from Blue's flagship: its ack, sent at the end of turn 1, arrives in turn 4.
     const { engine } = play(resolution(states(), { messages: [ack('blue-node-north', 'Accepted', true)] }));
-    expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([expect.objectContaining({ text: 'Accepted', instant: true })]);
+    expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([expect.objectContaining({ text: 'Delivered.', instant: true })]);
+    expect(messagesArriving(engine, scenario, 'blue', 4)).toEqual([expect.objectContaining({ text: 'Accepted', instant: false })]);
   });
 
   it('drops messages from a unit that is gone, and turns an ack from a unit that was not there into "No answer"', () => {
@@ -245,13 +265,16 @@ describe('applyResolution: messages', () => {
       resolution(present, { messages: [ack('blue-raider', 'Failed: the recipient does not exist', true)] }),
     );
     expect(adjustments[0]).toEqual([expect.stringContaining('A message from blue-raider was dropped')]);
-    expect(adjustments[1]).toEqual([expect.stringContaining('the ack became "No answer"')]);
+    expect(adjustments[1]).toEqual([
+      expect.stringContaining('its player is told "No answer"'),
+      expect.stringContaining('A message from blue-raider was dropped'),
+    ]);
     expect(messagesArriving(engine, scenario, 'blue', 3)).toEqual([expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' })]);
   });
 });
 
-describe('intel and the sensor picture', () => {
-  it("a snapshot shows the player's own sensor picture from the end of the previous turn", () => {
+describe('scans and the sensor picture', () => {
+  it("a scan shows what one of the player's units saw at the end of the previous turn (FB-11)", () => {
     // The raider dashes across faster than it could; an override keeps the test short.
     const dash = [{ unit_id: 'blue-raider', reason: 'test setup', rule_ids: [] }];
     const { engine } = play(
@@ -260,8 +283,11 @@ describe('intel and the sensor picture', () => {
     );
     // Blue's raider ended turn 2 next to Red Node South. By light, Red can't know until turn 5.
     expect(knowledge(engine, scenario, 'red', 3).contacts).toEqual([]);
-    expect(intelObservations(engine, 'red', 3, { snapshot: true, pings: [] }).map((o) => o.unit.id)).toContain('blue-raider');
-    expect(intelObservations(engine, 'red', 3, { snapshot: false, pings: ['red-line'] }).map((o) => o.unit.id)).toEqual(['red-line']);
+    expect(scanObservations(engine, 'red', 3, 'red-node-south').map((o) => o.unit.id)).toContain('blue-raider');
+    // Red Line, 3 hexes from the raider, saw itself and its neighbours, but not the raider.
+    const line = scanObservations(engine, 'red', 3, 'red-line').map((o) => o.unit.id);
+    expect(line).toContain('red-line');
+    expect(line).not.toContain('blue-raider');
   });
 
   it('lists own units, contacts and silences', () => {
@@ -274,64 +300,142 @@ describe('intel and the sensor picture', () => {
   });
 });
 
-describe('quoteHijack (QBIT-07, QBIT-04)', () => {
+describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
   const dash = (id: string) => ({ unit_id: id, reason: 'test setup', rule_ids: [] });
   /** Turn 1: Blue Line to (−1, 1), Red Line to (1, −1): 2 apart, so Blue's sensors have Red Line at the end of turn 1. */
   const contact = () => play(resolution(states({ 'blue-line': [-1, 1], 'red-line': [1, -1] }))).engine;
-  /** Blue buys a snapshot in the Planning phase of `turn`, so its tracks from the previous turn are age 0. */
-  const snapshot = (engine: EngineState, turn: number) =>
-    recordIntel(engine, 'blue', turn, intelObservations(engine, 'blue', turn, { snapshot: true, pings: [] }));
+  /** Blue scans Blue Line in the Planning phase of `turn`, so what it saw last turn is age 0. */
+  const scanned = (engine: EngineState, turn: number) => recordIntel(engine, 'blue', turn, scanObservations(engine, 'blue', turn, 'blue-line'));
   const quote = (engine: EngineState, turn: number, p: Parameters<typeof quoteHijack>[4]) => quoteHijack(engine, scenario, 'blue', turn, p);
 
-  it('prices from true positions: base, reach from the nearest anchor, and home turf', () => {
-    const engine = snapshot(contact(), 2);
-    // Red Line is 4 from Blue's flagship (L = 2) and 2 from Red's flagship (home turf).
+  it("prices from what the player knows: base plus light delay from their flagship to the track", () => {
+    const engine = scanned(contact(), 2);
+    // Blue's track has Red Line 4 from Blue's flagship: L = 2.
     const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))' });
-    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))', cost: 8, breakdown: 'base 3 + reach 2 + home turf 3', fails: undefined });
-    expect(quote(engine, 2, { kind: 'seize', target: 'red-line', order: 'Attack(blue-line)' })).toMatchObject({ cost: 12 });
+    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))', strength: 0, cost: 5, breakdown: 'base 3 + distance 2 + strength 0', fails: undefined, reaches: ['red-line'] });
+  });
+
+  it('adds the strength bought to the price (QBIT-09)', () => {
+    const engine = scanned(contact(), 2);
+    const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Hold', strength: 3 });
+    expect(spoof).toMatchObject({ strength: 3, cost: 8, breakdown: 'base 3 + distance 2 + strength 3' });
   });
 
   it('refuses what the player can see for themselves, without a price', () => {
-    const engine = snapshot(contact(), 2);
+    const engine = scanned(contact(), 2);
     expect(quote(engine, 2, { kind: 'spoof', target: 'blue-line', order: 'Hold' }).refused).toContain('your own unit');
     expect(quote(engine, 2, { kind: 'spoof', target: 'red-raider', order: 'Hold' }).refused).toContain('no track');
-    expect(quote(engine, 2, { kind: 'seize', target: 'red-line' }).refused).toContain('No order');
+    expect(quote(engine, 2, { kind: 'spoof', target: 'red-line' }).refused).toContain('No order');
     expect(quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Attack(blue-line)' }).refused).toContain('QBIT-02');
   });
 
   it('refuses a stale track (QBIT-04)', () => {
-    // Without a snapshot, Blue's sighting from the end of turn 1 arrives by light in turn 4, aged 2.
+    // Without a scan, Blue's sighting from the end of turn 1 arrives by light in turn 4, aged 2.
     const hold = states({ 'blue-line': [-1, 1], 'red-line': [1, -1] });
     const engine = play(resolution(hold), resolution(hold), resolution(hold)).engine;
     expect(quote(engine, 4, { kind: 'spoof', target: 'red-line', order: 'Hold' }).refused).toContain('2 turns old');
   });
 
   it('refuses a flagship (QBIT-04)', () => {
-    // Blue Line dashes to (1, −1), within 2 of Red's flagship at (3, −2); a snapshot makes the sighting fresh.
-    const engine = snapshot(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
-    expect(quote(engine, 2, { kind: 'seize', target: 'red-flagship', order: 'Hold' }).refused).toContain('flagship');
+    // Blue Line dashes to (1, −1), within 2 of Red's flagship at (3, −2); a scan makes the sighting fresh.
+    const engine = scanned(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
+    expect(quote(engine, 2, { kind: 'spoof', target: 'red-flagship', order: 'Hold' }).refused).toContain('flagship');
   });
 
-  it('marks a target local to its own flagship as failing, priced and charged all the same', () => {
+  it("prices a target in its own flagship's hex like any other: no hex is safe (QBIT-04)", () => {
     // Blue Line dashes to (1, −1); Red Line moves into Red's flagship's hex (3, −2), 2 away, so Blue sees it there.
-    const engine = snapshot(
+    const engine = scanned(
       play(resolution(states({ 'blue-line': [1, -1], 'red-line': [3, -2] }), { overrides: [dash('blue-line')] })).engine,
       2,
     );
     const q = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Hold' });
     expect(q.refused).toBeUndefined();
-    expect(q.cost).toBe(3 + 2 + 3);
-    expect(q.fails).toContain('local to its own flagship');
+    expect(q.cost).toBe(3 + 2);
+    expect(q.fails).toBeUndefined();
+    // The flagship in the same hex is never reached (QBIT-02).
+    expect(q.reaches).toEqual(['red-line']);
+  });
+
+  it("reaches every fleet of the target's owner in its hex, at one price (QBIT-02)", () => {
+    // Red Line and Red Raider share (1, −1); Blue has a track on Red Line only.
+    const engine = scanned(play(resolution(states({ 'blue-line': [-1, 1], 'red-line': [1, -1], 'red-raider': [1, -1] }))).engine, 2);
+    const q = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Hold' });
+    expect(q.reaches).toEqual(['red-line', 'red-raider']);
+    expect(q.cost).toBe(5);
   });
 
   it('renders quotes for the player without what the true state shows', () => {
     const text = renderQuotes([
-      { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 8, breakdown: 'base 3 + reach 2 + home turf 3', fails: 'secret' },
-      { kind: 'seize', target: 'red-raider', order: 'Hold', refused: 'You have no track on red-raider.' },
+      { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 5, breakdown: 'base 3 + distance 2', fails: 'secret' },
+      { kind: 'spoof', target: 'red-raider', order: 'Hold', refused: 'You have no track on red-raider.' },
     ]);
-    expect(text).toContain('spoof `red-line` → Hold: 8 qBits (base 3 + reach 2 + home turf 3)');
-    expect(text).toContain('seize `red-raider` → Hold: refused. You have no track on red-raider.');
+    expect(text).toContain('spoof `red-line` → Hold: 5 qBits (base 3 + distance 2)');
+    expect(text).toContain('spoof `red-raider` → Hold: refused. You have no track on red-raider.');
     expect(text).not.toContain('secret');
+  });
+});
+
+describe('oversight and the command contest (QBIT-09)', () => {
+  const oversee = (engine: EngineState, target: string, strength?: number) =>
+    quoteOversight(engine, scenario, 'blue', 1, { kind: 'oversee', target, strength });
+
+  it('prices oversight as light delay from the flagship plus the strength chosen', () => {
+    const engine = startEngine(scenario);
+    // Blue Line starts 1 hex from Blue's flagship: L = 1.
+    expect(oversee(engine, 'blue-line', 2)).toEqual({ target: 'blue-line', strength: 2, cost: 3, breakdown: 'distance 1 + strength 2' });
+  });
+
+  it("refuses what can't be overseen", () => {
+    const engine = startEngine(scenario);
+    expect(oversee(engine, 'blue-line', 0).refused).toContain('at least 1');
+    expect(oversee(engine, 'blue-line').refused).toContain('at least 1');
+    expect(oversee(engine, 'red-line', 1).refused).toContain("isn't one of your units");
+    expect(oversee(engine, 'blue-flagship', 1).refused).toContain("can't be spoofed");
+  });
+
+  const spoof = (target: string, strength: number) => ({ kind: 'spoof' as const, target, order: 'Hold', strength, cost: 3 + strength, breakdown: '' });
+  const guard = (target: string, strength: number) => ({ target, strength, cost: strength, breakdown: '' });
+
+  it('lands a spoof only when it is stronger than the oversight; a tie goes to the defender', () => {
+    const settled = settleCommandContest(
+      new Map([['blue', [spoof('red-line', 3), spoof('red-raider', 2), spoof('red-scout', 0)]]]),
+      new Map([['red', [guard('red-line', 2), guard('red-raider', 2)]]]),
+    );
+    const [line, raider, scout] = settled.get('blue') ?? [];
+    expect(line?.fails).toBeUndefined();
+    expect(raider?.fails).toContain('spoof strength 2 against red-raider at 2');
+    expect(scout?.fails).toBeUndefined();
+  });
+
+  it('settles a spoof on each fleet it reaches separately', () => {
+    const stack = { ...spoof('red-line', 2), reaches: ['red-line', 'red-raider', 'red-raider-2'] };
+    const partly = settleCommandContest(new Map([['blue', [stack]]]), new Map([['red', [guard('red-line', 3)]]]));
+    expect(partly.get('blue')?.[0]?.fails).toBeUndefined();
+    expect(partly.get('blue')?.[0]?.blocked).toEqual([{ unit: 'red-line', oversight: 3 }]);
+
+    const all = settleCommandContest(
+      new Map([['blue', [stack]]]),
+      new Map([['red', [guard('red-line', 3), guard('red-raider', 2), guard('red-raider-2', 5)]]]),
+    );
+    expect(all.get('blue')?.[0]?.fails).toContain('blocked by oversight on every fleet it reached');
+    expect(all.get('blue')?.[0]?.blocked).toHaveLength(3);
+  });
+
+  it('tells the GM which fleets a spoof lands on and which blocked it', () => {
+    const text = renderHijacksForGm(
+      [{ ...spoof('red-line', 2), reaches: ['red-line', 'red-raider'], blocked: [{ unit: 'red-line', oversight: 3 }] }],
+      [guard('blue-line', 1)],
+    );
+    expect(text).toContain('It lands on `red-raider`: it carries out this order this turn (QBIT-02). Blocked by oversight on `red-line` (strength 3 against 2).');
+    expect(text).toContain('- `blue-line` at strength 1');
+  });
+
+  it('ignores oversight that was refused', () => {
+    const settled = settleCommandContest(
+      new Map([['blue', [spoof('red-line', 0)]]]),
+      new Map([['red', [{ ...guard('red-line', 5), refused: 'balance' }]]]),
+    );
+    expect(settled.get('blue')?.[0]?.fails).toBeUndefined();
   });
 });
 
@@ -357,38 +461,43 @@ describe('the qBit ledger', () => {
     expect(statementFor(engine.ledger, 'blue', 2)).toMatchObject({ production: 0.5, links: [expect.objectContaining({ length: 2, k: 2 })] });
   });
 
-  it('charges for intel in the order asked, refusing what the balance does not cover', () => {
+  it('charges for scans in the order asked, priced by distance, refusing what the balance does not cover (QBIT-08)', () => {
     const { engine } = play(resolution(states()));
-    const { engine: after, purchases, text } = resolveIntel(withCash(engine, 'blue', 6), scenario, 'blue', 2, [
-      { kind: 'ping', target: 'blue-line' },
-      { kind: 'snapshot' },
-      { kind: 'ping', target: 'blue-line' },
-      { kind: 'ping', target: 'red-line' },
+    const { engine: after, purchases, text } = resolveScans(withCash(engine, 'blue', 3), scenario, 'blue', 2, [
+      { kind: 'scan', target: 'blue-flagship' },
+      { kind: 'scan', target: 'blue-line' },
+      { kind: 'scan', target: 'blue-line' },
+      { kind: 'scan', target: 'red-line' },
+      { kind: 'scan', target: 'blue-raider' },
     ]);
+    // The flagship costs the base 1; Blue Line, 1 hex away, 1 + 1.
     expect(purchases.map((p) => [p.kind, p.bought, p.cost])).toEqual([
-      ['ping', true, 2],
-      ['snapshot', false, 0],
-      ['ping', false, 0],
-      ['ping', false, 0],
+      ['scan', true, 1],
+      ['scan', true, 2],
+      ['scan', false, 0],
+      ['scan', false, 0],
+      ['scan', false, 0],
     ]);
-    expect(text).toContain('Intel snapshot (FB-10): refused. It costs 5 and your balance is 4 (QBIT-01).');
-    expect(text).toContain('already bought that this turn');
+    expect(text).toContain('already scanned it this turn');
     expect(text).toContain("red-line isn't one of your units");
-    expect(balanceOf(after.ledger, 'blue')).toBe(4);
-    expect(after.log.instant.map((i) => i.observation.unit.id)).toEqual(['blue-line']);
+    expect(text).toContain('Scan `blue-raider` (FB-11): refused. It costs 2 (base 1 + distance 1) and your balance is 0 (QBIT-01).');
+    expect(balanceOf(after.ledger, 'blue')).toBe(0);
+    // What the flagship and Blue Line saw at the end of turn 1, each unit once.
+    expect(after.log.instant.map((i) => i.observation.unit.id).sort()).toEqual(['blue-flagship', 'blue-line', 'blue-raider']);
   });
 
-  it('a ping to a unit that has left the game is charged and gets No answer (FB-09)', () => {
+  it('a scan of a unit that has left the game unseen is charged and gets No answer (FB-09)', () => {
+    // Blue Raider dies at (1, 1), out of every Blue sensor's range, so Blue doesn't know.
     const present = states().filter((u) => u.id !== 'blue-raider');
-    const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: -1, r: 3, strength: 0 };
+    const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: 1, r: 1, strength: 0 };
     const { engine } = play(resolution(present, { removed: [gone] }));
-    const { purchases } = resolveIntel(engine, scenario, 'blue', 2, [{ kind: 'ping', target: 'blue-raider' }]);
+    const { purchases } = resolveScans(engine, scenario, 'blue', 2, [{ kind: 'scan', target: 'blue-raider' }]);
     expect(purchases[0]).toMatchObject({ bought: true, cost: 2 });
     expect(purchases[0]?.note).toContain('No answer (FB-09)');
   });
 
-  it('charges instant orders then hijacks, dropping what the player cannot afford', () => {
-    const engine = withCash(startEngine(scenario), 'blue', 9);
+  it('charges instant orders, then oversight, then spoofs, dropping what the player cannot afford', () => {
+    const engine = withCash(startEngine(scenario), 'blue', 11);
     const submission: PlayerTurn = {
       situation_assessment: '',
       qbit_purchases: [],
@@ -400,14 +509,26 @@ describe('the qBit ledger', () => {
       questions_for_gm: [],
       rules_confusions: [],
     };
-    const paid = payForEmission(engine, scenario, 'blue', 1, submission, [
-      { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 4, breakdown: '' },
-      { kind: 'seize', target: 'red-raider', order: 'Hold', cost: 3, breakdown: '' },
-      { kind: 'spoof', target: 'red-flagship', order: 'Hold', refused: 'flagship' },
-    ]);
-    // The flagship's order is free (ORD-05); blue-line's costs 4; the spoof 4 more; the seize can't be afforded.
+    const paid = payForEmission(
+      engine,
+      scenario,
+      'blue',
+      1,
+      submission,
+      [
+        { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 4, breakdown: '' },
+        { kind: 'spoof', target: 'red-raider', order: 'Hold', cost: 3, breakdown: '' },
+        { kind: 'spoof', target: 'red-flagship', order: 'Hold', refused: 'flagship' },
+      ],
+      [
+        { target: 'blue-line', strength: 1, cost: 2, breakdown: '' },
+        { target: 'blue-line', strength: 1, cost: 2, breakdown: '' },
+      ],
+    );
+    // The flagship's order is free (ORD-05); blue-line's, 1 hex away, costs 3 + 1; oversight 2, once; the first spoof 4 more; the second can't be afforded.
     expect(paid.submission.orders).toEqual(submission.orders);
     expect(balanceOf(paid.engine.ledger, 'blue')).toBe(1);
+    expect(paid.oversights.map((o) => o.refused)).toEqual([undefined, 'blue-line already has oversight this turn (QBIT-09).']);
     expect(paid.hijacks.map((q) => q.refused)).toEqual([undefined, 'It costs 3 and your balance was 1 (QBIT-01).', 'flagship']);
   });
 });
@@ -490,19 +611,22 @@ describe('instant orders and acks (ORD-06, ORD-09)', () => {
     );
     engine = applied.engine;
     expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' })]);
-    expect(applied.adjustments).toEqual([expect.stringContaining("blue-raider didn't survive the turn to send its ack")]);
+    expect(applied.adjustments).toEqual([
+      expect.stringContaining("blue-raider didn't survive the turn to send its ack"),
+      expect.stringContaining('A message from blue-raider was dropped'),
+    ]);
   });
 
-  it('still answers when the GM forgot the ack: "No answer" if the recipient is gone, a bare ack if not', () => {
+  it('still answers when the GM forgot the ack: "No answer" if the recipient is gone, "Delivered" if not', () => {
     let engine = recordOrders(startEngine(scenario), 'blue', 1, [instant('blue-raider'), instant('blue-line')]);
     const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: -1, r: 3, strength: 0 };
     const applied = applyResolution(engine, resolution(states().filter((u) => u.id !== 'blue-raider'), { removed: [gone] }), players, 1);
     engine = applied.engine;
     expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([
       expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' }),
-      expect.objectContaining({ fromUnit: 'blue-line', text: 'Ack received; no details were recorded.' }),
+      expect.objectContaining({ fromUnit: 'blue-line', text: 'Delivered.' }),
     ]);
-    expect(applied.adjustments).toEqual([expect.stringContaining('No ack was recorded for the instant order to blue-line')]);
+    expect(applied.adjustments).toEqual([]);
   });
 });
 
@@ -533,14 +657,41 @@ describe('destroyed units in the picture', () => {
 });
 
 describe('status reports (LIGHT-02)', () => {
-  it("shows a unit's status to its owner, in the picture and from a ping, and never to the enemy", () => {
+  it("shows a unit's status to its owner, in the picture and from a scan, and never to the enemy", () => {
     const withStatus = states().map((u) => ({ ...u, status: `${u.id}: Hold; Balanced` }));
     let engine = play(resolution(withStatus)).engine;
     expect(renderSensorPicture(knowledge(engine, scenario, 'blue', 2))).toContain('status: blue-flagship: Hold; Balanced');
-    const pinged = resolveIntel(engine, scenario, 'blue', 2, [{ kind: 'ping', target: 'blue-line' }]);
+    const pinged = resolveScans(engine, scenario, 'blue', 2, [{ kind: 'scan', target: 'blue-line' }]);
     expect(pinged.text).toContain('Blue Line (`blue-line`, fleet, strength 4) at (-2, 2); status: blue-line: Hold; Balanced');
     // Red sees Blue's units only as contacts, without their orders.
     engine = play(resolution(withStatus.map((u) => (u.id === 'blue-line' ? { ...u, q: 1, r: -1 } : u)))).engine;
     expect(renderSensorPicture(knowledge(engine, scenario, 'red', 2))).not.toContain('blue-line: Hold');
+  });
+});
+
+describe('spoof receipts (QBIT-02, LIGHT-18)', () => {
+  it('tells the spoofer next turn only whether each spoof landed', () => {
+    let engine = queueSpoofReceipts(startEngine(scenario), 'blue', 1, [
+      { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 5, breakdown: '' },
+      { kind: 'spoof', target: 'red-raider', order: 'Hold', cost: 5, breakdown: '', fails: 'blocked by oversight (QBIT-09).' },
+      { kind: 'spoof', target: 'red-flagship', order: 'Hold', refused: 'flagship' },
+    ]);
+    engine = applyResolution(engine, resolution(states()), players, 1).engine;
+    expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([
+      expect.objectContaining({ fromUnit: 'red-line', text: 'Spoof → Hold: Delivered.', instant: true }),
+      expect.objectContaining({ fromUnit: 'red-raider', text: 'Spoof → Hold: No answer (FB-09).', instant: true }),
+    ]);
+    expect(messagesArriving(engine, scenario, 'red', 2)).toEqual([]);
+  });
+});
+
+describe('the private ranking', () => {
+  it('ranks by flagship damage, then fleet strength, then production', () => {
+    const damaged = states().map((u) => (u.id === 'red-flagship' ? { ...u, strength: 2 } : u.id === 'red-line' ? { ...u, strength: 9 } : u));
+    const { engine } = play(resolution(damaged));
+    expect(ranking(engine, scenario)).toEqual([
+      { player: 'blue', flagshipDamage: 0, flagshipDestroyed: false, fleetStrength: 9, production: 4 },
+      { player: 'red', flagshipDamage: 1, flagshipDestroyed: false, fleetStrength: 13, production: 4 },
+    ]);
   });
 });

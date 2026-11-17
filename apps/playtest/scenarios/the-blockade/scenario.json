@@ -1,0 +1,263 @@
+{
+  "title": "The Blockade",
+  "description": "An asymmetric escort scenario. Blue's flagship has jumped in at the edge of a system Red is blockading, with four ships, and must reach one of three planets. Red has two and a half times as many ships and must destroy it first. There is no production: each side gets a flat qBit income from outside the system.",
+  "rules": [
+    "design-doc.md",
+    "docs/game-mechanics.md"
+  ],
+  "maxRounds": 11,
+  "map": {
+    "radius": 6,
+    "impassable": [
+      [0, 0]
+    ]
+  },
+  "parameters": {
+    "c": 3,
+    "trackDecay": 8,
+    "hijack": {
+      "spoofCost": 3,
+      "maxTrackAge": 1
+    },
+    "qbits": {
+      "start": 8,
+      "divisor": 16,
+      "decay": 0.3333333333333333,
+      "orderCost": 3,
+      "scanCost": 1,
+      "linkBonuses": [],
+      "flatIncome": {
+        "blue": 6,
+        "red": 6
+      }
+    }
+  },
+  "units": [
+    {
+      "id": "blue-flagship",
+      "name": "Blue Flagship",
+      "owner": "blue",
+      "class": "flagship",
+      "hex": [-5, 0],
+      "speed": 1,
+      "sensorRange": 3,
+      "strength": 3
+    },
+    {
+      "id": "blue-line-1",
+      "name": "Blue Line 1",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-5, 0],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "blue-line-2",
+      "name": "Blue Line 2",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-5, 0],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "blue-raider-1",
+      "name": "Blue Raider 1",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-5, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "blue-raider-2",
+      "name": "Blue Raider 2",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-5, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "blue-probe-1",
+      "name": "Blue Probe 1",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-5, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 0
+    },
+    {
+      "id": "blue-probe-2",
+      "name": "Blue Probe 2",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [-5, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 0
+    },
+    {
+      "id": "red-flagship",
+      "name": "Red Flagship",
+      "owner": "red",
+      "class": "flagship",
+      "hex": [3, 0],
+      "speed": 1,
+      "sensorRange": 3,
+      "strength": 3
+    },
+    {
+      "id": "red-line-1",
+      "name": "Red Line 1",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "red-line-2",
+      "name": "Red Line 2",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "red-line-3",
+      "name": "Red Line 3",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "red-line-4",
+      "name": "Red Line 4",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "red-line-5",
+      "name": "Red Line 5",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "red-raider-1",
+      "name": "Red Raider 1",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-raider-2",
+      "name": "Red Raider 2",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-raider-3",
+      "name": "Red Raider 3",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-raider-4",
+      "name": "Red Raider 4",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-raider-5",
+      "name": "Red Raider 5",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [3, 0],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-probe-1",
+      "name": "Red Probe 1",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [-3, 3],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 0
+    },
+    {
+      "id": "red-probe-2",
+      "name": "Red Probe 2",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [-1, 1],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 0
+    },
+    {
+      "id": "red-probe-3",
+      "name": "Red Probe 3",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [0, -2],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 0
+    }
+  ],
+  "common": "common.md",
+  "gm": "gm.md",
+  "players": [
+    {
+      "id": "blue",
+      "name": "Blue",
+      "persona": "Bold and aggressive. You like decisive plays and big risks, and you get impatient with bookkeeping.",
+      "briefing": "blue.md"
+    },
+    {
+      "id": "red",
+      "name": "Red",
+      "persona": "Careful and analytical. You read the rules closely, want to know exactly what each rule permits, and plan several turns ahead.",
+      "briefing": "red.md"
+    }
+  ]
+}

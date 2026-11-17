@@ -12,7 +12,7 @@ pnpm playtest --scenario the-hunt --rounds 2 --player-model claude-sonnet-5-5   
 pnpm nx run playtest:run --scenario=the-hunt               # same thing via Nx
 ```
 
-`pnpm playtest --help` lists all options. Each run writes to `apps/playtest/runs/<timestamp>-<scenario>/` (gitignored):
+`pnpm playtest --help` lists all options. Each run writes to `apps/playtest/runs/<timestamp>-<scenario>/` (gitignored; a run that starts in the same second as another gets `-2`, `-3` and so on):
 
 | File | Contents |
 |---|---|
@@ -62,15 +62,21 @@ With the clipboard backend, a 10-turn game takes about 35 exchanges (each one pa
 ```
 setup     GM reads its private briefing → true state + each player's turn-1 knowledge state
 turn N    players submit in parallel, each seeing only their own report     (TURN-01)
-            ↳ if a player listed qBit purchases: the engine charges for any intel and
-              shows what it bought, prices any spoof or seize from the true state
-              (QBIT-07), and that player submits final orders at those prices (Planning phase)
-            ↳ the engine charges for instant orders and hijacks, and drops any the
-              player can't afford                                             (Emission phase)
+            ↳ if a player listed qBit purchases: the engine charges for any scans and
+              shows what they saw (FB-11), prices any spoof or oversight from what
+              the player knows (QBIT-08, QBIT-09), and that player submits final
+              orders (Planning phase)
+            ↳ the engine charges for instant orders, oversight and spoofs, drops any
+              the player can't afford, settles each spoof against the oversight on
+              every fleet it reaches, and queues each spoof's receipt         (Emission phase)
           GM resolves all eight phases → new true state, rulings, one report per player
           … until the GM declares game over or the turn limit is reached
-debrief   the GM and each player give structured feedback, in their own conversation;
-          players first see the GM's true final state ("the fog lifts")
+ranking   the engine ranks the players by flagship damage, fleet strength and production,
+          for the analyst only; players never see it
+debrief   each player gives structured feedback in their own conversation, after seeing
+          the GM's true final state ("the fog lifts"); the GM gives its feedback in a
+          new conversation, from the final state, rulings, engine corrections and
+          confusions, and is asked once more if the model's safeguards decline it
 synthesis a fresh analyst agent reads the feedback, rulings and confusions → report
 ```
 
@@ -108,12 +114,17 @@ A scenario is a directory under `scenarios/`:
 
 | File | Who sees it |
 |---|---|
-| `scenario.json` | Title, description, turn limit, rule documents, players and personas, the engine's `parameters` (light delay: `c`, `trackDecay`; `hijack` pricing; the `qbits` ledger: starting balance, `QBIT_*` values and zone bonuses as `linkBonuses`), and the starting `units` (id, owner, class, hex, speed, sensor range, strength). The units are the engine's turn-0 state, and the GM's briefing gets a table of them, so don't repeat them in `gm.md`. |
+| `scenario.json` | Title, description, turn limit, rule documents, players and personas, the engine's `parameters` (light delay: `c`, `trackDecay`; `hijack`: spoof base cost and the oldest track a spoof can use; the `qbits` ledger: starting balance, `QBIT_*` values, zone bonuses as `linkBonuses`, and any `flatIncome` per player from outside the system), and the starting `units` (id, owner, class, hex, speed, sensor range, strength). The units are the engine's turn-0 state, and the GM's briefing gets a table of them, so don't repeat them in `gm.md`. |
 | `common.md` | Everyone: map, parameters, house rules, victory conditions |
 | `gm.md` | GM only: the true starting state and design notes |
 | `<player>.md` | That player only |
 
 Use house rules in `common.md` to stand in for whatever the rules haven't specified yet (combat, zone bonuses and unit production, at the moment), and label them as stopgaps so feedback separates them from the design under test. Personas matter: a rules lawyer and an impatient aggressive player find different problems.
+
+The scenarios so far:
+
+- **`the-hunt`:** symmetric. Each side has a flagship, two fleets and a two-node web, and wins by killing the other's flagship. Tests the whole loop, the economy included.
+- **`the-blockade`:** asymmetric, with no economy. Blue's flagship and four ships must reach one of three planets; Red has ten ships and must stop it. Tests hunting, escorts, interception and the spoof-versus-oversight contest without the web, as a control for `the-hunt`.
 
 Ideas for scenarios that isolate one mechanic:
 

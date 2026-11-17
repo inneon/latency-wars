@@ -22,16 +22,10 @@ const UnitFile = z.object({
   strength: z.number().int().nonnegative(),
 });
 
-/** What the engine needs to price a spoof or seize (QBIT-07) and check it can be aimed (QBIT-04). */
+/** What the engine needs to price a spoof (QBIT-08) and check it can be aimed (QBIT-04). */
 const HijackParameters = z.object({
   /** `QBIT_SPOOF_COST` */
   spoofCost: z.number().nonnegative(),
-  /** `QBIT_SEIZE_COST` */
-  seizeCost: z.number().nonnegative(),
-  /** `HOME_TURF_RANGE` */
-  homeTurfRange: z.number().int().nonnegative(),
-  /** `HOME_TURF_SURCHARGE` */
-  homeTurfSurcharge: z.number().nonnegative(),
   /** `HIJACK_MAX_AGE` */
   maxTrackAge: z.number().int().nonnegative(),
 });
@@ -45,16 +39,16 @@ const QbitParameters = z.object({
   divisor: z.number().positive(),
   /** `QBIT_DECAY`, as a fraction. */
   decay: z.number().min(0).max(1),
-  /** `QBIT_ORDER_COST` */
+  /** `QBIT_ORDER_COST`: an instant order's base cost (QBIT-08). */
   orderCost: z.number().nonnegative(),
-  /** `QBIT_INTEL_COST` */
-  intelCost: z.number().nonnegative(),
-  /** `QBIT_PING_COST` */
-  pingCost: z.number().nonnegative(),
+  /** `QBIT_SCAN_COST`: a scan's base cost (QBIT-08). */
+  scanCost: z.number().nonnegative(),
   /** The hexes with a zone bonus, and each one's `k` (ECON-01). */
   linkBonuses: z
     .array(z.object({ hex: z.tuple([z.number().int(), z.number().int()]), k: z.number().nonnegative() }))
     .default([]),
+  /** qBits each player gets every Economy phase whatever their web, by player id: supply from outside the system. */
+  flatIncome: z.record(z.string(), z.number().nonnegative()).default({}),
 });
 export type QbitParameters = z.infer<typeof QbitParameters>;
 
@@ -73,7 +67,7 @@ export const ScenarioFile = z.object({
   maxRounds: z.number().int().positive(),
   /** The map the engine checks movement against. */
   map: MapFile,
-  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), hijack pricing and the qBit ledger. */
+  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), spoof pricing and the qBit ledger. */
   parameters: z.object({
     c: z.number().positive(),
     trackDecay: z.number().int().positive().optional(),
@@ -105,6 +99,9 @@ export const ScenarioFile = z.object({
   }
   for (const u of file.units) {
     if (!players.has(u.owner)) ctx.addIssue({ code: 'custom', path: ['units'], message: `unit ${u.id} has unknown owner ${u.owner}` });
+  }
+  for (const p of Object.keys(file.parameters.qbits.flatIncome)) {
+    if (!players.has(p)) ctx.addIssue({ code: 'custom', path: ['parameters', 'qbits', 'flatIncome'], message: `flat income for unknown player ${p}` });
   }
   for (const p of players) {
     if (file.units.filter((u) => u.owner === p && u.class === 'flagship').length !== 1) {

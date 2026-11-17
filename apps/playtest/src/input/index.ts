@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Backend, RunConfig } from '../types/run-config';
 import { parseCliArgs, USAGE } from './args';
+import { claimRunDir } from './run-dir';
 import { findClaudeBin } from './claude-bin';
 import { findWorkspaceRoot, loadScenario } from './scenario-loader';
 
@@ -10,6 +11,7 @@ export { USAGE };
 /**
  * Reads everything a run needs from the outside world (argv, cwd, clock,
  * scenario files, the claude CLI's location, the built web app) and returns it validated.
+ * It also creates the run's folder, so that no other run can take it.
  * Returns null when --help was asked for.
  */
 export async function readRunConfig(argv: string[], now = new Date()): Promise<RunConfig | null> {
@@ -53,6 +55,7 @@ export async function readRunConfig(argv: string[], now = new Date()): Promise<R
     remote,
     gm: args.gm,
     players: args.players,
-    outDir: path.resolve(args.out ?? path.join(workspaceRoot, 'apps/playtest/runs', `${stamp}-${scenario.id}`)),
+    // A run's own folder: one given with --out is used as it is; the default is claimed, so two runs never share it.
+    outDir: args.out ? path.resolve(args.out) : claimRunDir(path.join(workspaceRoot, 'apps/playtest/runs', `${stamp}-${scenario.id}`)),
   };
 }

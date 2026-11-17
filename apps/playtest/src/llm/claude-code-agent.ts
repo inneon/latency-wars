@@ -48,7 +48,18 @@ export class ClaudeCodeAgent implements Agent {
     return result.structured_output != null ? JSON.stringify(result.structured_output) : (result.result ?? '');
   }
 
+  /** Every failure in a request, whatever its source, is rethrown naming the agent and the request. */
   private async run(label: string, prompt: string, jsonSchema?: string): Promise<CliResult> {
+    try {
+      return await this.request(prompt, jsonSchema);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(`Prompt failed: ${prompt}`)
+      throw new Error(`${this.id} (${label}): ${message}`, { cause: err });
+    }
+  }
+
+  private async request(prompt: string, jsonSchema?: string): Promise<CliResult> {
     const { model, effort, system } = this.config;
     const args = [
       '--print',
@@ -65,20 +76,18 @@ export class ClaudeCodeAgent implements Agent {
       ...(jsonSchema ? ['--json-schema', jsonSchema] : []),
     ];
 
-    const stdout = await exec(this.bin, args, prompt).catch((err: Error) => {
-      throw new Error(`${this.id} (${label}): ${err.message}`);
-    });
+    const stdout = await exec(this.bin, args, prompt);
     this.started = true;
 
     let result: CliResult;
     try {
       result = CliResult.parse(JSON.parse(stdout));
     } catch {
-      throw new Error(`${this.id} (${label}): unexpected output from claude:\n${stdout.slice(0, 2000)}`);
+      throw new Error(`unexpected output from claude:\n${stdout.slice(0, 2000)}`);
     }
     this.ledger.add(this.id, model, (result.usage ?? {}) as Record<string, number>);
     if (result.is_error) {
-      throw new Error(`${this.id} (${label}): claude reported ${result.subtype ?? 'an error'}: ${result.result ?? ''}`);
+      throw new Error(`claude reported ${result.subtype ?? 'an error'}: ${result.result ?? ''}`);
     }
     return result;
   }

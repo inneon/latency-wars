@@ -64,10 +64,14 @@ export async function createAgents(config: RunConfig): Promise<AgentBackend> {
     };
   }
 
+  const gm = make({ id: 'gm', ...config.gm, system: prompts.gmSystem(scenario) }, 'GM');
   return {
     seatUrls,
     agents: {
-      gm: make({ id: 'gm', ...config.gm, system: prompts.gmSystem(scenario) }, 'GM'),
+      gm,
+      // A remote GM is a person, who remembers the game; their seat can't be opened twice.
+      newGmDebriefer: () =>
+        remote?.seats.includes('gm') ? gm : make({ id: 'gm', ...config.gm, system: prompts.gmDebriefSystem(scenario) }, 'GM (debrief)'),
       players: new Map(
         scenario.players.map((p) => [
           p.id,

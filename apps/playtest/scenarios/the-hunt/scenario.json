@@ -12,18 +12,14 @@
     "trackDecay": 8,
     "hijack": {
       "spoofCost": 3,
-      "seizeCost": 7,
-      "homeTurfRange": 2,
-      "homeTurfSurcharge": 3,
       "maxTrackAge": 1
     },
     "qbits": {
       "start": 8,
       "divisor": 16,
       "decay": 0.3333333333333333,
-      "orderCost": 4,
-      "intelCost": 5,
-      "pingCost": 2,
+      "orderCost": 3,
+      "scanCost": 1,
       "linkBonuses": [
         { "hex": [0, 2], "k": 2 },
         { "hex": [0, -2], "k": 2 }

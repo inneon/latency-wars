@@ -20,6 +20,11 @@ export interface QbitParams<N extends Unit = Unit> {
   readonly qbitDecay: number;
   /** Each link's `k`. Defaults to 1 for every link. */
   readonly linkK?: LinkK<N>;
+  /**
+   * qBits each player gets every Economy phase whatever their web: a
+   * scenario's supply from outside the system. Not a rule; defaults to none.
+   */
+  readonly flatIncome?: Readonly<Record<PlayerId, number>>;
 }
 
 /** Something a player paid for. */
@@ -56,7 +61,7 @@ export interface QbitStatement<N extends Unit = Unit> {
   readonly decay: number;
   /** Every producing link, for whoever decides what a player may be told about them. */
   readonly links: readonly Link<N>[];
-  /** qBits produced (ECON-01). */
+  /** qBits produced (ECON-01), plus any flat income (`QbitParams.flatIncome`). */
   readonly production: number;
   readonly closing: number;
 }
@@ -144,7 +149,7 @@ export function settleEconomy<N extends Unit>(
   for (const [player, beforeDecay] of Object.entries(ledger.balances)) {
     const decay = beforeDecay * params.qbitDecay;
     const links = webLinks(units, player, params.linkK);
-    const production = qbitProduction(links, params.qbitDivisor);
+    const production = qbitProduction(links, params.qbitDivisor) + (params.flatIncome?.[player] ?? 0);
     const closing = clean(beforeDecay - decay + production);
     const mine = ledger.pending.filter((p) => p.player === player);
     balances[player] = closing;
@@ -169,11 +174,12 @@ export function qbitProduction(links: readonly Link[], qbitDivisor: number): num
 }
 
 /**
- * What `player`'s nodes in `units` would produce per turn (ECON-01, ECON-02):
- * the figure a briefing or end-of-game score wants, without touching a ledger.
+ * What `player` would produce per turn from their nodes in `units` (ECON-01,
+ * ECON-02), plus any flat income: the figure a briefing or end-of-game score
+ * wants, without touching a ledger.
  */
 export function qbitIncome<N extends Unit>(units: readonly N[], player: PlayerId, params: QbitParams<N>): number {
-  return qbitProduction(webLinks(units, player, params.linkK), params.qbitDivisor);
+  return qbitProduction(webLinks(units, player, params.linkK), params.qbitDivisor) + (params.flatIncome?.[player] ?? 0);
 }
 
 /** `player`'s statement for a settled `turn`, or `undefined` if that turn hasn't been settled. */

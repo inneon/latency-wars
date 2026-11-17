@@ -27,6 +27,11 @@ export interface Agent {
 
 export interface PlaytestAgents {
   gm: Agent;
+  /**
+   * Makes a GM for the debrief, in a new conversation that holds the game's
+   * record rather than every turn of it. Called again for a retry.
+   */
+  newGmDebriefer: () => Agent;
   players: Map<string, Agent>;
   /** A fresh agent that has not seen the game; reads the feedback and writes the report. */
   analyst: Agent;

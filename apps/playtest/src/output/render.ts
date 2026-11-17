@@ -44,7 +44,7 @@ function gmResolution(r: GmResolution): string {
   ].join('\n');
   return [
     `#### Rulings\n\n${rulingsTable(r.rulings)}`,
-    details('GM working', r.resolution_log),
+    details('GM write-up', r.resolution_log),
     details('True state', `${units}\n\n${r.true_state}`),
     r.game_over ? `**Game over:** ${r.outcome}` : '',
   ]
@@ -76,10 +76,14 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       if (e.type === 'quotes') out.push(`#### Quotes for ${name(e.player)}`, e.delivered);
       if (e.type === 'hijacks') {
         const bought = e.quotes.filter((q) => !q.refused);
-        if (bought.length) {
+        const overseen = e.oversights.filter((o) => !o.refused);
+        if (bought.length || overseen.length) {
           out.push(
-            `#### Hijacks bought by ${name(e.player)}`,
-            bought.map((q) => `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown})${q.fails ? `; fails: ${q.fails}` : ''}`).join('\n'),
+            `#### Spoofs and oversight bought by ${name(e.player)}`,
+            [
+              ...bought.map((q) => `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown})${q.fails ? `; fails: ${q.fails}` : ''}`),
+              ...overseen.map((o) => `- oversee \`${o.target}\` at strength ${o.strength}: ${o.cost} qBits (${o.breakdown})`),
+            ].join('\n'),
           );
         }
       }
@@ -137,6 +141,21 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
 
   const synthesis = events.find((e) => e.type === 'synthesis');
   if (synthesis?.type === 'synthesis') out.push(synthesis.report);
+
+  const ranking = events.find((e) => e.type === 'ranking');
+  if (ranking?.type === 'ranking') {
+    out.push(
+      `# Private ranking after turn ${ranking.turn}`,
+      'Not a victory condition, and never shown to players: a guide to who was ahead when the game stopped. Ranked by flagship damage (least first), then fleet strength, then qBit production.',
+      [
+        '| Player | Flagship damage | Fleet strength (incl. flagship) | Production (qBits/turn) |',
+        '|---|---|---|---|',
+        ...ranking.rows.map(
+          (r) => `| ${name(r.player)} | ${r.flagshipDestroyed ? 'destroyed' : r.flagshipDamage} | ${r.fleetStrength} | ${Math.round(r.production * 1000) / 1000} |`,
+        ),
+      ].join('\n'),
+    );
+  }
 
   out.push('# Raw feedback');
   for (const e of events) {
