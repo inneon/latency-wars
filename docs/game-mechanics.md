@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.8)
+# Latency Wars - Game Mechanics (v0.9)
 
 ## 0. About This Document
 
@@ -310,7 +310,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 ### 8.2 Silence
 - **FB-05** A unit is shown as **Silent since turn t** only when its status report for turn `t` should have arrived even if the unit had moved at full speed directly away from the flagship since its last report. Until then its report is shown as pending.
   - *Why:* a unit that is only moving away on its orders isn't silent. Silence should be rare enough to mean something.
-- **FB-06** Silence is deliberately ambiguous. It could mean the unit was destroyed, jammed, or has gone comms-silent (`AUTO-07`). A destroyed unit sends no last report.
+- **FB-06** Silence is deliberately ambiguous. It could mean the unit was destroyed or jammed. A destroyed unit sends no last report.
 - *Guarantee:* if a fleet is destroyed before an order reaches it, its status reports stop *before* the ack would have been due. Players are never left waiting on an ack that can't come. *(This follows from `LIGHT-03` and `ORD-04` while the flagship holds position. It needs checking for a moving flagship.)*
 
 ### 8.3 Order lifecycle (player's outbox)
@@ -327,7 +327,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | **Recipient silent** | The ack is overdue and status reports have stopped. |
 
 ### 8.4 Instant information
-- **FB-09** A unit that is destroyed or comms-silent (`AUTO-07`) doesn't answer the entangled channel. A scan or instant order sent to it returns **No answer**, and the qBits are still spent.
+- **FB-09** A unit that is destroyed doesn't answer the entangled channel. A scan or instant order sent to it returns **No answer**, and the qBits are still spent.
   - *Why:* "No answer" narrows the possibilities without handing over the full truth. It rules out "just delayed", but can't tell destroyed from deliberately silent.
 - **FB-11** In Planning, a player MAY **scan** any of their own units, nodes included. A scan shows, at age 0, everything that unit's sensors observed at the end of the previous turn, including the unit's own status report.
   - A player names all of a turn's scans at once. Their results arrive together, before the player submits orders. No further scans can be bought that turn.
@@ -370,13 +370,8 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 - **AUTO-04** If a higher-priority behaviour interrupts an active order, the order resumes when the interruption clears, provided it's still valid. The fleet reports **Diverted**.
 - **AUTO-05** The enemy AI MUST use the same order and doctrine system as players. *(This partly answers design doc open question 2.)*
 
-### 9.3 Command quality and comms silence
+### 9.3 Command quality
 - **AUTO-06** *(Open)* Commander quality, upgradeable through the tech tree, improves strength estimates, sensor range and pursuit decisions.
-- **AUTO-07** *(Proposed)* A fleet MAY be ordered **comms-silent** until a set turn or condition. While silent it:
-  - emits no status reports or acks;
-  - ignores all orders;
-  - cannot be jammed, intercepted, spoofed or taken over (design doc 8.1).
-  - *Why:* a trade-off between central control (qBits) and local control (doctrine), and a counter-strategy against a player racing to the endgame.
 
 ---
 
@@ -456,13 +451,13 @@ How players get new units is not yet designed (`OPEN-10`). Until it is, each sce
   - *Why:* one rule for every instant action. Each one is cheaper the closer the flagship is, so a flagship kept near the action buys a shorter decision cycle, and one kept safe at home pays for its safety.
   - *Example (placeholder values, `C = 3`):* an instant order to a fleet 5 hexes from the flagship costs 3 + 2 = 5. Spoofing an enemy fleet tracked 2 hexes away costs 3 + 1 = 4.
 - **QBIT-02** **Spoof:** inject a fake order into an enemy player's command net. A spoof is aimed at one enemy fleet, its **target**, and reaches every fleet of that player in the target's hex, the target included. It is delivered in Emission. Each fleet it lands on carries out a non-combat order of the spoofer's choosing (`MoveTo`, `Hold` or `ReturnHome`) for that turn, overriding its own order and doctrine. A spoofed fleet can't start a fight, but fights back if engaged (`COMBAT-01`). Its own active order resumes the next turn.
-  - A spoof never reaches a flagship or a comms-silent fleet (`QBIT-04`). It is settled against each fleet's own oversight (`QBIT-09`), so it MAY land on some fleets in the hex and be blocked on others.
+  - A spoof never reaches a flagship (`QBIT-04`). It is settled against each fleet's own oversight (`QBIT-09`), so it MAY land on some fleets in the hex and be blocked on others.
   - A spoofed `MoveTo` MAY end in a hex holding the spoofer's fleets. They are then in the same hex, so `MOVE-04` makes them willing to fight it. Spoofing a fleet into an ambush is intended.
   - The spoofer gets a receipt over the entangled channel in the next Planning phase (`LIGHT-18`): **Delivered** if it landed on at least one fleet, or **No answer** if it landed on none (`QBIT-04`, `QBIT-09`, `FB-09`). It says nothing about which fleets it reached or what they did, and a blocked spoof looks the same as one whose target is gone.
   - *Why:* it is easier to make chaos than to bring order. Stacking fleets concentrates the risk of a spoof instead of spreading it.
 - **QBIT-04** A spoof needs:
   - a track on the target no older than `HIJACK_MAX_AGE`, because you need to know where to aim;
-  - a target that isn't a flagship and isn't comms-silent (`AUTO-07`).
+  - a target that isn't a flagship.
 
   No hex is safe: a fleet in its own flagship's hex can be spoofed like any other. Its owner can protect it with oversight, which is cheapest there (`QBIT-09`). A stack is no safer: one spoof reaches every fleet in it (`QBIT-02`), and each needs its own oversight.
 
@@ -514,6 +509,7 @@ Rules taken out of the mechanics. Their IDs stay reserved here so they aren't re
 | `QBIT-03` | v0.5 | None | Seizing turned a node's defenders into its attackers. It may return as an endgame ability (design doc 8.1). |
 | `QBIT-05` | v0.5 | `QBIT-08` | The open question on instant-order pricing is settled: instant orders are priced by distance like every other qBit action. |
 | `OPEN-12` | v0.6 | `QBIT-09` | Answered: oversight is the defensive qBit spend. |
+| `AUTO-07` | v0.9 | None | Comms-silence made a fleet immune to spoofs at no cost: the kind of wall the command contest (`QBIT-09`) replaced with prices. It was also too loosely specified to adjudicate. It may return as a priced or limited ability. |
 | `QBIT-07` | v0.5 | `QBIT-08` | Hijack pricing used true positions and a home-turf surcharge, which leaked positions. One distance-based price now covers every qBit action. |
 
 ---

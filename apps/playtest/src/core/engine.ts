@@ -962,7 +962,7 @@ export function renderSensorPicture(state: KnowledgeState<PlaytestUnit>): string
   if (lost.length) parts.push(`Lost contacts:\n${lost.map((e) => line(e, false)).join('\n')}`);
   if (state.silent.length) {
     parts.push(
-      `Silent units (no status report since the turn shown, even allowing for full-speed movement away; destroyed, jammed or comms-silent, FB-05):\n${state.silent
+      `Silent units (no status report since the turn shown, even allowing for full-speed movement away; destroyed or jammed, FB-05):\n${state.silent
         .map((s) => `- ${s.lastHeard.unit.name} (\`${s.unitId}\`): silent since turn ${s.sinceTurn}`)
         .join('\n')}`,
     );
