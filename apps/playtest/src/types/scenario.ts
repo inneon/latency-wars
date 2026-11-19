@@ -1,13 +1,8 @@
-import type { Hex, Unit } from '@latency-wars/domain';
+import type { Hex } from '@latency-wars/domain';
+import type { MapFeature, PlaytestUnit } from '@latency-wars/playtest-replay';
 import { z } from 'zod';
 
-/** A unit as the play-test tracks it: the domain's minimum plus what status reports carry. */
-export interface PlaytestUnit extends Unit {
-  readonly name: string;
-  readonly strength: number;
-  /** The rest of its status report (LIGHT-02): active order, doctrine. Written by the GM; shown only to its owner. */
-  readonly status?: string;
-}
+export type { PlaytestUnit };
 
 const UnitFile = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
@@ -56,6 +51,10 @@ export type QbitParameters = z.infer<typeof QbitParameters>;
 const MapFile = z.object({
   radius: z.number().int().positive(),
   impassable: z.array(z.tuple([z.number().int(), z.number().int()])).default([]),
+  /** Named hexes for whoever draws the map: orbital zones and planets. The engine doesn't read them. */
+  features: z
+    .array(z.object({ name: z.string(), kind: z.enum(['zone', 'planet']), hex: z.tuple([z.number().int(), z.number().int()]) }))
+    .default([]),
 });
 
 /** The on-disk format of `scenarios/<name>/scenario.json`. */
@@ -118,7 +117,7 @@ export interface Scenario {
   description: string;
   /** How many turns the game lasts. A run's --rounds replaces the scenario's own. */
   maxRounds: number;
-  map: { radius: number; impassable: Hex[] };
+  map: { radius: number; impassable: Hex[]; features: MapFeature[] };
   parameters: { c: number; trackDecay?: number; hijack: HijackParameters; qbits: QbitParameters };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];

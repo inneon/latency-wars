@@ -28,14 +28,14 @@ These are stopgaps for things the rules leave as placeholders. They are not part
 - **qBits from outside the system:** each player starts with 8 qBits and gets 6 every Economy phase, in place of web production (`ECON-01`). Decay (`ECON-04`) and every qBit price (`QBIT-08`) are as the mechanics doc says.
 - **Damage** (the part of combat the rules leave per scenario): each unit in an engagement group deals damage equal to half its own strength, rounded up, and `COMBAT-03` says where it goes. A unit at 0 strength is destroyed.
 - **Sensors:** a sensor sees an enemy unit's exact strength.
-- **Probes:** strength 0, speed `V_FAST`, sensor range `SENSOR_FLEET`. A probe is never willing to fight, can't escort, and is destroyed by any engagement. A probe that ends a movement step in the same hex as any enemy unit is also destroyed, even if nothing there is willing to fight it. It counts as a fleet for orders and status reports, but accepts only `MoveTo`, `Patrol` and `Hold`: any other order is rejected as impossible (`RES-01`).
+- **Probes:** strength 0, speed `V_FAST`, sensor range `SENSOR_FLEET`. A probe is never willing to fight, can't escort, and is destroyed by any engagement. A probe that ends a movement step in the same hex as an enemy fleet or flagship that can deal damage (strength above 0) is also destroyed, even if nothing there is willing to fight it. Enemy probes that meet don't harm each other. It counts as a fleet for orders and status reports, but accepts only `MoveTo`, `Patrol` and `Hold`: any other order is rejected as impossible (`RES-01`).
 - **Transmissions** (`OPEN-03`): sending orders and status reports does not reveal the sender.
 
 ## Victory
 
 Checked at the end of every turn, after Combat:
 
-- **Blue wins** if Blue's flagship is in a planet hex holding no Red fleet. Red probes don't count as fleets for this. The flagship has to have survived that turn's Combat.
+- **Blue wins** if Blue's flagship is in a planet hex holding no Red unit other than a probe. Red's flagship blocks a planet just as a Red fleet does. Blue's flagship has to have survived that turn's Combat.
 - **Blue wins** if Red's flagship is destroyed.
 - **Red wins** if Blue's flagship is destroyed.
 - If both flagships are destroyed in the same turn, the game is a draw.

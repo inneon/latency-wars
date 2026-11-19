@@ -246,8 +246,8 @@ describe('runPlaytest', () => {
     const report = blue.prompts[0]?.prompt ?? '';
     expect(report).toContain('SECRET-BLUE-0');
     expect(report).toContain('## Sensor picture (Planning phase, turn 1)');
-    // Blue Line is 1 hex from Blue's flagship, so its latest report is a turn old (LIGHT-06).
-    expect(report).toContain('Blue Line (`blue-line`, fleet, strength 4) at (-2, 2) at the end of turn -1 (age 1)');
+    // Blue Line is 1 hex from Blue's flagship, within its own sensors, so its report is current (LIGHT-03).
+    expect(report).toContain('Blue Line (`blue-line`, fleet, strength 4) at (-2, 2) at the end of turn 0 (age 0)');
     expect(report).toContain('Contacts:\n- None.');
     expect(report).not.toContain('red-line');
   });

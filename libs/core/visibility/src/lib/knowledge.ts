@@ -63,6 +63,58 @@ export interface KnowledgeState<U extends Unit = Unit> {
   readonly silent: readonly SilentUnit<U>[];
 }
 
+/** An observation that has reached its player, and the Planning phase it first did. */
+export interface Arrival<U extends Unit = Unit> {
+  readonly observation: Observation<U>;
+  readonly arrivedTurn: number;
+}
+
+/**
+ * Every observation that has reached `player` by the Planning phase of
+ * `turn`, by light or instantly, each with the turn it arrived. An
+ * observation that arrived both ways appears once for each.
+ *
+ * The log must cover the end of `turn − 1` (see `knowledgeState`).
+ */
+export function arrivedObservations<U extends Unit>(
+  log: VisibilityLog<U>,
+  player: PlayerId,
+  turn: number,
+  params: Pick<KnowledgeParams, 'c'>,
+): Arrival<U>[] {
+  return arrivals(log, player, turn, params.c).arrived;
+}
+
+function arrivals<U extends Unit>(
+  log: VisibilityLog<U>,
+  player: PlayerId,
+  turn: number,
+  c: number,
+): { flagship: Path; arrived: Arrival<U>[] } {
+  const flagship = flagshipPath(log, player);
+  if (flagship === undefined) {
+    throw new RangeError(`knowledgeState: no flagship recorded for player ${player}`);
+  }
+  if (log.lastTurn === undefined || log.lastTurn < turn - 1) {
+    throw new RangeError(`knowledgeState: log ends at turn ${log.lastTurn}; need the end of turn ${turn - 1}`);
+  }
+  const arrived: Arrival<U>[] = [];
+  for (const observation of log.observations) {
+    if (observation.observer !== player) continue;
+    // What the flagship saw itself is current: it arrives in the next Planning phase (LIGHT-03).
+    const arrivedTurn = observation.byFlagship
+      ? observation.turn + 1 <= turn
+        ? observation.turn + 1
+        : undefined
+      : observationArrivalTurn(observation.unit.hex, observation.turn, flagship, c, turn);
+    if (arrivedTurn !== undefined) arrived.push({ observation, arrivedTurn });
+  }
+  for (const arrival of log.instant) {
+    if (arrival.player === player && arrival.turn <= turn) arrived.push({ observation: arrival.observation, arrivedTurn: arrival.turn });
+  }
+  return { flagship, arrived };
+}
+
 /**
  * What `player` may be told in the Planning phase of `turn`: the latest
  * observation of each unit that has reached them, by light or instantly.
@@ -77,13 +129,7 @@ export function knowledgeState<U extends Unit>(
   turn: number,
   params: KnowledgeParams,
 ): KnowledgeState<U> {
-  const flagship = flagshipPath(log, player);
-  if (flagship === undefined) {
-    throw new RangeError(`knowledgeState: no flagship recorded for player ${player}`);
-  }
-  if (log.lastTurn === undefined || log.lastTurn < turn - 1) {
-    throw new RangeError(`knowledgeState: log ends at turn ${log.lastTurn}; need the end of turn ${turn - 1}`);
-  }
+  const { flagship, arrived } = arrivals(log, player, turn, params.c);
 
   // Latest arrived observation per unit, however it arrived. For the same
   // observation arriving twice (instantly, then by light), the earlier arrival
@@ -99,14 +145,7 @@ export function knowledgeState<U extends Unit>(
       latest.set(observation.unit.id, { observation, arrivedTurn });
     }
   };
-  for (const observation of log.observations) {
-    if (observation.observer !== player) continue;
-    const arrivedTurn = observationArrivalTurn(observation.unit.hex, observation.turn, flagship, params.c, turn);
-    if (arrivedTurn !== undefined) consider(observation, arrivedTurn);
-  }
-  for (const arrival of log.instant) {
-    if (arrival.player === player && arrival.turn <= turn) consider(arrival.observation, arrival.turn);
-  }
+  for (const { observation, arrivedTurn } of arrived) consider(observation, arrivedTurn);
 
   const own: KnowledgeEntry<U>[] = [];
   const contacts: Contact<U>[] = [];

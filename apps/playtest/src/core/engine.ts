@@ -1,5 +1,6 @@
 import { formatHex, type Hex, hexDistance } from '@latency-wars/domain';
 import {
+  arrivedObservations,
   emptyLog,
   flagshipPath,
   type KnowledgeEntry,
@@ -138,6 +139,8 @@ export function knowledge(engine: EngineState, scenario: Scenario, player: strin
 /** What the engine did with a GM resolution. */
 export interface Applied {
   readonly engine: EngineState;
+  /** The units that left the game this turn, where they were last and as the engine settled them. */
+  readonly removed: readonly PlaytestUnit[];
   /** Corrections the engine made, in plain words. Shown to the GM next turn and logged. */
   readonly adjustments: string[];
   /** Overrides the GM declared and the engine accepted. For the designer to review. */
@@ -180,7 +183,7 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
       }
     }
     const messages = queueMessages(engine, resolution, players, turn, [], adjustments);
-    return { engine: { ...engine, messages }, adjustments, overrides };
+    return { engine: { ...engine, messages }, removed: [], adjustments, overrides };
   }
 
   /**
@@ -285,7 +288,7 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
     roster,
     ledger: settleEconomy(engine.ledger, turn, producing, engine.economy),
   };
-  return { engine: { ...recorded, messages: queueMessages(recorded, resolution, players, turn, removed, adjustments) }, adjustments, overrides };
+  return { engine: { ...recorded, messages: queueMessages(recorded, resolution, players, turn, removed, adjustments) }, removed, adjustments, overrides };
 }
 
 /** A unit joining the game: a built node (ECON-03) or a new fleet. Returns undefined if it can't join. */
@@ -520,6 +523,12 @@ export function renderOutbox(engine: EngineState, scenario: Scenario, player: st
   const known = knowledge(engine, scenario, player, turn);
   const flagship = engine.units.find((u) => u.owner === player && u.class === 'flagship');
   const lines: string[] = [];
+  // Where the player's status reports put each own unit at the end of each turn (LIGHT-11), oldest first.
+  const reports = new Map<string, Observation<PlaytestUnit>[]>();
+  for (const { observation } of arrivedObservations(engine.log, player, turn, scenario.parameters)) {
+    if (observation.removed || observation.unit.owner !== player) continue;
+    reports.set(observation.unit.id, [...(reports.get(observation.unit.id) ?? []), observation]);
+  }
   for (const o of engine.orders) {
     if (o.player !== player || o.instant || o.sentTurn >= turn || !flagship || !o.recipient) continue;
     const last = known.own.find((e) => e.unit.id === o.recipient);
@@ -533,16 +542,21 @@ export function renderOutbox(engine: EngineState, scenario: Scenario, player: st
         (m) => m.player === player && m.fromUnit === o.recipient && !m.instant && m.sentTurn === delivered && arrival(engine, scenario, m, turn) !== undefined,
       );
     if (answered) continue;
-    // ORD-04 if the recipient holds its confirmed position; the ack goes out in that turn's Observation phase (FB-02).
-    const expected = o.sentTurn + lightTravelTurns(hexDistance(o.from, last.unit.hex), c);
-    const ackDue = expected + 1 + lightTravelTurns(hexDistance(last.unit.hex, flagship.hex), c);
+    // ORD-04 against where the reports put the recipient at the start of each turn, holding its latest known position
+    // beyond them. A recipient in the flagship's hex at emission is local (ORD-05). The ack goes out in the delivery
+    // turn's Observation phase (FB-02).
+    const heard = [...(reports.get(o.recipient) ?? [])].sort((a, b) => b.turn - a.turn);
+    const knownAt = (t: number) => (heard.find((r) => r.turn <= t - 1) ?? heard.at(-1))?.unit.hex ?? last.unit.hex;
+    let expected = o.sentTurn;
+    while (hexDistance(o.from, knownAt(expected)) > c * (expected - o.sentTurn)) expected++;
+    const ackDue = expected + 1 + lightTravelTurns(hexDistance(knownAt(expected + 1), flagship.hex), c);
     const state =
       turn <= expected ? `in transit: expected to arrive in turn ${expected}, ack due by turn ${ackDue}`
       : turn <= ackDue ? `expected to have arrived in turn ${expected}; awaiting ack, due by turn ${ackDue}`
       : `ack overdue: it was due by turn ${ackDue}`;
     lines.push(`- To \`${o.recipient}\` (sent turn ${o.sentTurn}): ${o.order}. ${state}.`);
   }
-  return `## Orders sent (FB-07)\n\nExpected times assume each fleet holds the position in its latest status report.\n\n${lines.join('\n') || '- None outstanding.'}`;
+  return `## Orders sent (FB-07)\n\nExpected times use where each fleet's status reports put it, and assume it holds the position in its latest one.\n\n${lines.join('\n') || '- None outstanding.'}`;
 }
 
 /**
@@ -718,8 +732,8 @@ export function payForEmission(
 
 /**
  * Settles every spoof bought this turn against the oversight bought on each
- * fleet it reaches (QBIT-09): it lands on a fleet only if it is stronger than
- * that fleet's oversight. A spoof blocked on every fleet it reaches is marked
+ * fleet it reaches, plus 1 for command presence in the fleet's own flagship's
+ * hex (QBIT-09): it lands on a fleet only if it is stronger than that. A spoof blocked on every fleet it reaches is marked
  * as failing, so its buyer gets "No answer"; one blocked on some lists them.
  */
 export function settleCommandContest(
@@ -735,9 +749,11 @@ export function settleCommandContest(
         if (q.refused || q.fails) return q;
         const strength = q.strength ?? 0;
         const reaches = q.reaches ?? [q.target];
+        // Command presence: 1 free oversight in the fleet's own flagship's hex (QBIT-09).
+        const presence = q.atFlagship ? 1 : 0;
         const blocked = reaches.flatMap((unit) => {
-          const oversight = guard.get(unit);
-          return oversight !== undefined && strength <= oversight ? [{ unit, oversight }] : [];
+          const oversight = (guard.get(unit) ?? 0) + presence;
+          return oversight > 0 && strength <= oversight ? [{ unit, oversight }] : [];
         });
         if (blocked.length === 0) return q;
         if (blocked.length < reaches.length) return { ...q, blocked };
@@ -837,7 +853,9 @@ export function quoteHijack(engine: EngineState, scenario: Scenario, player: str
     .filter((u) => u.id !== target && u.owner === truth.owner && u.class === 'fleet' && hexDistance(u.hex, truth.hex) === 0)
     .map((u) => u.id)
     .sort();
-  return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target, ...others] };
+  // Fleets in their own flagship's hex have command presence (QBIT-09) and keep it from moving if spoofed (FLAG-03).
+  const atFlagship = engine.units.some((u) => u.owner === truth.owner && u.class === 'flagship' && hexDistance(u.hex, truth.hex) === 0);
+  return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target, ...others], atFlagship };
 }
 
 /**
@@ -893,11 +911,15 @@ export function renderHijacksForGm(quotes: readonly HijackQuote[], oversights: r
       const blocked = q.blocked ?? [];
       const landed = (q.reaches ?? [q.target]).filter((u) => !blocked.some((b) => b.unit === u));
       const stopped = blocked.length
-        ? ` Blocked by oversight on ${blocked.map((b) => `\`${b.unit}\` (strength ${b.oversight} against ${q.strength ?? 0})`).join(', ')}.`
+        ? ` Blocked by oversight on ${blocked.map((b) => `\`${b.unit}\` (strength ${b.oversight} against ${q.strength ?? 0})`).join(', ')}${q.atFlagship ? ', counting 1 for command presence' : ''}.`
         : '';
       const fate = q.fails
         ? ` It does not land: ${q.fails} It was paid for anyway, and the spoofer is told "No answer" (QBIT-02).`
-        : ` It lands on ${ids(landed)}: ${landed.length > 1 ? 'each carries' : 'it carries'} out this order this turn (QBIT-02).${stopped}`;
+        : ` It lands on ${ids(landed)}: ${landed.length > 1 ? 'each carries' : 'it carries'} out this order this turn (QBIT-02).${stopped}${
+            q.atFlagship
+              ? " These fleets were in their own flagship's hex: if any it landed on was escorting the flagship, the flagship doesn't move this turn unless its order is AtAllCosts (FLAG-03)."
+              : ''
+          }`;
       return `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown}).${fate}`;
     });
     parts.push(

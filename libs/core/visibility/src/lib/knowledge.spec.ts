@@ -1,6 +1,6 @@
 import { hex, type Hex } from '@latency-wars/domain';
 import { moved, theHuntUnits, unit, type TestUnit } from './fixtures.spec-helper';
-import { knowledgeState, type KnowledgeState } from './knowledge';
+import { arrivedObservations, knowledgeState, type KnowledgeState } from './knowledge';
 import { emptyLog, recordHeldTurns, recordInstantArrival, recordTurnEnd, type VisibilityLog } from './log';
 
 const params = { c: 3, trackDecay: 8 };
@@ -18,8 +18,9 @@ describe('knowledgeState at the start of the-hunt', () => {
     expect(blue.contacts).toEqual([]);
     expect(blue.silent).toEqual([]);
     expect(ageOf(blue, 'Blue Flagship')).toBe(0);
-    expect(ageOf(blue, 'Blue Line')).toBe(1); // 3 hexes
-    expect(ageOf(blue, 'Blue Node West')).toBe(1); // 3 hexes
+    // Within the flagship's own sensor range (3), what it sees is current (LIGHT-03).
+    expect(ageOf(blue, 'Blue Line')).toBe(0); // 3 hexes
+    expect(ageOf(blue, 'Blue Node West')).toBe(0); // 3 hexes
     expect(ageOf(blue, 'Blue Raider')).toBe(2); // 4 hexes
     expect(ageOf(blue, 'Blue Node North')).toBe(2); // 6 hexes
   });
@@ -172,6 +173,12 @@ describe('knowledgeState: instant arrivals', () => {
     const log = withIntel(lineScenario({ through: 12 }));
     expect(knowledgeState(log, 'blue', 6, params).contacts).toEqual([]);
   });
+
+  it('lists every arrival of an observation, by light and instantly', () => {
+    const log = withIntel(lineScenario({ through: 12 }));
+    const sightings = arrivedObservations(log, 'blue', 11, params).filter((a) => a.observation.unit.id === 'red' && a.observation.turn === 6);
+    expect(sightings.map((a) => a.arrivedTurn).sort((a, b) => a - b)).toEqual([7, 11]);
+  });
 });
 
 describe('knowledgeState: silence (FB-05)', () => {
@@ -198,20 +205,41 @@ describe('knowledgeState: silence (FB-05)', () => {
   });
 });
 
+describe("knowledgeState: the flagship's own sensors (LIGHT-03)", () => {
+  const flag = unit('flag', 'blue', 'flagship', hex(0, 0), { sensorRange: 3 });
+  const scout = unit('scout', 'blue', 'fleet', hex(-6, 0), { sensorRange: 2 });
+  const near = unit('near', 'red', 'fleet', hex(3, 0));
+  const byScout = unit('by-scout', 'red', 'fleet', hex(-4, 0));
+  const log = recordHeldTurns(emptyLog<TestUnit>(), -3, 0, [flag, scout]);
+  const withEnemies = recordTurnEnd(log, 1, [flag, scout, near, byScout]);
+
+  it('makes what the flagship sees current, whatever its distance within range', () => {
+    // 3 hexes away would otherwise arrive in turn 1 + 1 + L(3) = 3.
+    expect(knowledgeState(withEnemies, 'blue', 2, params).contacts.find((c) => c.unit.id === 'near')).toMatchObject({ observedTurn: 1, arrivedTurn: 2, age: 0 });
+  });
+
+  it('still sends what other units see at light speed', () => {
+    // The scout sees it 4 hexes from the flagship: 1 + 1 + L(4) = 4.
+    const later = recordTurnEnd(recordTurnEnd(withEnemies, 2, [flag, scout]), 3, [flag, scout]);
+    expect(knowledgeState(later, 'blue', 3, params).contacts.map((c) => c.unit.id)).not.toContain('by-scout');
+    expect(knowledgeState(later, 'blue', 4, params).contacts.find((c) => c.unit.id === 'by-scout')).toMatchObject({ observedTurn: 1, arrivedTurn: 4 });
+  });
+});
+
 describe('knowledgeState: units that appear mid-game', () => {
   it('the owner learns of a new unit through its first status report, at light speed', () => {
-    // A probe appears at Blue Node West (−4, −1), 3 from Blue's flagship, at the end of turn 3.
-    const probe = unit('blue-probe-1', 'blue', 'fleet', hex(-4, -1), { strength: 0, speed: 2 });
+    // A probe appears at Blue Node North (−1, 4), 6 from Blue's flagship and beyond its sensors, at the end of turn 3.
+    const probe = unit('blue-probe-1', 'blue', 'fleet', hex(-1, 4), { strength: 0, speed: 2 });
     let log = recordHeldTurns(emptyLog<TestUnit>(), -3, 2, theHuntUnits);
-    for (let turn = 3; turn <= 5; turn++) log = recordTurnEnd(log, turn, [...theHuntUnits, probe]);
-    expect(knowledgeState(log, 'blue', 4, params).own.map((e) => e.unit.id)).not.toContain('blue-probe-1');
-    // 3 + 1 + L(3) = 5.
-    expect(knowledgeState(log, 'blue', 5, params).own.find((e) => e.unit.id === 'blue-probe-1')).toMatchObject({
+    for (let turn = 3; turn <= 6; turn++) log = recordTurnEnd(log, turn, [...theHuntUnits, probe]);
+    expect(knowledgeState(log, 'blue', 5, params).own.map((e) => e.unit.id)).not.toContain('blue-probe-1');
+    // 3 + 1 + L(6) = 6.
+    expect(knowledgeState(log, 'blue', 6, params).own.find((e) => e.unit.id === 'blue-probe-1')).toMatchObject({
       observedTurn: 3,
-      arrivedTurn: 5,
+      arrivedTurn: 6,
       isNew: true,
     });
-    expect(knowledgeState(log, 'red', 5, params).contacts.map((c) => c.unit.id)).not.toContain('blue-probe-1');
+    expect(knowledgeState(log, 'red', 6, params).contacts.map((c) => c.unit.id)).not.toContain('blue-probe-1');
   });
 });
 

@@ -18,8 +18,14 @@ pnpm nx run playtest:run --scenario=the-hunt               # same thing via Nx
 |---|---|
 | `report.md` | The analyst's synthesis, every participant's raw feedback, every ruling the rules didn't settle, and token usage. Start here. |
 | `transcript.md` | The game turn by turn: each player's submission, the GM's private working and true state (collapsed), and what each player was told. |
-| `events.jsonl` | Raw structured events, written as they happen. A crashed run still leaves this behind. |
+| `events.jsonl` | Raw structured events, written as they happen. A crashed run still leaves this behind. The replay viewer reads it. |
 | `relay/` | Clipboard backend only: every prompt and reply you relayed, and `attachments/<chat>/`, the files to attach to each chat. |
+
+## Watching a run back
+
+`pnpm dev`, then open http://localhost:4242/replay. The viewer steps through a run turn by turn, showing every unit where it truly was, from the run's `events.jsonl`. A run in progress can be opened too, and shows the turns settled so far; don't do that while you are playing a seat in it.
+
+The log's format is defined once, in `libs/playtest/replay`, and both this app and the viewer use that definition. Its first event carries the format's version, and the viewer shows only runs written in the version it reads. `core/log-format.spec.ts` plays a scripted game and reads its log back, and checks that the golden log in `core/fixtures/` still reads. When that last test fails, the test says what to do.
 
 ## Playing a seat yourself
 
@@ -35,7 +41,7 @@ The play-test prints a link for the seat and opens it. The page (`apps/web`, rou
 - **Isolation is enforced.** Each seat has its own secret token, so its page can only see its own prompts, and while a seat is in play the terminal shows only turn numbers. Don't open the run folder until the game ends: `events.jsonl` has everything.
 - **The other seats need an automated backend** (`api` or `claude-code`). With `clipboard` you'd be relaying the GM's prompts, which contain the true state.
 - **More than one seat:** repeat `--remote`. Two people on two browsers can play each other, with a model as GM.
-- **Developing the page:** run `pnpm nx serve web` and pass `--web-url http://localhost:4200`, and the link points at the dev server instead. `nx run playtest:run` builds the web app first; `pnpm playtest` doesn't, so build it yourself.
+- **Developing the page:** run `pnpm nx serve web` and pass `--web-url http://localhost:4242`, and the link points at the dev server instead. `nx run playtest:run` builds the web app first; `pnpm playtest` doesn't, so build it yourself.
 
 How it works: `llm/remote-agent.ts` implements `Agent` by handing each prompt to a small HTTP server in the play-test process (`RemoteSeatServer`), which also serves the built web app. The protocol (`SeatState`, `RemoteRequest`, `RemoteReply`, server-sent events for new prompts) and the response schemas live in `libs/playtest/contracts`, shared with the web app. Anything that speaks the protocol can take a seat, not just the web page.
 
@@ -94,8 +100,9 @@ Design points:
 
 ```
 src/
-  types/    Shared shapes, no logic: scenario format, events, run config, usage. The response schemas and
-            remote-seat protocol are in libs/playtest/contracts, because the web app shares them
+  types/    Shared shapes, no logic: scenario format, run config, usage. The response schemas and remote-seat
+            protocol are in libs/playtest/contracts, and the event log's in libs/playtest/replay, because the
+            web app shares them
   input/    Reads the outside world (argv, scenario files, clock) and validates it → RunConfig
   core/     The game loop, prompt text, askFor (reply validation) and the engine. No file, console or network access
   llm/      The Agent implementations (API, Claude Code CLI, clipboard, remote seat) and usage tracking
@@ -118,6 +125,8 @@ A scenario is a directory under `scenarios/`:
 | `common.md` | Everyone: map, parameters, house rules, victory conditions |
 | `gm.md` | GM only: the true starting state and design notes |
 | `<player>.md` | That player only |
+
+`scenario.json`'s `map.features` names the hexes a map should mark (orbital zones, planets). Only the replay viewer reads them, so keep them in step with the tables in `common.md`.
 
 Use house rules in `common.md` to stand in for whatever the rules haven't specified yet (combat, zone bonuses and unit production, at the moment), and label them as stopgaps so feedback separates them from the design under test. Personas matter: a rules lawyer and an impatient aggressive player find different problems.
 

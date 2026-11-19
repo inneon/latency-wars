@@ -10,7 +10,7 @@ describe('readSeatLink', () => {
   });
 
   it('uses a separate server when given one', () => {
-    expect(readSeatLink('?seat=blue&token=abc&server=http%3A%2F%2Flocalhost%3A4400', 'http://localhost:4200')?.server).toBe(
+    expect(readSeatLink('?seat=blue&token=abc&server=http%3A%2F%2Flocalhost%3A4400', 'http://localhost:4242')?.server).toBe(
       'http://localhost:4400',
     );
   });

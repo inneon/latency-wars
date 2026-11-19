@@ -20,6 +20,18 @@ describe('observe (LIGHT-01, LIGHT-02)', () => {
     expect(observations.every((o) => o.turn === 0)).toBe(true);
   });
 
+  it("marks what the observer's own flagship saw (LIGHT-03)", () => {
+    const flag = unit('flag', 'blue', 'flagship', hex(0, 0), { sensorRange: 3 });
+    const scout = unit('scout', 'blue', 'fleet', hex(5, 0), { sensorRange: 2 });
+    const near = unit('near', 'red', 'fleet', hex(2, 0));
+    const far = unit('far', 'red', 'fleet', hex(6, 0));
+    const observations = observe(1, [flag, scout, near, far]).filter((o) => o.observer === 'blue');
+    const by = (id: string) => observations.find((o) => o.unit.id === id)?.byFlagship;
+    expect(by('near')).toBe(true);
+    expect(by('scout')).toBeUndefined();
+    expect(by('far')).toBeUndefined();
+  });
+
   it('a unit observes itself even with sensor range 0', () => {
     const lone = unit('lone', 'blue', 'fleet', hex(3, 3), { sensorRange: 0 });
     expect(observe(1, [lone])).toEqual([{ turn: 1, observer: 'blue', unit: lone }]);

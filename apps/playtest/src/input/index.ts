@@ -41,7 +41,7 @@ export async function readRunConfig(argv: string[], now = new Date()): Promise<R
           webRoot: existsSync(path.join(webRoot, 'index.html')) ? webRoot : undefined,
         };
   if (remote && !remote.webUrl && !remote.webRoot) {
-    throw new Error('--remote needs the web app. Build it with `pnpm nx build web`, or serve it with `pnpm nx serve web` and pass --web-url http://localhost:4200.');
+    throw new Error('--remote needs the web app. Build it with `pnpm nx build web`, or serve it with `pnpm nx serve web` and pass --web-url http://localhost:4242.');
   }
   const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
 

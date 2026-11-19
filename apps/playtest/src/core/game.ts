@@ -3,6 +3,7 @@ import type { PlaytestEvent } from '../types/events';
 import type { HijackQuote, IntelPurchase, OversightQuote } from '../types/quotes';
 import type { Scenario } from '../types/scenario';
 import { Feedback, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import { LOG_VERSION } from '@latency-wars/playtest-replay';
 import { askFor } from './ask';
 import {
   type Applied,
@@ -70,10 +71,27 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     if (applied.adjustments.length || applied.overrides.length) {
       record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides });
     }
+    record({ type: 'state', turn, units: [...applied.engine.units], removed: [...applied.removed] });
     const statements = applied.engine.ledger.statements.filter((s) => s.turn === turn);
     if (statements.length) record({ type: 'qbits', turn, statements });
     return applied;
   };
+
+  // The log's header: enough about the game for the log to be read on its own, and the format it is written in.
+  record({
+    type: 'scenario',
+    logVersion: LOG_VERSION,
+    scenario: {
+      id: scenario.id,
+      title: scenario.title,
+      description: scenario.description,
+      maxRounds,
+      map: scenario.map,
+      parameters: scenario.parameters,
+      players: scenario.players.map(({ id, name }) => ({ id, name })),
+      units: scenario.units,
+    },
+  });
 
   let latest = await askFor(gm, 'setup', prompts.gmSetupPrompt(scenario), GmResolution, corrections('gm', 'setup'));
   let lastTurn = 0;

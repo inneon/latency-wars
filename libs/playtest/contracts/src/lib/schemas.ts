@@ -91,7 +91,9 @@ export const UnitState = z.object({
     .optional()
     .describe(
       "What this unit's status report says beyond position and strength (LIGHT-02): its active order and progress, its doctrine, " +
-        'and anything else it would report, e.g. "Attack(red-raider): pursuing; Balanced". Its owner sees this when the report arrives, or from a scan.',
+        'and anything that happened to it, such as a spoof, e.g. "Attack(red-raider): pursuing; Balanced". Never what its sensors observe of other units: ' +
+        'the engine delivers each sighting by light from where the sighted unit is (LIGHT-02). ' +
+        "Its owner sees this when the report arrives, at once if the owner's flagship can see the unit (LIGHT-11), or from a scan.",
     ),
   name: z.string().optional().describe('For a unit new to the game: its display name. Defaults to the id.'),
   speed: z.number().int().nonnegative().optional().describe('For a unit new to the game: hexes per turn. Required for a new fleet; 0 for a node.'),
@@ -160,7 +162,8 @@ export const GmResolution = z.object({
     .array(FleetMessage)
     .describe(
       'Every ack, query, execution report or combat report a unit sends home this turn (FB-02, FB-03), from the unit that sends it. ' +
-        "The engine delivers each one when it reaches the owner's flagship. A unit that left the game sends nothing.",
+        "The engine delivers each one when it reaches the owner's flagship. A unit that left the game sends nothing. " +
+        'Like `status`, a message never says what the unit senses of other units (LIGHT-02, FB-04); a combat report may name the units it fought.',
     ),
   player_notes: z
     .array(z.object({ player_id: z.string(), note: z.string() }))

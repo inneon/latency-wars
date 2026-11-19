@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.9)
+# Latency Wars - Game Mechanics (v0.11)
 
 ## 0. About This Document
 
@@ -28,7 +28,7 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Distance** | Hex distance between two hexes (number of steps). Used for everything: movement, light delay, link length and qBit prices. |
 | **Unit** | Anything a player owns that exists on the map: fleets, the flagship, nodes. |
 | **Fleet** | An orderable, mobile unit. The flagship is a special fleet. |
-| **Flagship** | The player's own position, and the only place they have current information. Loss means defeat. |
+| **Flagship** | The player's own position, and the only place they have current information: what its own sensors see is current (`LIGHT-03`). Loss means defeat. |
 | **Local** | In the same hex as the player's flagship. |
 | **Observation** | A record of an object's state at the end of a specific turn, captured by a sensor. |
 | **Observation turn** (`t_o`) | The turn an observation describes. |
@@ -172,6 +172,8 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ### 5.1 Observation
 - **LIGHT-01** A player's units act as sensors. At the end of each turn (phase 8), each unit records observations of every object within its sensor range.
 - **LIGHT-02** Every unit also observes itself. This is its status report: position, strength, fuel, active order, doctrine.
+  - A status report describes only the unit itself, including what happened to it, such as a spoof (`QBIT-06`). It MUST NOT carry what the unit's sensors observe of other objects. Each of those is an observation of the hex observed, visible by that hex's distance (`LIGHT-03`).
+  - *Why:* a report travels from the unit, not from what it saw. If it carried its sightings, they would skip the distance from the object to the unit, and could reach the player sooner than `LIGHT-03` allows.
 - **LIGHT-03** An observation of hex `x` at observation turn `t_o` becomes visible to player P in the Planning phase of the first turn `T` where:
 
   `distance(x, F_P(T)) ≤ C × (T − 1 − t_o)`
@@ -179,12 +181,14 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   where `F_P(T)` is P's flagship position at the start of turn `T`. For a stationary flagship this is turn `t_o + 1 + L(d)` (`LIGHT-15`).
   - Incoming information depends on where the flagship is *now*: moving towards a report brings it sooner. Outgoing orders are the opposite: they depend on where the flagship *was* when it sent them (`ORD-04`).
   - *Simplification:* delay is measured directly from the observed hex to the flagship, not via the sensor that saw it. Sensors decide **whether** something is seen; distance decides **when**. See open question `OPEN-01`; play-test players preferred keeping it direct.
+  - **The flagship's own sensors are current.** An observation the flagship's own sensors made is visible in the next Planning phase, at age 0, whatever its distance within their range. What the player's other units observe still arrives by distance, even near the flagship.
+  - *Why:* the flagship is where the player is, so what it sees directly is current (design doc 2.1). Without this, everything beyond its own hex was a turn old, and a 1-qBit scan of the flagship (`FB-11`) became a tax every player paid every turn.
 - **LIGHT-04** Every unit's speed MUST be less than `C`. *Why:* this guarantees that once information has reached a flagship or fleet, it can't outrun it. Visibility and delivery then only ever move forward, and are simple to compute.
 - **LIGHT-05** A player's **knowledge state** for turn `T` is the latest visible observation of each object. Players never see anything else, including their own fleets.
 
 ### 5.2 Age
-- **LIGHT-06** An observation's **age** in turn `T` is `T − 1 − t_o`. Local information has age 0.
-- In practice, an object `d` hexes away is seen with age `ceil(d / C)`.
+- **LIGHT-06** An observation's **age** in turn `T` is `T − 1 − t_o`. Local information, and anything the flagship's own sensors observe (`LIGHT-03`), has age 0.
+- In practice, any other object `d` hexes away is seen with age `ceil(d / C)`.
 
 ### 5.3 Contacts and Tracks
 - **LIGHT-07** Observations of the same enemy object update a single track. *(Proposed simplification: the engine knows true identity. See `OPEN-02` on decoys and misidentification.)*
@@ -193,7 +197,8 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 - **LIGHT-10** A track whose age exceeds `TRACK_DECAY` is marked **Lost**. It stays in history and can still be targeted, but is hidden from the default view.
 
 ### 5.4 Own Fleets: Confirmed and Projected
-- **LIGHT-11** A player sees their own fleets only through their status reports (`LIGHT-02`), subject to the same delay as everything else.
+- **LIGHT-11** A player sees their own units only through their status reports (`LIGHT-02`), which arrive like any other observation (`LIGHT-03`). An own unit within the flagship's sensor range is observed by the flagship's own sensors, so its status report is current: visible in the next Planning phase, at age 0.
+  - *Why:* what the flagship sees is current, and its own units are no exception. What those units' sensors observe still arrives by distance (`LIGHT-02`).
 - **LIGHT-12** The client keeps a **projected position** for each own fleet. It is worked out from the confirmed position plus the orders the player knows are in force or in transit (with their expected arrival), assuming the fleet follows them.
 - **LIGHT-13** When a status report disagrees with the projection for that turn, the fleet is flagged **Diverged**. That's the cue that something happened: an evasion, a declined attack, a spoof, combat.
 
@@ -215,18 +220,22 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 | **Objective** | `MoveTo(hex)`, `Attack(track)`, `Defend(hex or node)`, `Patrol(route)`, `Escort(fleet)`, `Build(zone)`, `Hold` | — |
 | **Commitment** | `Discretion`: an `Attack` goes ahead only if the fight looks fair when the target is sensed (`RES-04`), and evasion may interrupt the order (`AUTO-03`). `AtAllCosts`: execute regardless. | `Discretion` |
 | **Leash** | Max pursuit range and duration | `LEASH_RANGE`, `LEASH_TURNS` |
-| **Fallback** | `HoldAndReport`, `ReturnHome`, `ResumePrevious`, `Doctrine`, `MoveTo(hex)`, `Defend(hex or node)` | `HoldAndReport` |
+| **Fallback** | `Doctrine`, `HoldAndReport`, `ReturnHome`, `ResumePrevious`, `MoveTo(hex)`, `Defend(hex or node)`, `Escort(fleet)` | `Doctrine` |
 | **Doctrine change** | A new stance or home (`AUTO-01`) | None |
 
   - A doctrine change takes effect when the order is accepted (`RES-01`). An order MAY be a doctrine change alone; it still counts as that fleet's order for the turn (`ORD-08`).
-  - A fleet carries out its fallback when its order completes, fails, is declined or loses its target (`RES-04`, `RES-05`, `RES-06`, `RES-09`). `ResumePrevious` makes the previous order active again. Any other fallback takes the place of `AUTO-03` priority 5: instead of holding at or returning home, the fleet does its fallback until it gets a new order. `Doctrine` leaves priority 5 as it is. Evasion (priority 2) still applies.
-  - A fallback becomes the active order only once it has taken effect. Until then it gives the fleet no reason to be willing (`MOVE-04`).
+  - A fleet carries out its fallback when its order completes, fails, is declined or loses its target (`RES-04`, `RES-05`, `RES-06`, `RES-09`):
+    - `Doctrine` leaves the fleet with no order, so its stance decides what it does (`AUTO-03` priorities 2, 4 and 5).
+    - `ResumePrevious` makes the previous order active again.
+    - Any other fallback becomes the fleet's active order once it has taken effect, until it gets a new order. It ranks as an order at `AUTO-03` priority 3, never as `AtAllCosts`, and counts for willingness (`MOVE-04`). Until it has taken effect it gives the fleet no reason to be willing.
+    - When a fallback that became the active order completes, fails or loses its target in turn, the fleet has no order.
+  - *Why:* a fallback is the player's plan, sent in advance, so it outranks the fleet's stance. `Doctrine`, the default, hands the fleet to its stance: an Aggressive fleet keeps hunting, and the others hold where they are.
 
 - **ORD-02** `Attack` targets a **track**, which MAY be a node's track. The order carries the track's last known position as the sender knew it.
 - **ORD-03** Every order carries a **send turn** and an **order ID**.
 - **ORD-08** A player MAY send at most **one order per fleet per turn**, light or instant. To change their mind, a player sends a new order in a later turn.
   - *Why:* it removes any question of which of two same-turn orders wins (raised in the first play-test), without needing tie-break rules.
-- **ORD-10** A player MAY only order fleets they have had a status report from (`LIGHT-11`). A report seen through a scan (`FB-11`) counts.
+- **ORD-10** A player MAY only order fleets they have had a status report from (`LIGHT-11`). A report seen through a scan (`FB-11`) or by the flagship's own sensors (`LIGHT-11`) counts.
   - *Why:* a player learns of a new unit at light speed, like anything else.
 
 ### 6.2 Transmission and Delivery
@@ -247,6 +256,8 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 - **FLAG-01** The flagship is never willing to fight (`MOVE-04`) and can't be given an `Attack` order. Once engaged, it fights back like any unit (`COMBAT-01`). Fleets MAY be ordered to `Attack` an enemy flagship's track.
   - *Why:* zero command lag makes the flagship the best-commanded unit on the map. If it could also start fights, "lead from the front" would dominate. It should be valuable to keep near the front, not a warship.
 - **FLAG-02** The flagship can't build nodes, and can't be spoofed (`QBIT-04`).
+- **FLAG-03** If a spoof lands this turn on a fleet escorting the flagship (`RES-08`) from the flagship's own hex, the flagship doesn't move that turn, unless its order is `AtAllCosts`. Its order resumes the next turn.
+  - *Why:* the flagship sees its escorts turn away as it happens (`LIGHT-03`), so it doesn't march on alone. The spoof still opens a gap, but the attacker has to exploit it.
 
 ---
 
@@ -283,7 +294,13 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
   - A `MoveTo` completes at the end of the Movement phase in which the fleet arrives. Its fallback takes effect from the next Decision phase.
 
 ### 7.4 Escorting
-- **RES-08** On accepting `Escort(fleet)`, the escort follows the escorted unit. Each step it heads for that unit's position at the start of the step, as a pursuer does (`MOVE-02`). It is willing to fight any enemy within `ENGAGE_RANGE` of the escorted unit (`MOVE-04`), whatever that enemy's orders. In the escorted unit's engagement group it takes damage aimed at that unit (`COMBAT-03`).
+- **RES-08** On accepting `Escort(fleet)`, the escort follows the escorted unit, its **charge**. In each step in which the escort moves (`MOVE-01`):
+  - if it starts the step in its charge's hex, it moves into the hex its charge moves into in that step, or stays if its charge stays;
+  - otherwise it heads for its charge's position at the start of the step, as a pursuer does (`MOVE-02`).
+
+  It is willing to fight any enemy within `ENGAGE_RANGE` of its charge (`MOVE-04`), whatever that enemy's orders. Within `ENGAGE_RANGE` of its charge, it joins its charge's engagement group (`COMBAT-02`), and there it takes damage aimed at its charge (`COMBAT-03`).
+  - A charge MAY itself be escorting another unit: each escort in the chain moves where its own charge moves. If the chain of charges leads back to the escort, it holds for that step.
+  - *Why:* an escort that starts beside its charge stays beside it; only one that has fallen behind has to catch up. Every unit's next hex is worked out from start-of-step positions (`MOVE-02`), so an escort can copy its charge's without a rule about who moves first.
 
 ### 7.5 Outcomes by situation
 
@@ -306,6 +323,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 - **FB-02** On delivery, a fleet emits an **ack** of one of these types: `Accepted`, `AcceptedWithNote`, `Rejected(reason)`, `Stale`.
 - **FB-03** During and after execution, a fleet emits **execution reports**: `Engaged(result)`, `Diverted(reason)`, `Declined(reason)`, `TargetLost`, `Completed`, `Failed(reason)`.
 - **FB-04** All fleet messages travel at light speed and become visible under `LIGHT-03`. The only exceptions are on the entangled channel (`LIGHT-18`).
+  - Like a status report, a message MUST NOT carry what the fleet's sensors observe of other objects (`LIGHT-02`). An execution report MAY name the units its fleet fought and what became of them (`FB-03`): they were within `ENGAGE_RANGE`, so the report is about where the fleet itself was, give or take a hex.
 
 ### 8.2 Silence
 - **FB-05** A unit is shown as **Silent since turn t** only when its status report for turn `t` should have arrived even if the unit had moved at full speed directly away from the flagship since its last report. Until then its report is shown as pending.
@@ -332,6 +350,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 - **FB-11** In Planning, a player MAY **scan** any of their own units, nodes included. A scan shows, at age 0, everything that unit's sensors observed at the end of the previous turn, including the unit's own status report.
   - A player names all of a turn's scans at once. Their results arrive together, before the player submits orders. No further scans can be bought that turn.
   - Each scan is priced by `QBIT-08`.
+  - A scan of the flagship shows nothing new: what it observes is already current (`LIGHT-03`).
   - *Why:* each scan is a choice of where to look. Coverage grows with what a player spends, and distance pricing rewards a flagship near the action. Sensors still decide *whether* something is seen; qBits only buy *when*.
 
 ---
@@ -348,7 +367,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 
   - **Aggressive:** willing to fight any enemy fleet, flagship or node within `ENGAGE_RANGE` (`MOVE-04`). With no order, it attacks the enemy fleets, flagships and nodes it senses (`AUTO-03` priority 4).
   - **Balanced:** fights only what its order names (`MOVE-04`).
-  - **Evasive:** avoids enemy fleets it senses (`AUTO-03` priority 2).
+  - **Evasive:** falls back towards home from enemies that could hurt it (`AUTO-03` priority 2).
   - If a fleet's home node is destroyed, its home becomes its owner's surviving node nearest to the fleet. With no nodes left, its home is the hex it is in.
 
 - **AUTO-02** A fleet judges enemy strength from its own sensors. How accurate that is MAY depend on commander quality (`AUTO-06`).
@@ -359,13 +378,15 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | Priority | When | Behaviour |
 |---|---|---|
 | 1 | It has an active `AtAllCosts` order | Carries out the order |
-| 2 | Its stance is Evasive and an enemy fleet is in sensor range | **Evades:** each step it moves to the hex furthest from the nearest enemy fleet it senses, ties broken by the `MOVE-02` direction order |
-| 3 | It has any other active order | Carries out the order |
+| 2 | Its stance is Evasive and an enemy unit able to deal damage is in sensor range | **Evades:** heads for its home by the shortest path (`MOVE-02`), at full speed; if it is already home, it holds |
+| 3 | It has any other active order, including a fallback that has taken effect (`ORD-01`) | Carries out the order |
 | 4 | It has no order, its stance is Aggressive, and an enemy fleet, flagship or node is in sensor range | Attacks the nearest of them it senses, within the default leash (`RES-04`, `RES-05`) |
-| 5 | Otherwise | Holds at, or returns to, home (or carries out its fallback, `ORD-01`) |
+| 5 | Otherwise | Holds where it is |
 
   - Movement and Combat carry this behaviour out without re-deciding it. A threat that appears mid-turn is acted on from the next Decision phase.
-  - *Why (priority 4):* an Aggressive fleet loose behind enemy lines raids the web on its own, without waiting for a track to reach home and an order to come back. A web is defended by fleets near it, not by orders sent after the fact. An Aggressive fleet that senses the enemy flagship goes for it too. Incidental damage reaches a flagship only once no other unit of its owner is left in the group (`COMBAT-03` step 3), so a fleet acting on its own can finish a lone flagship, but a strike through its escorts still needs an `Attack` order on a track.
+  - *Why (priority 2):* Evasive means avoiding fights a fleet would lose, so only an enemy that could hurt it sets it off: an enemy at strength 0, such as a probe, doesn't. Falling back towards home is predictable, and leads towards wherever the player chose to support it. A threat between the fleet and its home can still catch it; the player can move a fleet's home by order (`AUTO-01`).
+  - *Why (priority 4):* an Aggressive fleet loose behind enemy lines raids the web on its own, without waiting for a track to reach home and an order to come back. A web is defended by fleets near it, not by orders sent after the fact. An Aggressive fleet that senses the enemy flagship goes for it too. Incidental damage reaches a flagship only once every other unit of its owner in the group is at 0 (`COMBAT-03` step 3), so a fleet acting on its own can finish a lone flagship, but a strike through its escorts still needs an `Attack` order on a track.
+  - *Why (priority 5):* a fleet never walks away unasked. Home matters only when the player says so (`ReturnHome`) or when an Evasive fleet falls back.
 
 - **AUTO-04** If a higher-priority behaviour interrupts an active order, the order resumes when the interruption clears, provided it's still valid. The fleet reports **Diverted**.
 - **AUTO-05** The enemy AI MUST use the same order and doctrine system as players. *(This partly answers design doc open question 2.)*
@@ -402,14 +423,16 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
 - **COMBAT-01** Every unit in an engagement group fights, whatever its order. Commitment (`Discretion` / `AtAllCosts`) and the objective decide what a fleet *does*: where it moves, whether it starts a fight. They never decide whether it fights back.
 - **COMBAT-02** Each engagement group fights one combat in the Combat phase. Damage on both sides is dealt simultaneously, from strengths at the start of the Combat phase. A group is:
   - the units joined by engagements (`MOVE-03`); plus
-  - any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight (`MOVE-04`).
+  - any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight (`MOVE-04`); plus
+  - any fleet with an `Escort` order on a unit in the group, within `ENGAGE_RANGE` of that unit (`RES-08`). A spoofed fleet has no `Escort` order that turn (`QBIT-02`).
 
   Any other unit in that hex is a bystander: it neither fights nor stops moving.
-- **COMBAT-03** Where damage goes:
-  1. A unit with an `Attack` order deals its damage to its target, if the target is in the group. Otherwise its damage is assigned under step 3.
-  2. A fleet in the same group with an `Escort` order on that target takes the damage in its place first, up to its remaining strength. Any excess goes through to the target.
-  3. All other damage goes to the receiving player's units in the group: units other than the flagship first, highest remaining strength first, ties by unit ID. The flagship takes damage under this step only once no other unit of its owner is left in the group.
-  - *Why:* incidental damage never singles out the king, but a deliberate `Attack` on the flagship does, and only an escort stops it. Killing an escorted flagship takes a track, which takes information.
+- **COMBAT-03** Where damage goes. The steps apply in order, each to the strengths the steps before it left. Wherever damage **fills** units, it goes to one unit at a time, up to that unit's remaining strength, and the rest **spills** to the next.
+  1. Units with an `Attack` order on a target in the group deal their damage to that target. If the target isn't in the group, their damage goes under step 3.
+  2. Fleets in the group with an `Escort` order on that target take that damage in its place first. It fills them highest remaining strength first, ties by unit ID, and what they don't take goes to the target.
+  3. All other damage, and damage beyond what a target and its escorts can take, is pooled for each receiving player and fills that player's units in the group: units other than the flagship first, highest remaining strength first, ties by unit ID. The flagship comes last: it takes damage once every other unit of its owner in the group is at 0.
+  4. Damage left once all of a player's units in the group are at 0 is lost.
+  - *Why:* incidental damage never singles out the king, but a deliberate `Attack` on the flagship does, and only an escort stops it. Killing an escorted flagship takes a track, which takes information. Filling one unit at a time kills ships and ends fights, and an `Attack` order only decides who is hit first, so concentrated fire is never wasted. A unit already at 0, such as a probe, shields nothing.
 - **COMBAT-04** In the Observation phase, every surviving sensor in range observes the units destroyed that turn, as destroyed, whether in Combat or during Movement. Sensors in the same engagement group always do.
   - *Why:* destroyed units no longer exist by Observation, so without this rule nobody would ever see a fight's result, not even the winner.
 
@@ -450,8 +473,9 @@ How players get new units is not yet designed (`OPEN-10`). Until it is, each sce
   - The price is paid whether or not the action succeeds.
   - *Why:* one rule for every instant action. Each one is cheaper the closer the flagship is, so a flagship kept near the action buys a shorter decision cycle, and one kept safe at home pays for its safety.
   - *Example (placeholder values, `C = 3`):* an instant order to a fleet 5 hexes from the flagship costs 3 + 2 = 5. Spoofing an enemy fleet tracked 2 hexes away costs 3 + 1 = 4.
-- **QBIT-02** **Spoof:** inject a fake order into an enemy player's command net. A spoof is aimed at one enemy fleet, its **target**, and reaches every fleet of that player in the target's hex, the target included. It is delivered in Emission. Each fleet it lands on carries out a non-combat order of the spoofer's choosing (`MoveTo`, `Hold` or `ReturnHome`) for that turn, overriding its own order and doctrine. A spoofed fleet can't start a fight, but fights back if engaged (`COMBAT-01`). Its own active order resumes the next turn.
+- **QBIT-02** **Spoof:** inject a fake order into an enemy player's command net. A spoof is aimed at one enemy fleet, its **target**, and reaches every fleet of that player in the hex where the target actually is in Emission, the target included, whatever the spoofer's track showed. It is delivered in Emission. Each fleet it lands on carries out a non-combat order of the spoofer's choosing (`MoveTo`, `Hold` or `ReturnHome`) for that turn, overriding its own order and doctrine. A spoofed fleet can't start a fight, but fights back if engaged (`COMBAT-01`): it can pass an enemy flagship, or another spoofed fleet, without one. Its own active order resumes the next turn.
   - A spoof never reaches a flagship (`QBIT-04`). It is settled against each fleet's own oversight (`QBIT-09`), so it MAY land on some fleets in the hex and be blocked on others.
+  - If more than one spoof lands on a fleet, it follows the strongest; ties go to the one bought first.
   - A spoofed `MoveTo` MAY end in a hex holding the spoofer's fleets. They are then in the same hex, so `MOVE-04` makes them willing to fight it. Spoofing a fleet into an ambush is intended.
   - The spoofer gets a receipt over the entangled channel in the next Planning phase (`LIGHT-18`): **Delivered** if it landed on at least one fleet, or **No answer** if it landed on none (`QBIT-04`, `QBIT-09`, `FB-09`). It says nothing about which fleets it reached or what they did, and a blocked spoof looks the same as one whose target is gone.
   - *Why:* it is easier to make chaos than to bring order. Stacking fleets concentrates the risk of a spoof instead of spreading it.
@@ -469,8 +493,9 @@ How players get new units is not yet designed (`OPEN-10`). Until it is, each sce
   - A spoof's **strength** is whatever its buyer pays beyond its `QBIT-08` price, which MAY be 0.
   - A spoof is settled separately on each fleet it reaches (`QBIT-02`). On a fleet with oversight it lands only if its strength is greater than the oversight's. Otherwise it is **blocked** on that fleet: it has no effect there. On a fleet without oversight it lands as usual. Its qBits are spent whatever happens.
   - Both players commit to oversight and spoofs in secret, at the same time. Neither learns what the other paid, except through receipts (`QBIT-02`) and status reports (`QBIT-06`).
+  - **Command presence:** a fleet in its own flagship's hex in Emission has oversight of strength 1 for free, added to any oversight bought for it. Without bought oversight, only a spoof of strength 2 or more lands on it.
   - The flagship itself can never be spoofed (`FLAG-02`), so it needs no oversight.
-  - *Why:* every protection is a price, not a wall, so a richer player can break through defences and a poorer one has to choose what to protect. A fortress costs its owner every turn, while an attacker chooses when to pay. One spoof reaches a whole hex while oversight protects one fleet, so a bigger stack costs more to protect but no more to break. Oversight is cheapest close to the flagship, so staying close still helps.
+  - *Why:* every protection is a price, not a wall, so a richer player can break through defences and a poorer one has to choose what to protect. A fortress costs its owner every turn, while an attacker chooses when to pay. One spoof reaches a whole hex while oversight protects one fleet, so keeping a whole stack under command costs more the bigger it is. Holding a hex is a different sum: it takes enough fleets the spoof can't move to win the fight that follows. Oversight is cheapest close to the flagship, and command presence makes the cheapest spoof fail there, so staying close still helps.
 
 ---
 
@@ -490,7 +515,6 @@ How players get new units is not yet designed (`OPEN-10`). Until it is, each sce
 | `OPEN-11` | Should orders be queueable ("do this after your current order")? | Asked for because a newer order discards an older one in flight (`ORD-07`). The outbox's Overtaken state (`FB-07`) may be enough. |
 | `OPEN-13` | **Overload.** Should a player be able to overload their nodes for a short burst of extra production, at the cost of damaging or burning them out? | A catch-up mechanic proposed by a play-test player. It helps whoever is behind regardless of how they played, which cuts against design doc 2.6 (catch-up should punish over-extension, not prop up the loser). |
 | `OPEN-14` | **Node-loss penalty.** Should losing a node cost its owner more than that node's production, for example two turns of its output taken from the bank? | Two things need settling first. (1) If the bank can't cover it, does the balance go negative (a debt future production pays off first), or stop at zero? (2) If two linked nodes are destroyed in the same turn, each one's output includes the link between them, so the penalty could count that link twice or feed back on itself. One option is to work out every lost node's penalty from the web as it stood before that turn's combat, so the total is fixed and nothing cascades. |
-| `OPEN-15` | **Escort lag.** An escort aims at its charge's start-of-step hex (`RES-08`), so it trails a moving flagship by a hex. A trailing escort costs more to oversee (`QBIT-09`), so it is easier to spoof away. Keep the lag as the price of moving the flagship, or make an escort in the same hex move with its charge? | Undecided. |
 
 ---
 
@@ -510,6 +534,7 @@ Rules taken out of the mechanics. Their IDs stay reserved here so they aren't re
 | `QBIT-05` | v0.5 | `QBIT-08` | The open question on instant-order pricing is settled: instant orders are priced by distance like every other qBit action. |
 | `OPEN-12` | v0.6 | `QBIT-09` | Answered: oversight is the defensive qBit spend. |
 | `AUTO-07` | v0.9 | None | Comms-silence made a fleet immune to spoofs at no cost: the kind of wall the command contest (`QBIT-09`) replaced with prices. It was also too loosely specified to adjudicate. It may return as a priced or limited ability. |
+| `OPEN-15` | v0.10 | `RES-08`, `COMBAT-02` | Answered: an escort in its charge's hex moves with it, so it no longer trails a moving flagship, and one within range of its charge joins its fight. The lag made `Escort` useless for a moving flagship and rewarded turtling. |
 | `QBIT-07` | v0.5 | `QBIT-08` | Hijack pricing used true positions and a home-turf surcharge, which leaked positions. One distance-based price now covers every qBit action. |
 
 ---

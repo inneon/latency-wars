@@ -8,6 +8,10 @@ import App from './app/app';
 const PLAY_PATH = '/play';
 const PlayPage = lazy(() => import('./play/play-page'));
 
+// The play-test replay viewer, on its own route for the same reason.
+const REPLAY_PATH = '/replay';
+const ReplayPage = lazy(() => import('./replay/replay-page'));
+
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
@@ -17,6 +21,10 @@ root.render(
     {window.location.pathname.startsWith(PLAY_PATH) ? (
       <Suspense fallback={null}>
         <PlayPage />
+      </Suspense>
+    ) : window.location.pathname.startsWith(REPLAY_PATH) ? (
+      <Suspense fallback={null}>
+        <ReplayPage />
       </Suspense>
     ) : (
       <App />

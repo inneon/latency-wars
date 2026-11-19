@@ -17,12 +17,17 @@ export function App() {
 
   return (
     <main className="hello">
-      <h1>
-        Hello, API is{' '}
-        <span className={`status status--${status}`}>
-          {status === 'checking' ? '…' : status}
-        </span>
-      </h1>
+      <div>
+        <h1>
+          Hello, API is{' '}
+          <span className={`status status--${status}`}>
+            {status === 'checking' ? '…' : status}
+          </span>
+        </h1>
+        <p>
+          <a href="/replay">Replay a play-test</a>
+        </p>
+      </div>
     </main>
   );
 }

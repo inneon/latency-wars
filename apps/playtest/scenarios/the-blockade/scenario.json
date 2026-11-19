@@ -10,6 +10,11 @@
     "radius": 6,
     "impassable": [
       [0, 0]
+    ],
+    "features": [
+      { "name": "North", "kind": "planet", "hex": [-3, 5] },
+      { "name": "Inner", "kind": "planet", "hex": [1, 0] },
+      { "name": "South", "kind": "planet", "hex": [2, -5] }
     ]
   },
   "parameters": {

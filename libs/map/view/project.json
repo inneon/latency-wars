@@ -1,0 +1,15 @@
+{
+  "name": "map-view",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/map/view/src",
+  "projectType": "library",
+  "tags": ["type:adapter", "scope:shared"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p libs/map/view/tsconfig.lib.json --noEmit && tsc -p libs/map/view/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}

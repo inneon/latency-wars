@@ -32,6 +32,15 @@
       ],
       "@latency-wars/playtest-contracts": [
         "./libs/playtest/contracts/src/index.ts"
+      ],
+      "@latency-wars/playtest-replay": [
+        "./libs/playtest/replay/src/index.ts"
+      ],
+      "@latency-wars/playtest-run-files": [
+        "./libs/playtest/adapters/run-files/src/index.ts"
+      ],
+      "@latency-wars/map-view": [
+        "./libs/map/view/src/index.ts"
       ]
     },
     "noUncheckedIndexedAccess": true,

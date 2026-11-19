@@ -15,7 +15,18 @@ No unit has an active order. Every fleet uses doctrine defaults from the mechani
 
 Magnetosphere pocket A (0, 2) is 3 from the Blue Flagship and 4 from the Red Flagship; pocket B (0, −2) is the mirror image. The closest enemy units are the two Line fleets, 4 apart.
 
+The Trojan fields are spare zones, neither side's to start with:
+
+| | Blue Flag | Blue West | Blue North | Pocket A | Red Flag | Red East | Red South | Pocket B |
+|---|---|---|---|---|---|---|---|---|
+| Trojan field SW (−2, −2) | 4 | 2 | 7 | 6 | 5 | 9 | 3 | 2 |
+| Trojan field NE (2, 2) | 5 | 9 | 3 | 2 | 4 | 2 | 7 | 6 |
+
 ## Notes for the GM
 
 - The scenario is symmetric under (q, r) → (−q, −r). Neither side has an advantage.
 - Each node is far from its own flagship and relatively close to the enemy's assets (for example Blue Node North is 5 from Red Node East and 6 from the Red Flagship). That's deliberate: the long, valuable link is exposed.
+- The Trojan fields give a web room to grow, or to recover after losing a node somewhere other than the zone it lost.
+  - With pocket A built, a Blue node in the SW field adds about 7.8 qBits a turn, and one in the NE field about 6.1. Red's figures are the mirror image.
+  - Each side's better field sits 2 hexes from the enemy's pocket, so it is exposed.
+  - With pocket A and the SW field built, losing any single Blue node still leaves at least about 7 qBits a turn, not 0.5. With the NE field instead, losing Node West still leaves only about 1.6.

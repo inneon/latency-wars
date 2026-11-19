@@ -312,7 +312,7 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     const engine = scanned(contact(), 2);
     // Blue's track has Red Line 4 from Blue's flagship: L = 2.
     const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))' });
-    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))', strength: 0, cost: 5, breakdown: 'base 3 + distance 2 + strength 0', fails: undefined, reaches: ['red-line'] });
+    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))', strength: 0, cost: 5, breakdown: 'base 3 + distance 2 + strength 0', fails: undefined, reaches: ['red-line'], atFlagship: false });
   });
 
   it('adds the strength bought to the price (QBIT-09)', () => {
@@ -352,8 +352,9 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     expect(q.refused).toBeUndefined();
     expect(q.cost).toBe(3 + 2);
     expect(q.fails).toBeUndefined();
-    // The flagship in the same hex is never reached (QBIT-02).
+    // The flagship in the same hex is never reached (QBIT-02), but its presence is noted (QBIT-09, FLAG-03).
     expect(q.reaches).toEqual(['red-line']);
+    expect(q.atFlagship).toBe(true);
   });
 
   it("reaches every fleet of the target's owner in its hex, at one price (QBIT-02)", () => {
@@ -428,6 +429,23 @@ describe('oversight and the command contest (QBIT-09)', () => {
     );
     expect(text).toContain('It lands on `red-raider`: it carries out this order this turn (QBIT-02). Blocked by oversight on `red-line` (strength 3 against 2).');
     expect(text).toContain('- `blue-line` at strength 1');
+  });
+
+  it("gives fleets in their own flagship's hex 1 oversight for free (command presence)", () => {
+    const atFlag = (strength: number) => ({ ...spoof('red-line', strength), reaches: ['red-line', 'red-raider'], atFlagship: true });
+    const settle = (q: ReturnType<typeof atFlag>, guards: ReturnType<typeof guard>[] = []) =>
+      settleCommandContest(new Map([['blue', [q]]]), new Map([['red', guards]])).get('blue')?.[0];
+    expect(settle(atFlag(1))?.fails).toContain('red-line at 1, red-raider at 1');
+    expect(settle(atFlag(2))?.fails).toBeUndefined();
+    expect(settle(atFlag(2))?.blocked).toBeUndefined();
+    // Bought oversight adds to it: 2 + 1 holds against 3 but not 4.
+    expect(settle(atFlag(3), [guard('red-line', 2)])?.blocked).toEqual([{ unit: 'red-line', oversight: 3 }]);
+    expect(settle(atFlag(4), [guard('red-line', 2)])?.blocked).toBeUndefined();
+  });
+
+  it('tells the GM when a spoof lands beside the flagship, so it holds if those were its escorts (FLAG-03)', () => {
+    const text = renderHijacksForGm([{ ...spoof('red-line', 2), reaches: ['red-line'], atFlagship: true }]);
+    expect(text).toContain("the flagship doesn't move this turn unless its order is AtAllCosts (FLAG-03)");
   });
 
   it('ignores oversight that was refused', () => {
@@ -572,20 +590,34 @@ describe('orders: when they land, and when the player hears back', () => {
     engine = applyResolution(engine, resolution(states(), { messages: [ack('blue-line', 'Accepted: Defend(blue-flagship)')] }), players, 2).engine;
     expect(renderOutbox(engine, scenario, 'blue', 3)).toContain('awaiting ack, due by turn 4');
     expect(messagesArriving(engine, scenario, 'blue', 3)).toEqual([]);
-    expect(knowledge(engine, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-line')?.observedTurn).toBe(1);
+    // The flagship sees Blue Line itself, so its status report is current (LIGHT-03); the ack still travels at light speed.
+    expect(knowledge(engine, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-line')?.observedTurn).toBe(2);
     engine = applyResolution(engine, resolution(states()), players, 3).engine;
     expect(messagesArriving(engine, scenario, 'blue', 4)).toEqual([expect.objectContaining({ fromUnit: 'blue-line', sentTurn: 2 })]);
-    expect(knowledge(engine, scenario, 'blue', 4).own.find((e) => e.unit.id === 'blue-line')?.observedTurn).toBe(2);
+    expect(knowledge(engine, scenario, 'blue', 4).own.find((e) => e.unit.id === 'blue-line')?.observedTurn).toBe(3);
     // Answered, so it leaves the list.
     expect(renderOutbox(engine, scenario, 'blue', 4)).toContain('- None outstanding.');
   });
 
+  it('shows a local order as delivered at once, even after the fleet moved on with its flagship (ORD-05, FB-07)', () => {
+    // Blue Line joins the flagship's hex in turn 1, gets an order there in turn 2, and both move a hex west in turn 2.
+    // Judged from where the fleet was at emission, it was local: delivered in turn 2, ack due in turn 3.
+    let engine = applyResolution(startEngine(scenario), resolution(states({ 'blue-line': [-3, 2] })), players, 1).engine;
+    engine = recordOrders(engine, 'blue', 2, [order('blue-line', 'Escort(blue-flagship)')]);
+    expect(deliveries(engine, scenario, 2).map((d) => d.order.recipient)).toEqual(['blue-line']);
+    engine = applyResolution(engine, resolution(states({ 'blue-line': [-4, 2], 'blue-flagship': [-4, 2] })), players, 2).engine;
+    const outbox = renderOutbox(engine, scenario, 'blue', 3);
+    expect(outbox).toContain('expected to have arrived in turn 2; awaiting ack, due by turn 3');
+    expect(outbox).not.toContain('in transit');
+  });
+
   it('a moving flagship hears sooner when it closes in, and later when it pulls away (LIGHT-03)', () => {
     // Blue Node West is 4 hexes from Blue's flagship. Its turn-1 report: from 4 away it arrives
-    // in turn 1 + 1 + 2 = 4; with the flagship 1 hex closer at the start of turn 3 (3 away), in turn 3.
+    // in turn 1 + 1 + 2 = 4. With the flagship 1 hex closer from turn 2, the node is within the
+    // flagship's own sensors (3), so its turn-2 report is already current in turn 3 (LIGHT-03).
     const closer = resolution(states({ 'blue-flagship': [-4, 2] }));
     const { engine } = play(resolution(states()), closer, resolution(states({ 'blue-flagship': [-4, 2] })));
-    expect(knowledge(engine, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-node-west')?.observedTurn).toBe(1);
+    expect(knowledge(engine, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-node-west')?.observedTurn).toBe(2);
     const stay = play(resolution(states()), resolution(states()), resolution(states())).engine;
     expect(knowledge(stay, scenario, 'blue', 3).own.find((e) => e.unit.id === 'blue-node-west')?.observedTurn).toBe(0);
   });

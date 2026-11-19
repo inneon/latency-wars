@@ -16,7 +16,7 @@ Usage: pnpm playtest --scenario <name|dir> [options]
   --paste-limit    Most characters your chat app accepts per message (clipboard backend; default: no limit)
   --remote         Play a seat yourself in the browser: a player id, or gm. Repeat for more seats.
   --port           Port for remote seats (default: 4400)
-  --web-url        Use a web app served elsewhere, e.g. http://localhost:4200 from \`nx serve web\`
+  --web-url        Use a web app served elsewhere, e.g. http://localhost:4242 from \`nx serve web\`
                    (default: the built app in dist/apps/web, served on --port)
   --model          Model for every agent                                         (default: claude-opus-5-5)
   --gm-model       Model for the GM                                              (default: --model)

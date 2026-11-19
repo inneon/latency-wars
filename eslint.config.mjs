@@ -32,8 +32,8 @@ export default [
                     depConstraints: [
                         { sourceTag: "type:app", onlyDependOnLibsWithTags: ["type:core", "type:adapter", "type:contracts", "type:util"] },
                         { sourceTag: "type:adapter", onlyDependOnLibsWithTags: ["type:core", "type:contracts", "type:util"] },
-                        { sourceTag: "type:core", onlyDependOnLibsWithTags: ["type:contracts", "type:util"] },
-                        { sourceTag: "type:contracts", onlyDependOnLibsWithTags: ["type:util"] },
+                        { sourceTag: "type:core", onlyDependOnLibsWithTags: ["type:core", "type:contracts", "type:util"] },
+                        { sourceTag: "type:contracts", onlyDependOnLibsWithTags: ["type:contracts", "type:util"] },
                         { sourceTag: "type:util", onlyDependOnLibsWithTags: ["type:util"] }
                     ]
                 }

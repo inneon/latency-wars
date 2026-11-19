@@ -25,5 +25,5 @@ Planet North and Planet South are 10 apart; each is 5 from Planet Inner. Blue's 
 ## Notes for the GM
 
 - The map is symmetric under the reflection (q, r) → (q + r, −r), which swaps Planet North and Planet South and leaves Planet Inner, Blue's start and Red's flagship where they are. The planets are equally far from Blue's start.
-- Check victory at the end of every turn, after Combat, in the order the common rules give. "No Red fleet" means no Red unit other than a probe in the planet hex, spoofed or not.
+- Check victory at the end of every turn, after Combat, in the order the common rules give. A planet is blocked by any Red unit other than a probe in the planet hex: a fleet, spoofed or not, or Red's flagship.
 - At the end of the last turn, if neither side has won, Red wins: set game_over and say so in the outcome.

@@ -21,6 +21,12 @@ export interface Observation<U extends Unit = Unit> {
    * sensor's concern: from here on there is nothing to track.
    */
   readonly removed?: true;
+  /**
+   * Set when the observer's own flagship was one of the sensors that saw it.
+   * What the flagship sees itself is current: it is visible in the next
+   * Planning phase, whatever its distance (LIGHT-03).
+   */
+  readonly byFlagship?: true;
 }
 
 /**
@@ -30,7 +36,8 @@ export interface Observation<U extends Unit = Unit> {
  *
  * Every remaining unit observes itself (LIGHT-02): distance 0 is within any
  * sensor range. A removed unit observes nothing; it is observed, as removed,
- * by any remaining sensor in range (COMBAT-04 for the destroyed case).
+ * by any remaining sensor in range (COMBAT-04 for the destroyed case). An
+ * observation the observer's own flagship made is marked `byFlagship`.
  */
 export function observe<U extends Unit>(
   turn: number,
@@ -41,13 +48,14 @@ export function observe<U extends Unit>(
   const observations: Observation<U>[] = [];
   for (const observer of players) {
     const sensors = units.filter((u) => u.owner === observer);
-    const sees = (unit: U) => sensors.some((s) => hexDistance(s.hex, unit.hex) <= s.sensorRange);
-    for (const unit of units) {
-      if (sees(unit)) observations.push({ turn, observer, unit });
-    }
-    for (const unit of removed) {
-      if (sees(unit)) observations.push({ turn, observer, unit, removed: true });
-    }
+    const inRange = (s: U, unit: U) => hexDistance(s.hex, unit.hex) <= s.sensorRange;
+    const record = (unit: U, removedFlag?: true) => {
+      if (!sensors.some((s) => inRange(s, unit))) return;
+      const byFlagship = sensors.some((s) => s.class === 'flagship' && inRange(s, unit));
+      observations.push({ turn, observer, unit, ...(removedFlag ? { removed: removedFlag } : {}), ...(byFlagship ? { byFlagship: true as const } : {}) });
+    };
+    for (const unit of units) record(unit);
+    for (const unit of removed) record(unit, true);
   }
   return observations;
 }

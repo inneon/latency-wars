@@ -15,12 +15,13 @@ Import with `@latency-wars/visibility`. Types for hexes and units come from `@la
 | `observationArrivalTurn(hex, t_o, flagship, c, through)` | LIGHT-03 | When an end-of-turn observation becomes visible |
 | `orderDeliveryTurn(sentFrom, sentTurn, recipient, c, through)` | ORD-04, ORD-05 | When a light order lands; the wavefront is centred where the flagship *was* |
 | `forecastArrivalTurn(signal, path, c, from)` | LIGHT-15, FB-07 | Expected arrival if the receiver holds its current position |
-| `observe(turn, units, removed)` | LIGHT-01, LIGHT-02, COMBAT-04 | What every player's sensors record at the end of a turn, including units they saw leave the game |
+| `observe(turn, units, removed)` | LIGHT-01, LIGHT-02, LIGHT-03, COMBAT-04 | What every player's sensors record at the end of a turn, including units they saw leave the game; what the flagship itself saw is marked `byFlagship` |
 | `recordTurnEnd(log, turn, units, removed)` | — | Append a turn's true state to the log; every unit's start-of-turn path is derived from it |
 | `recordInstantArrival(log, player, turn, observations)` | FB-11, LIGHT-18 | Observations a player receives without light delay, such as a scan |
 | `unitPath(log, unitId)`, `flagshipPath(log, player)` | — | A unit's start-of-turn positions, for `orderDeliveryTurn` and `knowledgeState` |
 | `unitPresentAt(log, unitId, turn)` | RES-01 | Whether the unit was still on the map at the start of a turn, so a delivery turn to it means anything |
 | `knowledgeState(log, player, turn, params)` | LIGHT-05, 06, 09, 10, FB-05 | Everything the player may be told in that turn's Planning phase, by light or instantly |
+| `arrivedObservations(log, player, turn, params)` | LIGHT-03, 18 | Every observation that has reached the player by then, with the turn it arrived, older ones included. For histories, such as where the player's reports put a unit each turn |
 
 A `Path` is a receiver's start-of-turn positions, `[{ turn, hex }, …]`, ascending; a position holds until the next entry.
 
@@ -48,11 +49,11 @@ blue.contacts; // the same for enemy units, plus `lost`
 blue.silent;   // own units whose next report is overdue: { unitId, sinceTurn, lastHeard }
 ```
 
-`MyUnit` can extend `Unit` with strength, active order, doctrine and so on; the extra fields come back in `knowledgeState` exactly as they were observed, which is what a status report should show.
+`MyUnit` can extend `Unit` with strength, active order, doctrine and so on; the extra fields come back in `knowledgeState` exactly as they were observed, which is what a status report should show. Keep a unit's observations of other units out of those fields: a status report describes only the unit itself (`LIGHT-02`), and anything it carries arrives at the unit's distance, not the sighted unit's.
 
 ## Decisions and known limits
 
-- **Delay is measured as `LIGHT-03` says, not via the sensor** (`OPEN-01`). Sensors decide whether; distance decides when.
+- **Delay is measured as `LIGHT-03` says, not via the sensor** (`OPEN-01`). Sensors decide whether; distance decides when. The one exception is the flagship's own sensors: what they saw is marked `byFlagship` and is visible in the next Planning phase, at age 0, whatever its distance.
 - **Arrival is only ever computed for turns whose flagship position is known.** `knowledgeState` for turn `T` needs the log to cover the end of `T − 1`. Nothing is assumed about future movement; `forecastArrivalTurn` is the explicit "if you hold position" estimate.
 - **Silence allows for the unit having run.** A unit is silent only once its report would have arrived even had it moved at full speed straight away from the flagship since its last report (`FB-05`). That needs no knowledge of orders, which this library doesn't have.
 - **An observation that arrives twice is new once.** If instant intel delivers a sighting and the same sighting later arrives by light, the entry keeps its first arrival turn and `isNew` is false the second time.

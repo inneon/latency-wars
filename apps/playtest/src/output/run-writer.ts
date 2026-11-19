@@ -80,6 +80,9 @@ export class RunWriter {
 
 function describe(e: PlaytestEvent): string {
   switch (e.type) {
+    case 'scenario':
+    case 'state':
+      return '';
     case 'setup':
       return 'GM set up the game';
     case 'player_turn':

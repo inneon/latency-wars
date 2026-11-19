@@ -1,0 +1,15 @@
+{
+  "name": "playtest-run-files",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/playtest/adapters/run-files/src",
+  "projectType": "library",
+  "tags": ["type:adapter", "scope:playtest"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p libs/playtest/adapters/run-files/tsconfig.lib.json --noEmit && tsc -p libs/playtest/adapters/run-files/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}
