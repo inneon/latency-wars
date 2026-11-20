@@ -23,8 +23,7 @@ Red is blockading a star system. Blue's flagship has just dropped out of hypersp
 
 These are stopgaps for things the rules leave as placeholders. They are not part of the design under test.
 
-- **Resources:** metals, fuel and power are abstracted away. Fleets have unlimited fuel.
-- **No production and no web:** neither side has nodes, and none can be built (a `Build` order is rejected as impossible, `RES-01`). Nobody gets new units of any kind during the game.
+- **No production and no web:** the planets are landing sites only. Neither side has nodes or mines, none can be built (a `Build` order is rejected as impossible, `RES-01`), and nobody has matter. Section 11.3 of the mechanics doc (`MAT-01`, `MAT-02`, `PROD-03`, `PROD-04`) doesn't apply. Nobody gets new units of any kind during the game.
 - **qBits from outside the system:** each player starts with 8 qBits and gets 6 every Economy phase, in place of web production (`ECON-01`). Decay (`ECON-04`) and every qBit price (`QBIT-08`) are as the mechanics doc says.
 - **Damage** (the part of combat the rules leave per scenario): each unit in an engagement group deals damage equal to half its own strength, rounded up, and `COMBAT-03` says where it goes. A unit at 0 strength is destroyed.
 - **Sensors:** a sensor sees an enemy unit's exact strength.

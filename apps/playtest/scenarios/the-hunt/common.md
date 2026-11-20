@@ -24,15 +24,15 @@
 
 These are stopgaps for things the rules leave as placeholders. They are not part of the design under test.
 
-- **Resources:** metals, fuel and power are abstracted away. Fleets have unlimited fuel.
+- **No matter and no shipyards:** there are no planets, so there are no mines and nobody has matter. Section 11.3 of the mechanics doc (`MAT-01`, `MAT-02`, `PROD-03`, `PROD-04`) doesn't apply. Building a node costs no matter (`ECON-03`), only time. New units come only from the reinforcements below.
 - **Link output:** k = 1 unless a zone bonus says otherwise (`ECON-01`). A link between pockets A and B has k = 2: bonuses don't stack. The link-cutting proposal in design doc 5.4 is not used here: every intact link produces.
 - **Damage** (the part of combat the rules leave per scenario): each unit in an engagement group deals damage equal to half its own strength, rounded up, and `COMBAT-03` says where it goes. A unit at 0 strength is destroyed. Nodes have strength 2 and deal no damage.
 - **Sensors:** a sensor sees an enemy unit's exact strength.
-- **Reinforcements** (unit production is a placeholder in the rules): in each Economy phase, each player gets a new probe, as long as they have fewer than 3. On turns 3 and 6, each player also gets a new raider (a fast fleet: strength 2, speed 2). New units appear at their owner's node nearest the owner's flagship, measured from where the flagship really is in that Economy phase and counting a node built earlier in the phase (if two are equally near: Blue Node North for Blue, Red Node South for Red), with no order, Balanced doctrine and that node as home. Their owner learns of them through their status reports, at light speed like anything else.
+- **Reinforcements** (in place of shipyards): in each Economy phase, each player gets a new probe, as long as they have fewer than 3. On turns 3 and 6, each player also gets a new raider (a fast fleet: strength 2, speed 2). New units appear at their owner's node nearest the owner's flagship, measured from where the flagship really is in that Economy phase and counting a node built earlier in the phase (if two are equally near: Blue Node North for Blue, Red Node South for Red), with no order, Balanced doctrine and that node as home. Their owner learns of them through their status reports, at light speed like anything else.
 - **Probes:** strength 0, speed `V_FAST`, sensor range `SENSOR_FLEET`. A probe is never willing to fight, can't build or escort, and is destroyed by any engagement. A probe that ends a movement step in the same hex as an enemy fleet or flagship that can deal damage (strength above 0) is also destroyed, even if nothing there is willing to fight it. Enemy probes that meet don't harm each other. It counts as a fleet for orders and status reports, but accepts only `MoveTo`, `Patrol` and `Hold`: any other order is rejected as impossible (`RES-01`).
 - **Transmissions** (`OPEN-03`): sending orders and status reports does not reveal the sender.
 
-Everything else, including qBit costs, production, node building and links, is as the mechanics doc says.
+Everything else, including qBit costs, qBit production, node building time and links, is as the mechanics doc says.
 
 ## Victory
 

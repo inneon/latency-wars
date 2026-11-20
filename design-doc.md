@@ -1,4 +1,4 @@
-# Latency Wars - Game Design Document (v0.2)
+# Latency Wars - Game Design Document (v0.3)
 
 ## 1. High-Level Concept
 A turn-based 4X strategy game set within a single star system where **information is the primary strategic resource**. Light-speed communication delay, sensor uncertainty, and entanglement-based instant messaging define the core gameplay. Players expand territorial control to build an **entanglement web** that produces qBits - the currency of instant cognition.
@@ -46,26 +46,20 @@ Victory is achieved not through conquest, but through reaching an **information 
 
 ---
 
-## 3. Resource Ladder
+## 3. Resources
 
-A four-tier hierarchy flowing from physical to informational:
+Two resources: one physical, one informational. They come from different places, so a player can lead in one and trail in the other.
 
-### 3.1 Metals
-- Abundant, easy to mine.
-- Found in asteroids, moons, rings.
-- Used to build basic infrastructure and nodes.
+*Why only two:* fuel and power would make players manage supply lines, and that would hide the point of the game: what you know, and when you know it.
 
-### 3.2 Fuel
-- Less common, requires processing or special deposits.
-- Found in icy bodies, gas giants, volatile-rich asteroids.
-- Used for ship movement and power generation.
+### 3.1 Matter
+- Mined on planets. Each mine produces a steady amount.
+- Pays for nodes, mines and ships.
+- Grows with the number of planets held, one mine at a time.
+- Every mine is also a shipyard, so planets are where new ships come from.
 
-### 3.3 Power (Energy)
-- Generated from fuel or solar flux.
-- Required to stabilize entanglement nodes.
-- Environmental bonuses affect power efficiency.
-
-### 3.4 Information (qBits)
+### 3.2 Information (qBits)
+- Produced in orbital zones, usually a planet's Lagrange points.
 - Produced by the entanglement web: the sum of each link's length².
 - Consumed for instant commands, instant intel, jamming, intercept.
 - The ultimate strategic currency.
@@ -78,6 +72,7 @@ A four-tier hierarchy flowing from physical to informational:
 - The star system is divided into orbital bands (inner, mid, outer, possibly more).
 - Each band contains static orbital zones (Lagrange points, magnetosphere pockets, ring segments, etc.).
 - Nodes are placed in these zones.
+- Planets sit among the zones. Mines are built on planets, not in zones.
 - Zones provide environmental bonuses.
 - Because production depends on distance between nodes, *which* zones a player can pair up matters as much as the zones themselves. Distant, well-bonused zone pairs are the prizes.
 
@@ -85,7 +80,6 @@ A four-tier hierarchy flowing from physical to informational:
 Examples:
 - **Lagrange points** → +link stability  
 - **Magnetospheres** → +entanglement coherence  
-- **High solar flux** → cheaper power  
 - **Asteroid clusters** → cheaper construction  
 - **Gas clouds** → stealthy but unstable nodes  
 
@@ -96,8 +90,7 @@ Examples:
 qBits are produced by entanglement webs. Webs are made of nodes joined by links.
 
 ### 5.1 Node Properties
-- Power requirement
-- Fuel requirement
+- Matter cost
 - Structural integrity
 - Environmental modifiers
 
@@ -139,7 +132,6 @@ Players expand by:
 - Project force into contested zones
 
 ### 6.2 Fleet Constraints
-- Movement consumes fuel.
 - Orders are delayed unless qBits are spent.
 - Sensor intel is delayed unless qBits are spent.
 - Fleet autonomy may be necessary when communication is slow.
@@ -198,7 +190,6 @@ A late-game ultimate:
 ### 9.1 Station-Based Bonuses (Minor)
 - +link stability
 - +sensor strength
-- +power efficiency
 - +jamming resistance
 - +entanglement coherence
 
@@ -231,6 +222,10 @@ Suggested priority: the first two will likely decide whether the core concept is
 
 
 ## Changelog
+**v0.3**
+- Two resources instead of four: matter, mined on planets, and qBits, produced in orbital zones. Fuel and power are gone.
+- Mines are shipyards.
+
 **v0.2**
 - Replaced "radius" with **link length**: the distance between two entangled nodes. Production scales with the square of each link's length.
 - Split "growth" into two layers. Raw qBit production is polynomial (n²). Strategic power compounds and becomes effectively exponential.

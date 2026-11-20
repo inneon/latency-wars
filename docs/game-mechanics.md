@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.11)
+# Latency Wars - Game Mechanics (v0.12)
 
 ## 0. About This Document
 
@@ -26,7 +26,7 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Turn** | One discrete tick of game time. All players act in the same turn simultaneously. |
 | **Hex** | One discrete space on the map. |
 | **Distance** | Hex distance between two hexes (number of steps). Used for everything: movement, light delay, link length and qBit prices. |
-| **Unit** | Anything a player owns that exists on the map: fleets, the flagship, nodes. |
+| **Unit** | Anything a player owns that exists on the map: fleets, the flagship, nodes, mines. |
 | **Fleet** | An orderable, mobile unit. The flagship is a special fleet. |
 | **Flagship** | The player's own position, and the only place they have current information: what its own sensors see is current (`LIGHT-03`). Loss means defeat. |
 | **Local** | In the same hex as the player's flagship. |
@@ -53,6 +53,11 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Spoof** | A qBit action that overrides the orders of an enemy fleet, and of every other fleet of that player in its hex, for one turn (`QBIT-02`). |
 | **Oversight** | A qBit action that protects one of a player's own fleets from spoofs for one turn (`QBIT-09`). |
 | **Strength (of a command)** | The qBits paid into a spoof or an oversight beyond its price. The stronger command wins (`QBIT-09`). |
+| **Matter** | The physical resource. Mines produce it; building nodes, mines and units costs it (`MAT-01`). |
+| **Planet** | A hex where a mine can be built (`MAT-02`). Units enter it like any other hex. |
+| **Mine** | A structure on a planet. It produces matter and is a shipyard (`MAT-01`, `PROD-03`). |
+| **Shipyard** | A mine taking `Produce` orders: it builds new units (`PROD-03`). |
+| **Structure** | A node or a mine. It can't move and is never willing to fight (`MOVE-04`), but fights back once engaged (`COMBAT-01`). |
 
 ---
 
@@ -68,7 +73,7 @@ All values are placeholders, to be tuned by playtesting.
 | `V_FLAG` | Flagship speed | 1 hex/turn | Must be < `C` (see `LIGHT-04`). |
 | `MAP_RADIUS` | Map radius | TBD | Target: typical round trips to a player's assets of 2–6 turns. |
 | `SENSOR_FLEET` | Fleet sensor range | 2 hexes | |
-| `SENSOR_NODE` | Node sensor range | 2 hexes | |
+| `SENSOR_NODE` | Node and mine sensor range | 2 hexes | |
 | `SENSOR_FLAG` | Flagship sensor range | 3 hexes | |
 | `TRACK_DECAY` | Age at which a track is marked Lost | 8 turns | |
 | `LEASH_RANGE` | Default pursuit range | 3 hexes | Distance from the target's last known position. |
@@ -76,7 +81,11 @@ All values are placeholders, to be tuned by playtesting.
 | `ENGAGE_RANGE` | Distance at which hostile units engage during Movement | 1 hex | `MOVE-03` |
 | `QBIT_DIVISOR` | Divides link output into qBits | 16 | `ECON-01`. With a length-8 link, 64 ÷ 16 = 4 qBits/turn. |
 | `QBIT_DECAY` | Fraction of unspent qBits lost each turn | 1/3 | `ECON-04`. A player who never spends levels off at income ÷ `QBIT_DECAY`: 12 at 4 qBits/turn. |
-| `BUILD_TURNS` | Economy phases a builder must spend in a zone | 2 | `ECON-03` |
+| `BUILD_TURNS` | Economy phases a builder must spend in a zone or on a planet | 2 | `ECON-03` |
+| `MINE_OUTPUT` | Matter each mine produces per turn | 3 | `MAT-01` |
+| `NODE_COST` | Matter to build a node | 4 | `ECON-03` |
+| `MINE_COST` | Matter to build a mine | 8 | `ECON-03`, `MAT-02` |
+| `UNIT_COST`, `PRODUCE_TURNS` | Matter and Economy phases to produce each unit class | Set by each scenario's unit list | `PROD-04` |
 | `QBIT_SCAN_COST` | Base cost of a scan | 1 | `QBIT-08` adds distance. |
 | `QBIT_ORDER_COST` | Base cost of an instant order | 3 | `QBIT-08` adds distance. |
 | `QBIT_SPOOF_COST` | Base cost of a spoof | 3 | `QBIT-08` adds distance. |
@@ -100,7 +109,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 | 4 | **Decision** | Each fleet works out its behaviour for the turn: it resolves newly delivered orders and applies its doctrine (`RES-01`, `AUTO-03`). A spoofed fleet follows the spoofer's order instead (`QBIT-02`). |
 | 5 | **Movement** | All units move simultaneously, step by step. Engaged units stop (`MOVE-01`, `MOVE-03`). |
 | 6 | **Combat** | Each engagement group fights (`COMBAT-02`). |
-| 7 | **Economy** | In this order: qBit decay, qBit production, construction, then unit production (`ECON-04`, `ECON-01`, `ECON-03`; unit production is a placeholder). |
+| 7 | **Economy** | In this order: qBit decay, qBit production, matter production, construction, then unit production (`ECON-04`, `ECON-01`, `MAT-01`, `ECON-03`, `PROD-04`). |
 | 8 | **Observation** | Sensors record observations, including units destroyed this turn (`COMBAT-04`). Every unit emits its status report, plus any acks or execution reports. All of these carry this turn as their observation turn. |
 
 *Why this order:* delivery happens before decision, so an order can affect behaviour in the turn it arrives. Observation is last, so what players see always describes the end of a turn.
@@ -114,7 +123,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ### 4.0 Space
 
 - **SPACE-01** The star system is a disc of hexes centred on the star.
-- **SPACE-02** Orbital bands are rings of hex distance from the star. Orbital zones (design doc 4.1) are specific hexes with environmental bonuses.
+- **SPACE-02** Orbital bands are rings of hex distance from the star. Orbital zones (design doc 4.1) are specific hexes where nodes can be built, MAY carry environmental bonuses, and are usually a planet's Lagrange points. Planets are specific hexes where mines can be built (`MAT-02`). Each scenario places both.
 - **SPACE-03** All distances use hex distance: movement cost, light delay, sensor range, link length and qBit prices.
   - *Why:* players should be able to count hexes and know at a glance "that's 3 turns stale". Using one measure for everything keeps it legible.
   - *Note:* hex distance overestimates straight-line distance by up to ~15% on diagonals. This is accepted for legibility. It's revisitable if link-length production (length²) feels distorted.
@@ -135,12 +144,12 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   - its active order is `Attack` on that enemy; or
   - its active order is `Defend` and the enemy is within `ENGAGE_RANGE` of the defended hex; or
   - its active order is `Escort` and the enemy is within `ENGAGE_RANGE` of the escorted unit (`RES-08`); or
-  - its stance is Aggressive and the enemy is a fleet, flagship or node within `ENGAGE_RANGE` of it; or
+  - its stance is Aggressive and the enemy is a fleet, flagship or structure within `ENGAGE_RANGE` of it; or
   - it is a fleet in the same hex as that enemy, and the enemy is a fleet or a flagship.
 
   The order and stance these clauses use are fixed in the Decision phase (`AUTO-03`). Each engagement check only applies them to positions at that moment. A fallback counts as the active order only once it has taken effect (`ORD-01`).
 
-  Flagships and nodes are never willing (`FLAG-01`), and nor is a spoofed fleet (`QBIT-02`). A fleet that is evading this turn (`AUTO-03` priority 2) is willing only under the same-hex clause. An unwilling unit still fights back once engaged (`COMBAT-01`).
+  Flagships and structures are never willing (`FLAG-01`), and nor is a spoofed fleet (`QBIT-02`). A fleet that is evading this turn (`AUTO-03` priority 2) is willing only under the same-hex clause. An unwilling unit still fights back once engaged (`COMBAT-01`).
   - *Why:* a faster pursuer catches a slower target, crossing paths causes a fight, hostile fleets can't share a hex without one whatever their orders, and an equally fast target that runs early gets away.
 
 ---
@@ -162,6 +171,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 - **LIGHT-17** Players MUST only ever be told what has arrived. That includes acks and the outcome of their own orders: until the ack arrives, an order's status is "In transit" or "Awaiting ack" (`FB-07`), however certain its delivery seems. The only exceptions are the entangled channel's (`LIGHT-18`).
 - **LIGHT-18** The **entangled channel** is everything a player learns instantly. It carries only:
   - the player's own qBit balance and total production, as totals (never per node or per link);
+  - the player's own matter balance and total output, as totals (never per mine) (`MAT-01`);
   - scan results (`FB-11`);
   - the acks for instant orders and spoofs, which say only Delivered or No answer (`ORD-09`, `QBIT-02`);
   - prices (`QBIT-08`), worked out only from what the paying player knows.
@@ -171,7 +181,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 
 ### 5.1 Observation
 - **LIGHT-01** A player's units act as sensors. At the end of each turn (phase 8), each unit records observations of every object within its sensor range.
-- **LIGHT-02** Every unit also observes itself. This is its status report: position, strength, fuel, active order, doctrine.
+- **LIGHT-02** Every unit also observes itself. This is its status report: position, strength, active order, doctrine, and the progress of any construction or production.
   - A status report describes only the unit itself, including what happened to it, such as a spoof (`QBIT-06`). It MUST NOT carry what the unit's sensors observe of other objects. Each of those is an observation of the hex observed, visible by that hex's distance (`LIGHT-03`).
   - *Why:* a report travels from the unit, not from what it saw. If it carried its sightings, they would skip the distance from the object to the unit, and could reach the player sooner than `LIGHT-03` allows.
 - **LIGHT-03** An observation of hex `x` at observation turn `t_o` becomes visible to player P in the Planning phase of the first turn `T` where:
@@ -217,7 +227,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 
 | Part | Values | Default |
 |---|---|---|
-| **Objective** | `MoveTo(hex)`, `Attack(track)`, `Defend(hex or node)`, `Patrol(route)`, `Escort(fleet)`, `Build(zone)`, `Hold` | — |
+| **Objective** | `MoveTo(hex)`, `Attack(track)`, `Defend(hex or node)`, `Patrol(route)`, `Escort(fleet)`, `Build(zone or planet)`, `Hold` | — |
 | **Commitment** | `Discretion`: an `Attack` goes ahead only if the fight looks fair when the target is sensed (`RES-04`), and evasion may interrupt the order (`AUTO-03`). `AtAllCosts`: execute regardless. | `Discretion` |
 | **Leash** | Max pursuit range and duration | `LEASH_RANGE`, `LEASH_TURNS` |
 | **Fallback** | `Doctrine`, `HoldAndReport`, `ReturnHome`, `ResumePrevious`, `MoveTo(hex)`, `Defend(hex or node)`, `Escort(fleet)` | `Doctrine` |
@@ -255,7 +265,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ### 6.3 The flagship
 - **FLAG-01** The flagship is never willing to fight (`MOVE-04`) and can't be given an `Attack` order. Once engaged, it fights back like any unit (`COMBAT-01`). Fleets MAY be ordered to `Attack` an enemy flagship's track.
   - *Why:* zero command lag makes the flagship the best-commanded unit on the map. If it could also start fights, "lead from the front" would dominate. It should be valuable to keep near the front, not a warship.
-- **FLAG-02** The flagship can't build nodes, and can't be spoofed (`QBIT-04`).
+- **FLAG-02** The flagship can't build (`ECON-03`), and can't be spoofed (`QBIT-04`).
 - **FLAG-03** If a spoof lands this turn on a fleet escorting the flagship (`RES-08`) from the flagship's own hex, the flagship doesn't move that turn, unless its order is `AtAllCosts`. Its order resumes the next turn.
   - *Why:* the flagship sees its escorts turn away as it happens (`LIGHT-03`), so it doesn't march on alone. The spoof still opens a gap, but the attacker has to exploit it.
 
@@ -271,12 +281,12 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | Step | Check | If it fails |
 |---|---|---|
 | 1 | Does the fleet exist? | The order is lost. No ack is ever sent. |
-| 2 | Is the order physically possible (fuel, capability, reachable hex, an objective that still exists as far as the fleet can tell)? | **Rejected**, with a reason. The previous active order continues. |
+| 2 | Is the order physically possible (capability, reachable hex, an objective that still exists as far as the fleet can tell)? | **Rejected**, with a reason. The previous active order continues. |
 | 3 | Is the order newer than the active order? (`ORD-07`) | **Stale**. Discarded. |
-| — | All checks pass | **Accepted** (or **Accepted with note** if the fleet is damaged, low on fuel, etc.). The order becomes active. |
+| — | All checks pass | **Accepted** (or **Accepted with note** if the fleet is damaged, etc.). The order becomes active. |
 
 - **RES-02** `AtAllCosts` orders skip the Discretion condition (`RES-04`) and aren't interrupted by evasion (`AUTO-03`).
-- **RES-09** A fleet keeps checking that its active order still makes sense. When its own sensors show that the objective no longer exists (the target or defended node is destroyed, or another node already stands in its `Build` zone), the order **Fails**. The fleet reports `Failed(reason)` and carries out its fallback.
+- **RES-09** A fleet keeps checking that its active order still makes sense. When its own sensors show that the objective no longer exists (the target or defended node is destroyed, or another structure already stands where it was to build), the order **Fails**. The fleet reports `Failed(reason)` and carries out its fallback.
 
 ### 7.2 Attacking a track
 - **RES-04** On accepting `Attack(track)`, the fleet uses its own current sensor picture:
@@ -363,9 +373,9 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | Field | Values | Default |
 |---|---|---|
 | **Stance** | `Aggressive`, `Balanced`, `Evasive` | `Balanced` |
-| **Home** | Hex or node | Where the fleet was formed |
+| **Home** | Hex or structure | Where the fleet was formed |
 
-  - **Aggressive:** willing to fight any enemy fleet, flagship or node within `ENGAGE_RANGE` (`MOVE-04`). With no order, it attacks the enemy fleets, flagships and nodes it senses (`AUTO-03` priority 4).
+  - **Aggressive:** willing to fight any enemy fleet, flagship or structure within `ENGAGE_RANGE` (`MOVE-04`). With no order, it attacks the enemy fleets, flagships and structures it senses (`AUTO-03` priority 4).
   - **Balanced:** fights only what its order names (`MOVE-04`).
   - **Evasive:** falls back towards home from enemies that could hurt it (`AUTO-03` priority 2).
   - If a fleet's home node is destroyed, its home becomes its owner's surviving node nearest to the fleet. With no nodes left, its home is the hex it is in.
@@ -380,7 +390,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | 1 | It has an active `AtAllCosts` order | Carries out the order |
 | 2 | Its stance is Evasive and an enemy unit able to deal damage is in sensor range | **Evades:** heads for its home by the shortest path (`MOVE-02`), at full speed; if it is already home, it holds |
 | 3 | It has any other active order, including a fallback that has taken effect (`ORD-01`) | Carries out the order |
-| 4 | It has no order, its stance is Aggressive, and an enemy fleet, flagship or node is in sensor range | Attacks the nearest of them it senses, within the default leash (`RES-04`, `RES-05`) |
+| 4 | It has no order, its stance is Aggressive, and an enemy fleet, flagship or structure is in sensor range | Attacks the nearest of them it senses, within the default leash (`RES-04`, `RES-05`) |
 | 5 | Otherwise | Holds where it is |
 
   - Movement and Combat carry this behaviour out without re-deciding it. A threat that appears mid-turn is acted on from the next Decision phase.
@@ -443,20 +453,32 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
   - *Why:* rounding swallowed every small gain in play-tests, so expansion looked worthless. Length² still makes short links weak; that's intended.
 - **ECON-02** A completed node is linked to every other node its owner has. Every link produces.
   - *Why:* links cost nothing, so choosing them would be a trivial decision. Placement becomes the decision. A node in a contested zone links to the whole web, which makes it valuable and worth attacking.
-- **ECON-03** A fleet with a `Build(zone)` order builds a node after spending `BUILD_TURNS` Economy phases in an empty orbital zone (no node in it).
+- **ECON-03** A fleet with a `Build(zone or planet)` order builds a structure after spending `BUILD_TURNS` Economy phases in place: a node in an empty orbital zone (no node in it), or a mine on a planet with no mine (`MAT-02`).
+  - Building costs matter: `NODE_COST` for a node, `MINE_COST` for a mine. It is paid in the first Economy phase in which the builder makes progress. If its owner's balance can't cover it, the builder makes no progress that phase, but keeps what it has. A build whose progress resets must be paid for again.
   - The Economy phase of the turn the builder arrives counts.
-  - An Economy phase in which the builder fought doesn't count, but its progress isn't lost. Nor does one in which it was spoofed but stayed in the zone.
-  - While builders of more than one player are in the same zone, none of them makes progress, but none loses it either. Enemy fleets without a `Build` order for the zone don't stop progress unless they fight the builder.
-  - Progress resets if the builder leaves the zone for any reason (a spoof included) or its `Build` order is replaced. The builder being destroyed ends it.
-  - A zone whose node was destroyed is empty from that turn's Combat phase on, so anyone may build there.
-  - A `Build` order for a zone that already holds a node is rejected on delivery if the fleet can see the node (`RES-01`), and fails if a node appears later (`RES-09`).
-  - A node built in an Economy phase exists from then on, so units produced later in that phase MAY appear at it. It first produces in the next Economy phase (`TURN-03`).
+  - An Economy phase in which the builder fought doesn't count, but its progress isn't lost. Nor does one in which it was spoofed but stayed in place.
+  - While builders of more than one player are at the same site, none of them makes progress, but none loses it either. Enemy fleets without a `Build` order for the site don't stop progress unless they fight the builder.
+  - Progress resets if the builder leaves the site for any reason (a spoof included) or its `Build` order is replaced. The builder being destroyed ends it.
+  - A zone or planet whose structure was destroyed is empty from that turn's Combat phase on, so anyone may build there.
+  - A `Build` order for a site that already holds a structure is rejected on delivery if the fleet can see it (`RES-01`), and fails if one appears later (`RES-09`).
+  - A structure built in an Economy phase exists from then on. A node first produces qBits, and a mine first produces matter, in the next Economy phase (`TURN-03`).
   - Only fleets build, not the flagship (`FLAG-02`). A scenario MAY bar other unit classes from building.
 - **ECON-04** At the start of the Economy phase, before this turn's production is added, each player loses `QBIT_DECAY` of their unspent qBits.
   - *Why:* qBits have a half-life. Saving up is still possible, but each extra turn of saving pays off less, so nobody can stockpile for a sudden burst. Spare qBits are better spent now than kept.
 
-### 11.3 Unit production — **Placeholder**
-How players get new units is not yet designed (`OPEN-10`). Until it is, each scenario defines its own reinforcements, if any, as a house rule.
+### 11.3 Matter and unit production — **Proposed**
+There are two resources. qBits are information: the web in orbital zones produces them (section 11.2). Matter is physical: mines on planets produce it, and it pays for structures and units.
+
+- **MAT-01** In the Economy phase, each player gains `MINE_OUTPUT` matter for each mine they own. Matter doesn't decay. A player can spend matter only if their balance covers the cost. A player sees their balance and total output at once (`LIGHT-18`).
+  - Each player holds one pool of matter, whichever mine produced it (`OPEN-16`).
+  - *Why:* matter grows with the number of planets held, one mine at a time, while qBits grow with the shape of the web. A lead in one doesn't bring a lead in the other, and each makes a different target.
+- **MAT-02** A planet holds at most one mine. A fleet builds one with `Build(planet)` (`ECON-03`). A scenario MAY start players with mines.
+- **PROD-03** Every mine is a **shipyard**. A shipyard accepts one kind of order, `Produce(class)`, naming a unit class from the scenario's unit list. Orders reach it like any other, by light or instantly (`ORD-04`, `ORD-06`), at most one per turn (`ORD-08`). It has no commitment, leash, fallback or doctrine.
+  - *Why:* production is ordered from the flagship like everything else, so a distant yard builds what it was told some turns ago. A planet is worth fighting over twice: it pays for ships and it builds them.
+- **PROD-04** On delivery, the shipyard checks the order (`RES-01`). It is **Rejected** if the yard is already producing, if the class isn't on the scenario's list, or if its owner's matter can't cover the class's `UNIT_COST`. Otherwise it is **Accepted**, the cost is paid at once, and production starts.
+  - Production takes the class's `PRODUCE_TURNS` Economy phases, counting the delivery turn's. An Economy phase in which the yard fought doesn't count.
+  - The new unit appears in the yard's hex at the end of the Economy phase that completes it, with no order, default doctrine (`AUTO-01`), and the yard as its home. The yard reports `Completed`. Its owner learns of the new unit from its first status report, sent in that turn's Observation phase, like any other (`ORD-10`).
+  - If the yard is destroyed, the unit in production and the matter paid for it are lost.
 
 ### 11.4 Spending qBits
 - **QBIT-01** In Planning, a player MAY spend qBits on: scans (`FB-11`), instant orders (`ORD-06`), spoofs (`QBIT-02`) and oversight (`QBIT-09`). Each is priced by `QBIT-08`.
@@ -510,11 +532,11 @@ How players get new units is not yet designed (`OPEN-10`). Until it is, each sce
 | `OPEN-05` | Can units relay orders or extend sensor coverage (comms relays)? | |
 | `OPEN-07` | Flagship movement: any limits beyond speed (fuel, cooldown, signature when moving)? | Design doc open question 5. |
 | `OPEN-08` | Does hex distance distort link-length production enough to matter? | See `SPACE-03`. |
-| `OPEN-09` | Is there a maximum link length, or an upkeep per link (for example, power from design doc 3.3)? | With `ECON-02` every node links to every other, so production grows fast as the web grows. That's intended (design doc 2.6), but this is the brake if it's too fast. |
-| `OPEN-10` | Where do units come from? | Production should come from something the player controls, such as the metals and fuel tiers in the design doc. Where new units appear matters as much as how many: at nodes makes the web worth defending, at the flagship adds another pull towards the front. |
+| `OPEN-09` | Is there a maximum link length, or an upkeep per link (for example, in matter)? | With `ECON-02` every node links to every other, so production grows fast as the web grows. That's intended (design doc 2.6), but this is the brake if it's too fast. |
 | `OPEN-11` | Should orders be queueable ("do this after your current order")? | Asked for because a newer order discards an older one in flight (`ORD-07`). The outbox's Overtaken state (`FB-07`) may be enough. |
 | `OPEN-13` | **Overload.** Should a player be able to overload their nodes for a short burst of extra production, at the cost of damaging or burning them out? | A catch-up mechanic proposed by a play-test player. It helps whoever is behind regardless of how they played, which cuts against design doc 2.6 (catch-up should punish over-extension, not prop up the loser). |
 | `OPEN-14` | **Node-loss penalty.** Should losing a node cost its owner more than that node's production, for example two turns of its output taken from the bank? | Two things need settling first. (1) If the bank can't cover it, does the balance go negative (a debt future production pays off first), or stop at zero? (2) If two linked nodes are destroyed in the same turn, each one's output includes the link between them, so the penalty could count that link twice or feed back on itself. One option is to work out every lost node's penalty from the web as it stood before that turn's combat, so the total is fixed and nothing cascades. |
+| `OPEN-16` | Should matter be held per planet, not in one pool per player (`MAT-01`)? | A shipyard would build only from its own planet's stock, which its owner would learn of through status reports, delayed by light. That is more physical and gives each planet its own value, but building a node somewhere else would need matter carried there. Start with one pool. |
 
 ---
 
@@ -535,6 +557,7 @@ Rules taken out of the mechanics. Their IDs stay reserved here so they aren't re
 | `OPEN-12` | v0.6 | `QBIT-09` | Answered: oversight is the defensive qBit spend. |
 | `AUTO-07` | v0.9 | None | Comms-silence made a fleet immune to spoofs at no cost: the kind of wall the command contest (`QBIT-09`) replaced with prices. It was also too loosely specified to adjudicate. It may return as a priced or limited ability. |
 | `OPEN-15` | v0.10 | `RES-08`, `COMBAT-02` | Answered: an escort in its charge's hex moves with it, so it no longer trails a moving flagship, and one within range of its charge joins its fight. The lag made `Escort` useless for a moving flagship and rewarded turtling. |
+| `OPEN-10` | v0.12 | `MAT-01`, `MAT-02`, `PROD-03`, `PROD-04` | Answered: matter comes from mines on planets, mines are shipyards, and structures and units cost matter. |
 | `QBIT-07` | v0.5 | `QBIT-08` | Hijack pricing used true positions and a home-turf surcharge, which leaked positions. One distance-based price now covers every qBit action. |
 
 ---

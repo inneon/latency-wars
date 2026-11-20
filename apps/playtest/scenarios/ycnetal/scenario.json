@@ -1,0 +1,388 @@
+{
+  "title": "Ycnetal",
+  "description": "A three-planet system for testing matter and production. Each side starts with a home planet, its mine and a two-node web at its inner and outer Lagrange points. A third planet behind the star belongs to nobody, and three Lagrange points are shared by both homes.",
+  "rules": [
+    "design-doc.md",
+    "docs/game-mechanics.md"
+  ],
+  "maxRounds": 16,
+  "map": {
+    "radius": 7,
+    "impassable": [
+      [
+        0,
+        0
+      ]
+    ],
+    "features": [
+      {
+        "name": "Thgil",
+        "kind": "planet",
+        "hex": [
+          6,
+          0
+        ]
+      },
+      {
+        "name": "Yaled",
+        "kind": "planet",
+        "hex": [
+          0,
+          -6
+        ]
+      },
+      {
+        "name": "Langis",
+        "kind": "planet",
+        "hex": [
+          -3,
+          3
+        ]
+      },
+      {
+        "name": "Thgil L1",
+        "kind": "zone",
+        "hex": [
+          5,
+          0
+        ]
+      },
+      {
+        "name": "Thgil L2",
+        "kind": "zone",
+        "hex": [
+          7,
+          0
+        ]
+      },
+      {
+        "name": "Yaled L1",
+        "kind": "zone",
+        "hex": [
+          0,
+          -5
+        ]
+      },
+      {
+        "name": "Yaled L2",
+        "kind": "zone",
+        "hex": [
+          0,
+          -7
+        ]
+      },
+      {
+        "name": "Langis L1",
+        "kind": "zone",
+        "hex": [
+          -2,
+          2
+        ]
+      },
+      {
+        "name": "Langis L2",
+        "kind": "zone",
+        "hex": [
+          -4,
+          4
+        ]
+      },
+      {
+        "name": "Langis L3",
+        "kind": "zone",
+        "hex": [
+          3,
+          -3
+        ]
+      },
+      {
+        "name": "Langis L4",
+        "kind": "zone",
+        "hex": [
+          0,
+          3
+        ]
+      },
+      {
+        "name": "Langis L5",
+        "kind": "zone",
+        "hex": [
+          -3,
+          0
+        ]
+      },
+      {
+        "name": "Thgil L4 / Yaled L5",
+        "kind": "zone",
+        "hex": [
+          6,
+          -6
+        ]
+      },
+      {
+        "name": "Thgil L5 / Yaled L3",
+        "kind": "zone",
+        "hex": [
+          0,
+          6
+        ]
+      },
+      {
+        "name": "Yaled L4 / Thgil L3",
+        "kind": "zone",
+        "hex": [
+          -6,
+          0
+        ]
+      }
+    ]
+  },
+  "parameters": {
+    "c": 3,
+    "trackDecay": 8,
+    "hijack": {
+      "spoofCost": 3,
+      "maxTrackAge": 1
+    },
+    "qbits": {
+      "start": 8,
+      "divisor": 32,
+      "decay": 0.3333333333333333,
+      "orderCost": 3,
+      "scanCost": 1,
+      "linkBonuses": []
+    },
+    "matter": {
+      "start": 8,
+      "mineOutput": 3,
+      "nodeCost": 4,
+      "mineCost": 8,
+      "units": [
+        {
+          "class": "probe",
+          "strength": 0,
+          "speed": 2,
+          "sensorRange": 2,
+          "cost": 1,
+          "turns": 1
+        },
+        {
+          "class": "raider",
+          "strength": 2,
+          "speed": 2,
+          "sensorRange": 2,
+          "cost": 4,
+          "turns": 2
+        },
+        {
+          "class": "line",
+          "strength": 4,
+          "speed": 1,
+          "sensorRange": 2,
+          "cost": 6,
+          "turns": 3
+        }
+      ]
+    }
+  },
+  "units": [
+    {
+      "id": "blue-flagship",
+      "name": "Blue Flagship",
+      "owner": "blue",
+      "class": "flagship",
+      "hex": [
+        6,
+        0
+      ],
+      "speed": 1,
+      "sensorRange": 3,
+      "strength": 3
+    },
+    {
+      "id": "blue-line",
+      "name": "Blue Line",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [
+        6,
+        0
+      ],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "blue-raider",
+      "name": "Blue Raider",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [
+        6,
+        0
+      ],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "blue-probe",
+      "name": "Blue Probe",
+      "owner": "blue",
+      "class": "fleet",
+      "hex": [
+        6,
+        0
+      ],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 0
+    },
+    {
+      "id": "blue-mine-thgil",
+      "name": "Blue Mine Thgil",
+      "owner": "blue",
+      "class": "mine",
+      "hex": [
+        6,
+        0
+      ],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 3
+    },
+    {
+      "id": "blue-node-thgil-l1",
+      "name": "Blue Node Thgil L1",
+      "owner": "blue",
+      "class": "node",
+      "hex": [
+        5,
+        0
+      ],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "blue-node-thgil-l2",
+      "name": "Blue Node Thgil L2",
+      "owner": "blue",
+      "class": "node",
+      "hex": [
+        7,
+        0
+      ],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-flagship",
+      "name": "Red Flagship",
+      "owner": "red",
+      "class": "flagship",
+      "hex": [
+        0,
+        -6
+      ],
+      "speed": 1,
+      "sensorRange": 3,
+      "strength": 3
+    },
+    {
+      "id": "red-line",
+      "name": "Red Line",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [
+        0,
+        -6
+      ],
+      "speed": 1,
+      "sensorRange": 2,
+      "strength": 4
+    },
+    {
+      "id": "red-raider",
+      "name": "Red Raider",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [
+        0,
+        -6
+      ],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-probe",
+      "name": "Red Probe",
+      "owner": "red",
+      "class": "fleet",
+      "hex": [
+        0,
+        -6
+      ],
+      "speed": 2,
+      "sensorRange": 2,
+      "strength": 0
+    },
+    {
+      "id": "red-mine-yaled",
+      "name": "Red Mine Yaled",
+      "owner": "red",
+      "class": "mine",
+      "hex": [
+        0,
+        -6
+      ],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 3
+    },
+    {
+      "id": "red-node-yaled-l1",
+      "name": "Red Node Yaled L1",
+      "owner": "red",
+      "class": "node",
+      "hex": [
+        0,
+        -5
+      ],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    },
+    {
+      "id": "red-node-yaled-l2",
+      "name": "Red Node Yaled L2",
+      "owner": "red",
+      "class": "node",
+      "hex": [
+        0,
+        -7
+      ],
+      "speed": 0,
+      "sensorRange": 2,
+      "strength": 2
+    }
+  ],
+  "common": "common.md",
+  "gm": "gm.md",
+  "players": [
+    {
+      "id": "blue",
+      "name": "Blue",
+      "persona": "Bold and aggressive. You like decisive plays and big risks, and you get impatient with bookkeeping.",
+      "briefing": "blue.md"
+    },
+    {
+      "id": "red",
+      "name": "Red",
+      "persona": "Careful and analytical. You read the rules closely, want to know exactly what each rule permits, and plan several turns ahead.",
+      "briefing": "red.md"
+    }
+  ]
+}
