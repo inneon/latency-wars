@@ -5,13 +5,11 @@
  *
  * Balances are plain numbers. ECON-01 wants them exact; `QBIT_DECAY` makes
  * that impossible in floating point, so affordability is judged with a small
- * tolerance (`QBIT_TOLERANCE`) instead.
+ * tolerance (`BALANCE_TOLERANCE`) instead.
  */
 import type { PlayerId, Unit } from '@latency-wars/domain';
+import { type Account, assertTurn, charge, clean, openAccount, pendingFor, type Refusal, type Spend } from './account';
 import { type Link, type LinkK, webLinks, webOutput } from './web';
-
-/** How far below a cost a balance may fall, from floating-point error alone, and still cover it. */
-export const QBIT_TOLERANCE = 1e-9;
 
 export interface QbitParams<N extends Unit = Unit> {
   /** `QBIT_DIVISOR` (ECON-01). */
@@ -27,27 +25,11 @@ export interface QbitParams<N extends Unit = Unit> {
   readonly flatIncome?: Readonly<Record<PlayerId, number>>;
 }
 
-/** Something a player paid for. */
-export interface QbitSpend {
-  readonly accepted: true;
-  readonly player: PlayerId;
-  readonly turn: number;
-  /** What was bought, in the caller's words: "ping blue-line", "instant order to red-raider". */
-  readonly label: string;
-  readonly cost: number;
-  readonly balanceAfter: number;
-}
+/** A qBit purchase that was paid for. */
+export type QbitSpend = Spend;
 
-/** Something a player couldn't afford (QBIT-01). Nothing was taken. */
-export interface QbitRefusal {
-  readonly accepted: false;
-  readonly player: PlayerId;
-  readonly turn: number;
-  readonly label: string;
-  readonly cost: number;
-  /** The balance that didn't cover it. */
-  readonly balance: number;
-}
+/** A qBit purchase the balance didn't cover (QBIT-01). Nothing was taken. */
+export type QbitRefusal = Refusal;
 
 /** One player's turn, from opening balance to closing balance. */
 export interface QbitStatement<N extends Unit = Unit> {
@@ -66,35 +48,14 @@ export interface QbitStatement<N extends Unit = Unit> {
   readonly closing: number;
 }
 
-export interface QbitLedger<N extends Unit = Unit> {
-  /** The turn in progress: spends are charged to it, and `settleEconomy` closes it. */
-  readonly turn: number;
-  /** Every player's current balance. */
-  readonly balances: Readonly<Record<PlayerId, number>>;
-  /** Every player's balance at the start of the turn in progress. */
-  readonly openings: Readonly<Record<PlayerId, number>>;
-  /** Spends and refusals in the turn in progress. */
-  readonly pending: readonly (QbitSpend | QbitRefusal)[];
+export interface QbitLedger<N extends Unit = Unit> extends Account {
   /** One per player per settled turn, oldest first. */
   readonly statements: readonly QbitStatement<N>[];
 }
 
 /** A ledger whose first turn to play is `firstTurn`, with each player's starting balance. */
 export function openLedger<N extends Unit = Unit>(firstTurn: number, balances: Readonly<Record<PlayerId, number>>): QbitLedger<N> {
-  for (const [player, amount] of Object.entries(balances)) assertAmount(amount, `starting balance for ${player}`);
-  return { turn: firstTurn, balances: { ...balances }, openings: { ...balances }, pending: [], statements: [] };
-}
-
-export function balanceOf(ledger: QbitLedger, player: PlayerId): number {
-  const amount = ledger.balances[player];
-  if (amount === undefined) throw new RangeError(`qBit ledger has no player ${player}`);
-  return amount;
-}
-
-/** Whether `player`'s balance covers `cost` (QBIT-01). */
-export function canAfford(ledger: QbitLedger, player: PlayerId, cost: number): boolean {
-  assertAmount(cost, 'cost');
-  return balanceOf(ledger, player) >= cost - QBIT_TOLERANCE;
+  return { ...openAccount(firstTurn, balances), statements: [] };
 }
 
 /**
@@ -110,18 +71,7 @@ export function spend<N extends Unit>(
   label: string,
   cost: number,
 ): { ledger: QbitLedger<N>; outcome: QbitSpend | QbitRefusal } {
-  assertTurn(ledger, turn, 'spend');
-  const balance = balanceOf(ledger, player);
-  if (!canAfford(ledger, player, cost)) {
-    const outcome: QbitRefusal = { accepted: false, player, turn, label, cost, balance };
-    return { ledger: { ...ledger, pending: [...ledger.pending, outcome] }, outcome };
-  }
-  const balanceAfter = clean(balance - cost);
-  const outcome: QbitSpend = { accepted: true, player, turn, label, cost, balanceAfter };
-  return {
-    ledger: { ...ledger, balances: { ...ledger.balances, [player]: balanceAfter }, pending: [...ledger.pending, outcome] },
-    outcome,
-  };
+  return charge(ledger, player, turn, label, cost);
 }
 
 /**
@@ -151,14 +101,12 @@ export function settleEconomy<N extends Unit>(
     const links = webLinks(units, player, params.linkK);
     const production = qbitProduction(links, params.qbitDivisor) + (params.flatIncome?.[player] ?? 0);
     const closing = clean(beforeDecay - decay + production);
-    const mine = ledger.pending.filter((p) => p.player === player);
     balances[player] = closing;
     statements.push({
       player,
       turn,
       opening: ledger.openings[player] ?? beforeDecay,
-      spends: mine.filter((p): p is QbitSpend => p.accepted),
-      refusals: mine.filter((p): p is QbitRefusal => !p.accepted),
+      ...pendingFor(ledger, player),
       decay,
       links,
       production,
@@ -185,17 +133,4 @@ export function qbitIncome<N extends Unit>(units: readonly N[], player: PlayerId
 /** `player`'s statement for a settled `turn`, or `undefined` if that turn hasn't been settled. */
 export function statementFor<N extends Unit>(ledger: QbitLedger<N>, player: PlayerId, turn: number): QbitStatement<N> | undefined {
   return ledger.statements.find((s) => s.player === player && s.turn === turn);
-}
-
-function assertTurn(ledger: QbitLedger, turn: number, what: string): void {
-  if (turn !== ledger.turn) throw new RangeError(`${what}: the qBit ledger is on turn ${ledger.turn}, got ${turn}`);
-}
-
-function assertAmount(amount: number, what: string): void {
-  if (!Number.isFinite(amount) || amount < 0) throw new RangeError(`${what} must be a non-negative number, got ${amount}`);
-}
-
-/** Snap floating-point dust to zero, so a balance spent down to nothing reads 0 rather than 1e-16 or −1e-16. */
-function clean(amount: number): number {
-  return Math.abs(amount) < QBIT_TOLERANCE ? 0 : amount;
 }

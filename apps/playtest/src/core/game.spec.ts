@@ -48,6 +48,8 @@ const resolution = (scenario: Scenario, turn: number, over = false, extra: Parti
     { player_id: 'red', note: `SECRET-RED-${turn}` },
   ],
   overrides: [],
+  builds: [],
+  yards_in_combat: [],
   rulings: [{ situation: 'pass-through', ruling: 'they fight', rule_ids: ['MOVE-03'], basis: 'invented' }],
   game_over: over,
   outcome: over ? 'Blue wins' : '',
@@ -359,5 +361,44 @@ describe('runPlaytest', () => {
 
     expect(failing.attempts()).toBe(1);
     expect(events).toContainEqual({ type: 'warning', message: "The GM's debrief failed, so it is missing: network down" });
+  });
+});
+
+describe('runPlaytest with matter (Ycnetal)', () => {
+  let ycnetal: Scenario;
+  beforeAll(async () => {
+    ycnetal = await loadScenario(findWorkspaceRoot(__dirname), 'ycnetal');
+  });
+
+  it('loads every scenario the repo ships', async () => {
+    for (const name of ['the-hunt', 'the-blockade', 'ycnetal']) {
+      await expect(loadScenario(findWorkspaceRoot(__dirname), name)).resolves.toMatchObject({ units: expect.any(Array) });
+    }
+    expect(ycnetal.units.some((u) => u.class === 'mine')).toBe(true);
+  });
+
+  it('judges Produce itself, builds the unit, and tells players only their balance and output', async () => {
+    const { blue, red, gm, agents } = setup(ycnetal, 99, {
+      orders: { 'blue:turn 1': [{ unit: 'Blue Mine Thgil', order: 'Produce(probe)', delivery: 'light' }] },
+    });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario: ycnetal, agents, maxRounds: 2, emit: (e) => events.push(e) });
+
+    const gmTurn1 = gm.prompts.find((p) => p.label === 'turn 1 resolve')?.prompt ?? '';
+    expect(gmTurn1).toContain('Produce orders (the engine judged these');
+    expect(gmTurn1).toContain('probe');
+    const production = events.filter((e) => e.type === 'production');
+    expect(production.length).toBeGreaterThan(0);
+    expect(JSON.stringify(production)).toContain('completed probe');
+
+    const blueTurn2 = blue.prompts.find((p) => p.label === 'turn 2')?.prompt ?? '';
+    expect(blueTurn2).toContain('## Matter');
+    // The Matter section is the balance and total output only; the yard's own news reaches Blue as messages and sensor reports (LIGHT-18).
+    const matterSection = blueTurn2.slice(blueTurn2.indexOf('## Matter'), blueTurn2.indexOf('## Messages received'));
+    expect(matterSection).toBe("## Matter\n\nBalance: 10 matter.\nOutput: 3 matter a turn, as of last turn's Economy phase.\n\n");
+    // Before the game ends and the fog lifts, Red hears nothing of Blue's yard.
+    const redSaw = red.prompts.filter((p) => p.label.startsWith('turn')).map((p) => p.prompt).join('\n');
+    expect(redSaw).not.toMatch(/Produce\(|blue-probe-2|blue-mine-thgil|Blue Mine/);
+    expect(events.filter((e) => e.type === 'matter').length).toBe(2);
   });
 });

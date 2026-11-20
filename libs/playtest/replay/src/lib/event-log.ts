@@ -3,7 +3,7 @@
  * The runner's event types and the reader's parser both come from these
  * schemas, so neither can change without the other.
  */
-import type { QbitStatement as LedgerStatement } from '@latency-wars/economy';
+import type { MatterStatement as LedgerMatterStatement, QbitStatement as LedgerStatement } from '@latency-wars/economy';
 import { EngineOverride, Feedback, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { z } from 'zod';
 
@@ -21,7 +21,7 @@ export const PlaytestUnit = z.object({
   id: z.string(),
   name: z.string(),
   owner: z.string(),
-  class: z.enum(['flagship', 'fleet', 'node']),
+  class: z.enum(['flagship', 'fleet', 'node', 'mine']),
   hex: Hex,
   speed: z.number(),
   sensorRange: z.number(),
@@ -130,6 +130,8 @@ export const RankingRow = z.object({
   fleetStrength: z.number(),
   /** qBits per turn from the web as it stands. */
   production: z.number(),
+  /** Matter per turn from the mines as they stand. Only in a scenario with matter. */
+  matterOutput: z.number().optional(),
 });
 export type RankingRow = z.infer<typeof RankingRow>;
 
@@ -164,6 +166,19 @@ export const QbitStatement: z.ZodType<LedgerStatement<PlaytestUnit>> = z.object(
   closing: z.number(),
 });
 export type QbitStatement = LedgerStatement<PlaytestUnit>;
+
+/** A player's matter statement for a turn, exactly as the ledger keeps it. */
+export const MatterStatement: z.ZodType<LedgerMatterStatement<PlaytestUnit>> = z.object({
+  player: z.string(),
+  turn: z.number(),
+  opening: z.number(),
+  spends: z.array(QbitSpend).readonly(),
+  refusals: z.array(QbitRefusal).readonly(),
+  mines: z.array(PlaytestUnit).readonly(),
+  production: z.number(),
+  closing: z.number(),
+});
+export type MatterStatement = LedgerMatterStatement<PlaytestUnit>;
 
 const turn = z.number().int();
 const player = z.string();
@@ -201,6 +216,13 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('state'), turn, units: z.array(PlaytestUnit), removed: z.array(PlaytestUnit) }),
   /** Every player's qBit statement for a turn, once the engine has settled its Economy phase. */
   z.object({ type: z.literal('qbits'), turn, statements: z.array(QbitStatement) }),
+  /** Every player's matter statement for a turn, once the engine has settled its Economy phase. */
+  z.object({ type: z.literal('matter'), turn, statements: z.array(MatterStatement) }),
+  /**
+   * What the engine decided about shipyards and construction in a turn, in plain words: each `Produce` order it accepted or
+   * rejected, each unit a yard finished, each production a destroyed yard lost. True state: for the designer and the GM, never players.
+   */
+  z.object({ type: z.literal('production'), turn, notes: z.array(z.string()) }),
   /** A reply sent back to be fixed, with the problems found. */
   z.object({ type: z.literal('correction'), agent: z.string(), label: z.string(), problems: z.string() }),
   /** A reply accepted with its problems, because the corrections ran out. The game continues as it says. */

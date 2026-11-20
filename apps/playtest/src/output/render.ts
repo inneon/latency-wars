@@ -1,4 +1,5 @@
 import { renderStatement } from '../core/engine';
+import { renderMatterStatement } from '../core/matter';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import type { Feedback, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
@@ -65,7 +66,9 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       e.type === 'quotes' ||
       e.type === 'hijacks' ||
       e.type === 'gm_resolution' ||
-      e.type === 'qbits'
+      e.type === 'qbits' ||
+      e.type === 'matter' ||
+      e.type === 'production'
     ) {
       if (e.turn !== currentTurn) {
         currentTurn = e.turn;
@@ -89,6 +92,8 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       }
       if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(e.resolution));
       if (e.type === 'qbits') out.push(`#### qBit ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderStatement(st)}`).join('\n')}`);
+      if (e.type === 'matter') out.push(`#### Matter ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderMatterStatement(st)}`).join('\n')}`);
+      if (e.type === 'production') out.push(`#### Shipyards and construction (engine)\n\n${e.notes.map((n) => `- ${n}`).join('\n')}`);
     } else if (e.type === 'engine') {
       const lines = [
         ...e.overrides.map((o) => `> - **GM override** of \`${o.unit_id}\` (${o.rule_ids.join(', ') || 'no rule cited'}): ${o.reason}`),

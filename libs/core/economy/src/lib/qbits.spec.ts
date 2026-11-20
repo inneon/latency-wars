@@ -1,5 +1,6 @@
 import { hex, type Hex, type Unit } from '@latency-wars/domain';
-import { balanceOf, canAfford, openLedger, qbitIncome, QBIT_TOLERANCE, settleEconomy, spend, statementFor, type QbitLedger } from './qbits';
+import { balanceOf, BALANCE_TOLERANCE, canAfford } from './account';
+import { openLedger, qbitIncome, settleEconomy, spend, statementFor, type QbitLedger } from './qbits';
 
 const node = (id: string, owner: string, at: Hex): Unit => ({ id, owner, class: 'node', hex: at, speed: 0, sensorRange: 2 });
 
@@ -120,7 +121,7 @@ describe('spend (QBIT-01)', () => {
     expect(cost > 0.3).toBe(true);
     expect(canAfford(ledger, 'blue', cost)).toBe(true);
     expect(balanceOf(spend(ledger, 'blue', 1, 'x', cost).ledger, 'blue')).toBe(0);
-    expect(canAfford(ledger, 'blue', 0.3 + 10 * QBIT_TOLERANCE)).toBe(false);
+    expect(canAfford(ledger, 'blue', 0.3 + 10 * BALANCE_TOLERANCE)).toBe(false);
   });
 
   it('is charged to the turn in progress only', () => {

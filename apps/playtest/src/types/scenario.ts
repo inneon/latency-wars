@@ -8,7 +8,7 @@ const UnitFile = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string(),
   owner: z.string(),
-  class: z.enum(['flagship', 'fleet', 'node']),
+  class: z.enum(['flagship', 'fleet', 'node', 'mine']),
   /** Axial (q, r). */
   hex: z.tuple([z.number().int(), z.number().int()]),
   speed: z.number().int().min(0),
@@ -47,6 +47,40 @@ const QbitParameters = z.object({
 });
 export type QbitParameters = z.infer<typeof QbitParameters>;
 
+/** A unit class a shipyard can produce: one row of the scenario's unit list (PROD-03, PROD-04). */
+const ProducibleUnit = z.object({
+  /** The name a `Produce(class)` order uses. */
+  class: z.string().regex(/^[a-z0-9-]+$/),
+  strength: z.number().int().nonnegative(),
+  speed: z.number().int().positive(),
+  sensorRange: z.number().int().nonnegative(),
+  /** `UNIT_COST`, in matter. */
+  cost: z.number().nonnegative(),
+  /** `PRODUCE_TURNS`. */
+  turns: z.number().int().positive(),
+});
+export type ProducibleUnit = z.infer<typeof ProducibleUnit>;
+
+/**
+ * What the engine needs to keep the matter ledger (MAT-01, ECON-03, PROD-04). A scenario without it has no matter: the engine
+ * keeps no ledger and the GM builds and reinforces by house rule.
+ */
+const MatterParameters = z
+  .object({
+    /** Every player's balance at the start of turn 1. */
+    start: z.number().nonnegative(),
+    /** `MINE_OUTPUT` */
+    mineOutput: z.number().nonnegative(),
+    /** `NODE_COST` */
+    nodeCost: z.number().nonnegative(),
+    /** `MINE_COST` */
+    mineCost: z.number().nonnegative(),
+    /** The unit classes a shipyard can produce. */
+    units: z.array(ProducibleUnit).default([]),
+  })
+  .refine((m) => new Set(m.units.map((u) => u.class)).size === m.units.length, 'producible unit classes must be unique');
+export type MatterParameters = z.infer<typeof MatterParameters>;
+
 /** The map's shape (SPACE-01): a hex disc around the star, and hexes no unit can enter. */
 const MapFile = z.object({
   radius: z.number().int().positive(),
@@ -66,12 +100,13 @@ export const ScenarioFile = z.object({
   maxRounds: z.number().int().positive(),
   /** The map the engine checks movement against. */
   map: MapFile,
-  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), spoof pricing and the qBit ledger. */
+  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), spoof pricing, the qBit ledger and, if the scenario has matter, its ledger. */
   parameters: z.object({
     c: z.number().positive(),
     trackDecay: z.number().int().positive().optional(),
     hijack: HijackParameters,
     qbits: QbitParameters,
+    matter: MatterParameters.optional(),
   }),
   /** The true state at the end of turn 0. Every unit is assumed to have held this position before play began. */
   units: z.array(UnitFile).min(1),
@@ -118,7 +153,7 @@ export interface Scenario {
   /** How many turns the game lasts. A run's --rounds replaces the scenario's own. */
   maxRounds: number;
   map: { radius: number; impassable: Hex[]; features: MapFeature[] };
-  parameters: { c: number; trackDecay?: number; hijack: HijackParameters; qbits: QbitParameters };
+  parameters: { c: number; trackDecay?: number; hijack: HijackParameters; qbits: QbitParameters; matter?: MatterParameters };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];
   rules: { path: string; content: string }[];

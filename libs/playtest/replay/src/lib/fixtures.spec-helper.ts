@@ -50,6 +50,8 @@ export const resolved = (turn: number, over = false): PlaytestEvent => ({
     messages: [],
     player_notes: [],
     overrides: [],
+    builds: [],
+    yards_in_combat: [],
     rulings: [],
     game_over: over,
     outcome: over ? 'Blue wins' : '',

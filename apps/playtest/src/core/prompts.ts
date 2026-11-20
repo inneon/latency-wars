@@ -54,6 +54,11 @@ const names = (docs: AgentDocument[]) => docs.map((d) => `\`${d.name}\``).join('
 const playerList = (scenario: Scenario) =>
   scenario.players.map((p) => `- ${p.name} (id: ${p.id})`).join('\n');
 
+/** What a player is told about matter, in a scenario that has it. The rules say how it works; this says what the engine does with it. */
+const matterForPlayers = `
+
+Matter: your report also carries your matter balance and total output, as totals (LIGHT-18). Everything else about mines, shipyards and builds reaches you like any other news, by light. A \`Produce(class)\` order to one of your mines is an order like any other (PROD-03); the engine checks it when it arrives and the mine's ack says whether it was accepted (PROD-04). The scenario lists the unit classes and what they cost.`;
+
 export function playerSystem(scenario: Scenario, player: ScenarioPlayer): SystemPrompt {
   const rules = ruleDocuments(scenario);
   const briefing: AgentDocument = {
@@ -70,7 +75,7 @@ Your documents: the rules are in ${names(rules)}. The scenario, including its ma
 
 How play works: a game master (GM) holds the true game state. At the start of each turn you get your knowledge state for the Planning phase: the GM's answers to your rules questions, your qBit balance and last turn's qBit statement, the acks and reports that have reached you from your units, and a sensor picture of every unit you know about, with how old that information is. You reply with your actions for that turn. Everyone submits simultaneously and nobody sees anyone else's submission.
 
-Everything you do is an order to one of your units, including your flagship's own moves and doctrine changes (ORD-05), or a qBit purchase. Every qBit action, instant orders included, is priced by QBIT-08. Scans, spoofs and oversight go in qbit_purchases: list any and you'll be shown your scan results and quoted your spoofs and oversight before you submit for real. A spoof aimed at one enemy fleet reaches every fleet of that player in the same hex (QBIT-02). Oversight protects one of your fleets from spoofs for the turn, and a spoof can carry extra strength to beat it; a fleet in your flagship's own hex has 1 oversight for free (QBIT-09); neither side sees what the other paid. Anything your balance doesn't cover when it's charged is refused and costs nothing (QBIT-01): an instant order you can't afford isn't sent at all.
+Everything you do is an order to one of your units, including your flagship's own moves and doctrine changes (ORD-05), or a qBit purchase. Every qBit action, instant orders included, is priced by QBIT-08. Scans, spoofs and oversight go in qbit_purchases: list any and you'll be shown your scan results and quoted your spoofs and oversight before you submit for real. A spoof aimed at one enemy fleet reaches every fleet of that player in the same hex (QBIT-02). Oversight protects one of your fleets from spoofs for the turn, and a spoof can carry extra strength to beat it; a fleet in your flagship's own hex has 1 oversight for free (QBIT-09); neither side sees what the other paid. Anything your balance doesn't cover when it's charged is refused and costs nothing (QBIT-01): an instant order you can't afford isn't sent at all.${scenario.parameters.matter ? matterForPlayers : ''}
 
 Play to win, within the rules. Your play style: ${player.persona}
 
@@ -86,6 +91,10 @@ const gmBriefing = (scenario: Scenario): AgentDocument => ({
   shared: false,
 });
 
+/** What the GM stops doing when the engine keeps matter, shipyards and the cost of building. */
+const matterForGm = `
+   The engine also keeps the matter ledger (MAT-01) and the shipyards. It judges every \`Produce\` order a yard receives, accepting or rejecting it and charging the matter (PROD-04); it sends the yard's ack and completion reports, counts production turns, and adds each finished unit to the game itself. So don't ack \`Produce\` orders, don't keep matter or production, never list a unit a yard makes, and leave a yard's production out of its \`status\` (the engine adds it). Two things stay yours because they need judgment. Report in \`builds\` every builder whose \`Build\` order progressed or was reset in this Economy phase (ECON-03): the engine charges the cost on a build's first progress, and if the owner can't pay, it tells you next turn that the phase didn't count. Report in \`yards_in_combat\` every mine that fought this turn, since an Economy phase in which a yard fought doesn't count (PROD-04).`;
+
 export function gmSystem(scenario: Scenario): SystemPrompt {
   const rules = ruleDocuments(scenario);
   const briefing = gmBriefing(scenario);
@@ -99,9 +108,9 @@ Your documents: the rules are in ${names(rules)}. The scenario, including its ma
 As GM you referee the game and keep its true state, which only you can see. Here's what the job involves:
 
 1. Resolve each turn through every phase of TURN-03, in order, and write the turn up in resolution_log for the designer: each movement step, the engagements and the combat, with the distances and numbers they depend on. The engine works out which orders are delivered each turn (ORD-04 to ORD-06) and lists them at the top of each turn's prompt: only those reach their fleets that turn, and an order still in transit has no effect yet.
-2. Report every unit still in the game at the end of the turn, with its true position and strength, in \`units\`, using the ids in your briefing; a unit that joined this turn also needs its stats. Give each unit's \`status\` too: its active order and progress, and its doctrine, as its status report would say (LIGHT-02). Its owner sees that when the report arrives, at once if their flagship can see the unit (LIGHT-11), and from a scan. Keep what a unit senses of other units out of its \`status\` and its messages: the engine works out what each player's units saw and delivers each sighting by light from where the sighted unit is (LIGHT-02, FB-04). A combat report may still name the units the fleet fought. List every unit that left the game this turn in \`removed_units\`, at the hex where it was last. A game engine tracks positions and light delay from these, and works out what each player can see. It enforces hard rules: units move one hex per step by the shortest path, can't enter the star or leave the map, and can't take more steps than their speed (MOVE-01, MOVE-02). If you move a unit further than it can go, the engine moves it as far as it legally can and tells you at the start of the next turn; and if you remove a unit somewhere it couldn't have reached, it stays in the game. If you believe a rule allows it, declare an override with the rule, and the engine accepts it. A node built in a turn's Economy phase joins \`units\` that turn; a node destroyed goes in \`removed_units\`. Keep everything else in true_state, so you can resolve later turns from it: active orders and doctrines, and every order in transit (send turn, emission hex, sequence, recipient).
+2. Report every unit still in the game at the end of the turn, with its true position and strength, in \`units\`, using the ids in your briefing; a unit that joined this turn also needs its stats. Give each unit's \`status\` too: its active order and progress, and its doctrine, as its status report would say (LIGHT-02). Its owner sees that when the report arrives, at once if their flagship can see the unit (LIGHT-11), and from a scan. Keep what a unit senses of other units out of its \`status\` and its messages: the engine works out what each player's units saw and delivers each sighting by light from where the sighted unit is (LIGHT-02, FB-04). A combat report may still name the units the fleet fought. List every unit that left the game this turn in \`removed_units\`, at the hex where it was last. A game engine tracks positions and light delay from these, and works out what each player can see. It enforces hard rules: units move one hex per step by the shortest path, can't enter the star or leave the map, and can't take more steps than their speed (MOVE-01, MOVE-02). If you move a unit further than it can go, the engine moves it as far as it legally can and tells you at the start of the next turn; and if you remove a unit somewhere it couldn't have reached, it stays in the game. If you believe a rule allows it, declare an override with the rule, and the engine accepts it. A structure (a node or a mine) built in a turn's Economy phase joins \`units\` that turn; a structure destroyed goes in \`removed_units\`. Keep everything else in true_state, so you can resolve later turns from it: active orders and doctrines, and every order in transit (send turn, emission hex, sequence, recipient).
 3. Put every ack, execution report and combat report a unit sends home this turn in \`messages\`, from the unit that sends it. Mark an instant order's ack as instant_ack. The engine delivers each message when it reaches its player under the light-delay rules, so never work out when a player learns something yourself. For an instant order, and for every spoof, the engine also sends the buyer a receipt by the next Planning phase that says only Delivered or No answer (ORD-09, QBIT-02, LIGHT-18). A unit that left the game sends nothing. When a message reports units destroyed, list them in its \`reports_destroyed\`, so its player sees them marked destroyed when the message arrives. Keep \`player_notes\` to answers to each player's rules questions, and leave anything about units out of them, so that no player learns something they shouldn't.
-4. The engine keeps the qBit ledger. It charges for scans, instant orders, oversight and spoofs as they're bought (QBIT-08), settles each spoof against the oversight on every fleet it reaches (QBIT-09), refuses what a player can't afford, and applies decay and production (ECON-04, ECON-01) in the Economy phase from the nodes you report. Each turn's prompt gives you every balance and what was bought; don't keep balances yourself, and don't tell players theirs: the engine does. Every fleet a spoof landed on must say in its status report that it was spoofed and what it did, and a fleet whose oversight blocked a spoof must report the blocked attempt (QBIT-06): put that in its \`status\`, or in a message from that fleet.
+4. The engine keeps the qBit ledger. It charges for scans, instant orders, oversight and spoofs as they're bought (QBIT-08), settles each spoof against the oversight on every fleet it reaches (QBIT-09), refuses what a player can't afford, and applies decay and production (ECON-04, ECON-01) in the Economy phase from the nodes you report. Each turn's prompt gives you every balance and what was bought; don't keep balances yourself, and don't tell players theirs: the engine does. Every fleet a spoof landed on must say in its status report that it was spoofed and what it did, and a fleet whose oversight blocked a spoof must report the blocked attempt (QBIT-06): put that in its \`status\`, or in a message from that fleet.${scenario.parameters.matter ? matterForGm : ''}
 5. Apply the rules as written. The scenario's house rules fill the gaps the rules leave as placeholders. Where the rules are still ambiguous or silent, make a reasonable ruling, apply it consistently from then on, and log it in rulings with an honest basis. Those logs are the most valuable output of this play-test.
 6. Be impartial. Don't steer the game, and don't help or hinder any player.
 7. Declare game_over when a victory condition is met.
@@ -148,8 +157,9 @@ export function gmResolvePrompt(
   oversights: Map<string, readonly OversightQuote[]>,
   units: readonly PlaytestUnit[],
   orders: string,
-  qbits: string,
+  ledgers: string,
   adjustments: readonly string[],
+  notes: readonly string[],
   isLastTurn: boolean,
 ) {
   const sections = scenario.players.map((p) => {
@@ -161,7 +171,10 @@ export function gmResolvePrompt(
   const corrected = adjustments.length
     ? `The engine corrected your last resolution. Update your ledger to match:\n\n${adjustments.map((a) => `- ${a}`).join('\n')}\n\n`
     : '';
-  const engineState = `${corrected}The units at the start of turn ${turn}, as the engine has them (authoritative):\n\n${engineUnitsTable(units)}\n\n${qbits}\n\n`;
+  const news = notes.length
+    ? `What the engine did in last turn's Economy phase (nothing for you to redo):\n\n${notes.map((n) => `- ${n}`).join('\n')}\n\n`
+    : '';
+  const engineState = `${corrected}${news}The units at the start of turn ${turn}, as the engine has them (authoritative):\n\n${engineUnitsTable(units)}\n\n${ledgers}\n\n`;
   return `${engineState}${orders}
 
 Turn ${turn}: the players' questions, spoofs and oversight (any scans were already resolved; spoofs and oversight are already priced, paid for and settled). This turn's new orders are in the lists above: an order sent this turn appears as delivered only if it lands this turn.

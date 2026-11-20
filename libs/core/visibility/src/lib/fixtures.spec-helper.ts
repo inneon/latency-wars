@@ -9,6 +9,7 @@ const defaults: Record<UnitClass, { speed: number; sensorRange: number }> = {
   flagship: { speed: 1, sensorRange: 3 },
   fleet: { speed: 1, sensorRange: 2 },
   node: { speed: 0, sensorRange: 2 },
+  mine: { speed: 0, sensorRange: 2 },
 };
 
 export function unit(

@@ -80,9 +80,12 @@ export type Ruling = z.infer<typeof Ruling>;
 export const UnitState = z.object({
   id: z
     .string()
-    .describe('The unit id from the scenario, or a new id for a unit that joined this turn (a built node, a reinforcement).'),
+    .describe(
+      'The unit id from the scenario, or a new id for a unit that joined this turn (a built node or mine, or a house-rule reinforcement). ' +
+        'Where the scenario has matter, shipyards make the new units themselves (PROD-04) and the engine adds them: never list one.',
+    ),
   owner: z.string().describe('Player id.'),
-  class: z.enum(['flagship', 'fleet', 'node']),
+  class: z.enum(['flagship', 'fleet', 'node', 'mine']),
   q: z.number().int(),
   r: z.number().int(),
   strength: z.number().int().describe('Current strength. A unit that left the game this turn goes in `removed_units`, not here.'),
@@ -96,13 +99,13 @@ export const UnitState = z.object({
         "Its owner sees this when the report arrives, at once if the owner's flagship can see the unit (LIGHT-11), or from a scan.",
     ),
   name: z.string().optional().describe('For a unit new to the game: its display name. Defaults to the id.'),
-  speed: z.number().int().nonnegative().optional().describe('For a unit new to the game: hexes per turn. Required for a new fleet; 0 for a node.'),
+  speed: z.number().int().nonnegative().optional().describe('For a unit new to the game: hexes per turn. Required for a new fleet; 0 for a structure (a node or a mine).'),
   sensor_range: z
     .number()
     .int()
     .nonnegative()
     .optional()
-    .describe('For a unit new to the game: sensor range in hexes. Required for a new fleet; a node defaults to the other nodes’.'),
+    .describe('For a unit new to the game: sensor range in hexes. Required for a new fleet; a structure defaults to the other structures’.'),
 });
 export type UnitState = z.infer<typeof UnitState>;
 
@@ -136,6 +139,19 @@ export const EngineOverride = z.object({
 });
 export type EngineOverride = z.infer<typeof EngineOverride>;
 
+/** What a builder's `Build` order did in this turn's Economy phase (ECON-03). Only the GM can tell: the engine charges for it. */
+export const BuildReport = z.object({
+  builder: z.string().describe('The id of the fleet carrying out a `Build` order.'),
+  structure: z.enum(['node', 'mine']).describe('What it is building: a node in an orbital zone, or a mine on a planet.'),
+  progress: z
+    .enum(['progressed', 'reset'])
+    .describe(
+      'progressed: this Economy phase counted towards the build, including the phase that completes it. ' +
+        'reset: its progress was lost (it left the site, its order was replaced, or it was destroyed).',
+    ),
+});
+export type BuildReport = z.infer<typeof BuildReport>;
+
 export const GmResolution = z.object({
   resolution_log: z
     .string()
@@ -158,10 +174,26 @@ export const GmResolution = z.object({
       'Every unit that left the game this turn (destroyed in combat, or gone for any other reason the rules allow), ' +
         'at the hex where it was last and with its final strength. Sensors in range see it go (COMBAT-04). Empty if none.',
     ),
+  builds: z
+    .array(BuildReport)
+    .default([])
+    .describe(
+      'One entry for every builder whose `Build` order progressed or was reset in this turn\'s Economy phase (ECON-03). ' +
+        'The engine charges the matter on a build\'s first progress; leave out a builder that made no progress and lost none (it fought, or builders contested the site). ' +
+        'A structure you add to `units` for a completed build needs its builder\'s entry too. Empty if there were none.',
+    ),
+  yards_in_combat: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'The ids of shipyards (mines) that took part in a fight this turn. An Economy phase in which a yard fought does not count towards production (PROD-04). ' +
+        'The engine keeps every other part of production. Empty if none.',
+    ),
   messages: z
     .array(FleetMessage)
     .describe(
       'Every ack, query, execution report or combat report a unit sends home this turn (FB-02, FB-03), from the unit that sends it. ' +
+        'Not for `Produce` orders: the engine acks those and reports completions itself (PROD-04). ' +
         "The engine delivers each one when it reaches the owner's flagship. A unit that left the game sends nothing. " +
         'Like `status`, a message never says what the unit senses of other units (LIGHT-02, FB-04); a combat report may name the units it fought.',
     ),

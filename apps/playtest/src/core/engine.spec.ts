@@ -43,7 +43,19 @@ const states = (moves: Record<string, [number, number]> = {}): UnitState[] =>
 
 const resolution = (
   units: UnitState[],
-  { removed = [], messages = [], overrides = [] }: { removed?: UnitState[]; messages?: FleetMessage[]; overrides?: GmResolution['overrides'] } = {},
+  {
+    removed = [],
+    messages = [],
+    overrides = [],
+    builds = [],
+    yardsInCombat = [],
+  }: {
+    removed?: UnitState[];
+    messages?: FleetMessage[];
+    overrides?: GmResolution['overrides'];
+    builds?: GmResolution['builds'];
+    yardsInCombat?: string[];
+  } = {},
 ): GmResolution => ({
   resolution_log: '',
   true_state: '',
@@ -52,6 +64,8 @@ const resolution = (
   messages,
   player_notes: [],
   overrides,
+  builds,
+  yards_in_combat: yardsInCombat,
   rulings: [],
   game_over: false,
   outcome: '',

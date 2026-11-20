@@ -19,6 +19,7 @@ import {
 } from '@latency-wars/visibility';
 import {
   balanceOf,
+  matterIncome,
   openLedger,
   type QbitLedger,
   type QbitParams,
@@ -30,6 +31,7 @@ import {
   spend,
   statementFor,
 } from '@latency-wars/economy';
+import { judgeProduceOrders, type MatterState, settleMatterEconomy, startMatter } from './matter';
 import type { HijackQuote, IntelPurchase, OversightQuote, RankingRow } from '../types/quotes';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
 import { furthestToward, type GameMap, illegalMove } from './movement';
@@ -39,8 +41,11 @@ import type { EngineOverride, GmResolution, PlayerTurn, QbitPurchase, UnitState 
  * The engine side of the strangler fig: the facts code owns, so the GM doesn't
  * have to work them out. Today that's positions, visibility (LIGHT-*), when
  * messages and light orders arrive (FB-04, ORD-04, ORD-09), legal movement
- * (MOVE-01, MOVE-02) and the qBit ledger (ECON-01, ECON-04, QBIT-01); the GM
- * still owns what orders make units do, combat and construction.
+ * (MOVE-01, MOVE-02), the qBit ledger (ECON-01, ECON-04, QBIT-01) and, in
+ * scenarios with matter, the matter ledger, Produce orders and the units
+ * shipyards make (MAT-01, ECON-03, PROD-03, PROD-04; see `matter.ts`); the GM
+ * still owns what other orders make units do, combat, and whether a build made
+ * progress.
  *
  * The GM decides what happens; the engine has the last word on what it
  * models. It never sends the GM back to redo a turn. It corrects what breaks
@@ -88,6 +93,8 @@ export interface EngineState {
   /** Every player's qBits: charged for purchases as they're made, settled in each Economy phase. */
   readonly ledger: QbitLedger<PlaytestUnit>;
   readonly economy: QbitParams<PlaytestUnit>;
+  /** Every player's matter, and what each shipyard and builder is doing (MAT-01, ECON-03, PROD-04). Only in a scenario with matter. */
+  readonly matter?: MatterState;
   readonly map: GameMap;
   /** Every order sent, light or instant. */
   readonly orders: readonly SentOrder[];
@@ -112,6 +119,7 @@ export function startEngine(scenario: Scenario): EngineState {
     messages: [],
     ledger: openLedger<PlaytestUnit>(1, Object.fromEntries(scenario.players.map((p) => [p.id, scenario.parameters.qbits.start]))),
     economy: qbitParams(scenario),
+    matter: startMatter(scenario),
     map: scenario.map,
     orders: [],
   };
@@ -145,6 +153,8 @@ export interface Applied {
   readonly adjustments: string[];
   /** Overrides the GM declared and the engine accepted. For the designer to review. */
   readonly overrides: EngineOverride[];
+  /** What the engine did with shipyards and construction this turn that isn't a correction. For the GM next turn and the log. */
+  readonly notes: string[];
 }
 
 /**
@@ -183,7 +193,7 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
       }
     }
     const messages = queueMessages(engine, resolution, players, turn, [], adjustments);
-    return { engine: { ...engine, messages }, removed: [], adjustments, overrides };
+    return { engine: { ...engine, messages }, removed: [], adjustments, overrides, notes: [] };
   }
 
   /**
@@ -276,22 +286,50 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
     }
   }
 
+  // Economy (TURN-03): matter from the mines standing after Combat, then construction, then unit production (MAT-01, ECON-03, PROD-04).
+  // The engine may drop a structure that wasn't paid for and adds the units shipyards finish.
+  const settled = engine.matter
+    ? settleMatterEconomy(engine.matter, { turn, before: previous, units, builds: resolution.builds, yardsInCombat: resolution.yards_in_combat, roster: engine.roster })
+    : undefined;
+  const standing = settled?.units ?? units;
+  adjustments.push(...(settled?.adjustments ?? []));
+
   const roster = new Map(engine.roster);
-  for (const u of [...units, ...removed]) roster.set(u.id, u);
+  for (const u of [...standing, ...removed]) roster.set(u.id, u);
   // Economy (TURN-03): the nodes still standing after Combat produce. A node
   // that's new this turn was built in this Economy phase, after production.
-  const producing = units.filter((u) => u.class === 'node' && previous.some((p) => p.id === u.id));
+  const producing = standing.filter((u) => u.class === 'node' && previous.some((p) => p.id === u.id));
   const recorded: EngineState = {
     ...engine,
-    log: recordTurnEnd(engine.log, turn, units, removed),
-    units,
+    log: recordTurnEnd(engine.log, turn, standing, removed),
+    units: standing,
     roster,
     ledger: settleEconomy(engine.ledger, turn, producing, engine.economy),
+    matter: settled?.matter,
+    messages: [...engine.messages, ...(settled?.messages ?? [])],
   };
-  return { engine: { ...recorded, messages: queueMessages(recorded, resolution, players, turn, removed, adjustments) }, removed, adjustments, overrides };
+  return {
+    engine: { ...recorded, messages: queueMessages(recorded, resolution, players, turn, removed, adjustments) },
+    removed,
+    adjustments,
+    overrides,
+    notes: settled?.notes ?? [],
+  };
 }
 
-/** A unit joining the game: a built node (ECON-03) or a new fleet. Returns undefined if it can't join. */
+/**
+ * The Decision phase's judgement of the `Produce` orders delivered in `turn`
+ * (PROD-04): the engine accepts or rejects each, charges the matter, and
+ * starts the yard. Call it once the turn's orders are recorded, before the GM
+ * resolves the turn. Does nothing in a scenario without matter.
+ */
+export function judgeProduction(engine: EngineState, scenario: Scenario, turn: number): { engine: EngineState; notes: string[] } {
+  if (!engine.matter) return { engine, notes: [] };
+  const judged = judgeProduceOrders(engine.matter, deliveries(engine, scenario, turn), engine.units, turn);
+  return { engine: { ...engine, matter: judged.matter }, notes: judged.notes };
+}
+
+/** A unit joining the game: a built node or mine (ECON-03) or a new fleet. Returns undefined if it can't join. */
 function newUnit(r: UnitState, previous: readonly PlaytestUnit[], players: readonly string[], adjustments: string[]): PlaytestUnit | undefined {
   if (!players.includes(r.owner)) {
     adjustments.push(`${r.id} is new, but its owner ${r.owner} isn't a player; ignored.`);
@@ -301,16 +339,21 @@ function newUnit(r: UnitState, previous: readonly PlaytestUnit[], players: reado
     adjustments.push(`${r.id} is a new flagship, but each player has exactly one, from the scenario; ignored.`);
     return undefined;
   }
-  // Missing stats come from a unit of the same class and owner, or failing that, any of that class.
-  const like = previous.find((u) => u.class === r.class && u.owner === r.owner) ?? previous.find((u) => u.class === r.class);
-  const speed = r.class === 'node' ? 0 : (r.speed ?? like?.speed);
+  // Missing stats come from a unit of the same class and owner, or failing that, any of that class. A structure falls back to any
+  // structure: nodes and mines share a sensor range (`SENSOR_NODE`).
+  const structure = r.class === 'node' || r.class === 'mine';
+  const like =
+    previous.find((u) => u.class === r.class && u.owner === r.owner) ??
+    previous.find((u) => u.class === r.class) ??
+    (structure ? previous.find((u) => u.class === 'node' || u.class === 'mine') : undefined);
+  const speed = structure ? 0 : (r.speed ?? like?.speed);
   const sensorRange = r.sensor_range ?? like?.sensorRange;
   if (speed === undefined || sensorRange === undefined) {
     adjustments.push(`${r.id} is new, with no speed or sensor_range and nothing like it to copy from; ignored.`);
     return undefined;
   }
-  // A built node taking the usual node sensor range is normal; a fleet missing its stats isn't.
-  if (r.class !== 'node' && (r.speed === undefined || r.sensor_range === undefined)) {
+  // A built structure taking the usual sensor range is normal; a fleet missing its stats isn't.
+  if (!structure && (r.speed === undefined || r.sensor_range === undefined)) {
     adjustments.push(`${r.id} is new and was missing its stats; it has speed ${speed} and sensor range ${sensorRange}, like ${like?.id}.`);
   }
   return { id: r.id, name: r.name ?? r.id, owner: r.owner, class: r.class, hex: { q: r.q, r: r.r }, speed, sensorRange, strength: r.strength, status: r.status };
@@ -836,7 +879,7 @@ export function quoteHijack(engine: EngineState, scenario: Scenario, player: str
   const track = known.contacts.find((c) => c.unit.id === target);
   if (!track) return refuse(`You have no track on ${target}.`);
   if (track.unit.class === 'flagship') return refuse(`${target} is a flagship, which can't be spoofed (QBIT-04).`);
-  if (track.unit.class === 'node') return refuse(`${target} is a node, not a fleet.`);
+  if (track.unit.class === 'node' || track.unit.class === 'mine') return refuse(`${target} is a ${track.unit.class}, not a fleet.`);
   if (track.removed) return refuse(`Your last sight of ${target} was it leaving the game.`);
   const { hijack } = scenario.parameters;
   if (track.age > hijack.maxTrackAge) {
@@ -945,8 +988,9 @@ export function ranking(engine: EngineState, scenario: Scenario): RankingRow[] {
       player: p.id,
       flagshipDamage: flagship ? start - flagship.strength : start,
       flagshipDestroyed: !flagship,
-      fleetStrength: engine.units.filter((u) => u.owner === p.id && u.class !== 'node').reduce((sum, u) => sum + u.strength, 0),
+      fleetStrength: engine.units.filter((u) => u.owner === p.id && (u.class === 'fleet' || u.class === 'flagship')).reduce((sum, u) => sum + u.strength, 0),
       production: qbitIncome(engine.units, p.id, engine.economy),
+      matterOutput: engine.matter ? matterIncome(engine.units, p.id, engine.matter.config) : undefined,
     };
   });
   return rows.sort(

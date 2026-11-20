@@ -10,6 +10,7 @@ import {
   applyResolution,
   deliverReportedLosses,
   type EngineState,
+  judgeProduction,
   knowledge,
   messagesArriving,
   payForEmission,
@@ -29,6 +30,7 @@ import {
   startEngine,
   unaccountedUnits,
 } from './engine';
+import { renderMatter, renderMatterForGm } from './matter';
 import * as prompts from './prompts';
 
 export interface PlaytestOptions {
@@ -74,6 +76,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     record({ type: 'state', turn, units: [...applied.engine.units], removed: [...applied.removed] });
     const statements = applied.engine.ledger.statements.filter((s) => s.turn === turn);
     if (statements.length) record({ type: 'qbits', turn, statements });
+    const matterStatements = applied.engine.matter?.ledger.statements.filter((s) => s.turn === turn) ?? [];
+    if (matterStatements.length) record({ type: 'matter', turn, statements: matterStatements });
     return applied;
   };
 
@@ -187,6 +191,16 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       if (quotes.length > 0 || guards.length > 0) record({ type: 'hijacks', turn, player: p.id, quotes, oversights: guards });
     }
 
+    // The Decision phase's check of every Produce order that reaches a shipyard this turn (PROD-04): the engine judges and charges them.
+    const judged = judgeProduction(engine, scenario, turn);
+    engine = judged.engine;
+    const ledgers = [
+      renderQbitsForGm(engine, scenario, turn),
+      engine.matter ? renderMatterForGm(engine.matter, engine.units, players, judged.notes) : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
     const label = `turn ${turn} resolve`;
     const prompt = prompts.gmResolvePrompt(
       turn,
@@ -196,8 +210,9 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       oversights,
       engine.units,
       renderOrdersForGm(engine, scenario, turn),
-      renderQbitsForGm(engine, scenario, turn),
+      ledgers,
       applied.adjustments,
+      applied.notes,
       turn === maxRounds,
     );
     // A resolution that leaves units out goes back to the GM: the engine can't tell what happened to them.
@@ -207,6 +222,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     record({ type: 'gm_resolution', turn, resolution: latest });
     applied = apply(latest, turn);
     engine = applied.engine;
+    const productionNotes = [...judged.notes, ...applied.notes];
+    if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });
 
     for (const id of players) {
       if (!latest.game_over && !engine.units.some((u) => u.owner === id && u.class === 'flagship')) {
@@ -268,7 +285,8 @@ function composeReports(engine: EngineState, scenario: Scenario, resolution: GmR
         : '## Messages received\n\nNone.';
       const picture = renderSensorPicture(knowledge(engine, scenario, p.id, turn));
       const outbox = renderOutbox(engine, scenario, p.id, turn);
-      return [p.id, [note, renderQbits(engine, p.id, turn), messages, outbox, picture].filter(Boolean).join('\n\n')];
+      const matter = engine.matter ? renderMatter(engine.matter, p.id, turn) : '';
+      return [p.id, [note, renderQbits(engine, p.id, turn), matter, messages, outbox, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }
@@ -301,7 +319,9 @@ function gameRecord(events: PlaytestEvent[]): string {
   const engineNotes: string[] = [];
   const hijackNotes: string[] = [];
   const rankingNotes: string[] = [];
+  const productionNotes: string[] = [];
   for (const e of events) {
+    if (e.type === 'production') for (const n of e.notes) productionNotes.push(`- Turn ${e.turn}: ${n}`);
     if (e.type === 'engine') {
       for (const o of e.overrides) engineNotes.push(`- Turn ${e.turn}, GM OVERRIDE (${o.rule_ids.join(', ') || 'no rule'}) ${o.unit_id}: ${o.reason}`);
       for (const a of e.adjustments) engineNotes.push(`- Turn ${e.turn}, engine corrected the GM: ${a}`);
@@ -318,7 +338,7 @@ function gameRecord(events: PlaytestEvent[]): string {
     if (e.type === 'ranking') {
       for (const r of e.rows) {
         rankingNotes.push(
-          `- ${r.player}: flagship ${r.flagshipDestroyed ? 'destroyed' : `damage ${r.flagshipDamage}`}; fleet strength ${r.fleetStrength} (flagship included); production ${Math.round(r.production * 1000) / 1000} qBits/turn`,
+          `- ${r.player}: flagship ${r.flagshipDestroyed ? 'destroyed' : `damage ${r.flagshipDamage}`}; fleet strength ${r.fleetStrength} (flagship included); production ${Math.round(r.production * 1000) / 1000} qBits/turn${r.matterOutput === undefined ? '' : `, ${r.matterOutput} matter/turn`}`,
         );
       }
     }
@@ -342,6 +362,10 @@ ${engineNotes.join('\n') || '(none)'}
 <spoofs note="Spoofs bought, at the engine's prices (QBIT-08).">
 ${hijackNotes.join('\n') || '(none)'}
 </spoofs>
+
+<production note="What the engine decided about shipyards and construction (PROD-04, ECON-03): Produce orders accepted or rejected, units finished, productions lost.">
+${productionNotes.join('\n') || '(none)'}
+</production>
 
 <private_ranking note="Where each player stood when the game stopped, best first: least flagship damage, then most fleet strength, then most production. Not a victory condition, and never shown to players.">
 ${rankingNotes.join('\n') || '(none)'}

@@ -105,6 +105,10 @@ function describe(e: PlaytestEvent): string {
       }`;
     case 'qbits':
       return `Turn ${e.turn}: engine settled the qBit ledger`;
+    case 'matter':
+      return `Turn ${e.turn}: engine settled the matter ledger`;
+    case 'production':
+      return `Turn ${e.turn}: engine handled ${e.notes.length} production and construction event(s)`;
     case 'correction':
       return `${e.agent} (${e.label}): reply sent back to be fixed`;
     case 'unresolved':
