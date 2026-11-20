@@ -10,6 +10,7 @@ import './replay.css';
 const md = (text: string) => <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>;
 const written = (h: Hex) => `(${h.q}, ${h.r})`;
 const qbits = (n: number) => String(Math.round(n * 100) / 100);
+const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 type Layer = 'moves' | 'links' | 'coordinates' | `sensors:${string}`;
 
@@ -123,6 +124,12 @@ function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: str
           {qbits(view.qbits.production)}
         </p>
       )}
+      {view.matter && (
+        <p className="replay-qbits">
+          Matter {qbits(view.matter.opening)} → {qbits(view.matter.closing)}: spent {qbits(view.matter.spent)}, mined {qbits(view.matter.production)} from{' '}
+          {view.matter.mines} {view.matter.mines === 1 ? 'mine' : 'mines'}
+        </p>
+      )}
       {view.orders.length > 0 ? (
         <ul className="replay-orders">
           {view.orders.map((o, i) => (
@@ -135,7 +142,12 @@ function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: str
       ) : (
         <p className="replay-quiet">No orders.</p>
       )}
-      {(bought.length > 0 || view.spoofs.length > 0 || view.oversights.length > 0 || (view.qbits?.refused.length ?? 0) > 0) && (
+      {(bought.length > 0 ||
+        view.spoofs.length > 0 ||
+        view.oversights.length > 0 ||
+        (view.qbits?.refused.length ?? 0) > 0 ||
+        (view.matter?.purchases.length ?? 0) > 0 ||
+        (view.matter?.refused.length ?? 0) > 0) && (
         <ul className="replay-purchases">
           {bought.map((s, i) => (
             <li key={`scan${i}`}>
@@ -160,6 +172,16 @@ function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: str
           {view.qbits?.refused.map((r, i) => (
             <li key={`refused${i}`}>
               Couldn't afford {r.label} ({qbits(r.cost)})
+            </li>
+          ))}
+          {view.matter?.purchases.map((m, i) => (
+            <li key={`matter${i}`}>
+              {capitalised(m.label)} ({qbits(m.cost)} matter)
+            </li>
+          ))}
+          {view.matter?.refused.map((m, i) => (
+            <li key={`matter-refused${i}`}>
+              Couldn't afford {m.label} ({qbits(m.cost)} matter)
             </li>
           ))}
         </ul>
@@ -226,6 +248,17 @@ function TurnPanel({ replay, frame, selected }: { replay: Replay; frame: Frame; 
             ))}
             {joined.map((u) => (
               <UnitLine key={u.id} unit={u} note={`joined at ${written(u.hex)}`} />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {frame.production.length > 0 && (
+        <section>
+          <h3>Shipyards and construction</h3>
+          <ul className="replay-units">
+            {frame.production.map((note, i) => (
+              <li key={i}>{note}</li>
             ))}
           </ul>
         </section>
@@ -390,9 +423,9 @@ function Viewer({ replay, initialTurn }: { replay: Replay; initialTurn: number |
             {toggle('coordinates', 'Coordinates')}
           </fieldset>
           <p className="replay-key">
-            Every position is the true one at the end of the turn. A diamond is a flagship, a circle a fleet, a triangle a probe and a square a node; the number is
-            strength, and a badge counts the units a marker stands for. A dashed ring means an enemy sensor has it in range. A cross is a unit lost this turn, and + a
-            unit that joined. Arrows join where a unit began the turn to where it ended.
+            Every position is the true one at the end of the turn. A diamond is a flagship, a circle a fleet, a triangle a probe, a square a node and a hexagon a
+            mine; the number is strength, and a badge counts the units a marker stands for. A dashed ring means an enemy sensor has it in range. A cross is a unit
+            lost this turn, and + a unit that joined. Arrows join where a unit began the turn to where it ended.
           </p>
         </div>
         <TurnPanel replay={replay} frame={frame} selected={selected} />

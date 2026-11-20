@@ -29,6 +29,7 @@ const frame = (turn: number, extra: Partial<Frame> = {}): Frame => ({
   sightings: [],
   players: [],
   corrections: [],
+  production: [],
   overrides: [],
   gameOver: false,
   outcome: '',
@@ -57,6 +58,7 @@ const replay: Replay = {
       removed: [redRaider],
       moves: [{ unit: 'blue-flagship', owner: 'blue', from: { q: -2, r: 0 }, to: { q: -1, r: 0 } }],
       corrections: ['blue-flagship moved too far.'],
+      production: ['Produce(dreadnought) at red-mine (red): rejected.'],
       players: [
         {
           player: 'blue',
@@ -67,6 +69,15 @@ const replay: Replay = {
           spoofs: [{ kind: 'spoof', target: 'red-raider', order: 'Hold', cost: 4, reaches: ['red-raider', 'red-line'] }],
           oversights: [],
           qbits: { opening: 8, spent: 4, decay: 1.3333, production: 6, closing: 8.6667, purchases: [], refused: [] },
+          matter: {
+            opening: 8,
+            spent: 1,
+            production: 3,
+            closing: 10,
+            mines: 1,
+            purchases: [{ label: 'produce probe at blue-mine', cost: 1 }],
+            refused: [{ label: 'produce line at blue-mine', cost: 6 }],
+          },
         },
         { player: 'red', orders: [], scans: [], spoofs: [], oversights: [] },
       ],
@@ -142,6 +153,13 @@ describe('ReplayPage', () => {
     expect(blue.getByText(/qBits 8 → 8.67: spent 4, decay 1.33, produced 6/)).toBeTruthy();
     expect(blue.getByText(/reaches red-raider, red-line/)).toBeTruthy();
     expect(blue.getByText('BLUE WAS TOLD')).toBeTruthy();
+    expect(blue.getByText(/Matter 8 → 10: spent 1, mined 3 from 1 mine/)).toBeTruthy();
+    expect(blue.getByText('Produce probe at blue-mine (1 matter)')).toBeTruthy();
+    expect(blue.getByText("Couldn't afford produce line at blue-mine (6 matter)")).toBeTruthy();
+    const red = within(screen.getByRole('heading', { name: 'Red' }).closest('section') as HTMLElement);
+    expect(red.queryByText(/Matter/)).toBeNull();
+    const yards = within(screen.getByRole('heading', { name: 'Shipyards and construction' }).closest('section') as HTMLElement);
+    expect(yards.getByText('Produce(dreadnought) at red-mine (red): rejected.')).toBeTruthy();
     expect(within(screen.getByRole('heading', { name: 'Red' }).closest('section') as HTMLElement).getByText('No orders.')).toBeTruthy();
 
     expect(screen.getByText('blue-flagship moved too far.')).toBeTruthy();
@@ -154,6 +172,8 @@ describe('ReplayPage', () => {
     vi.stubGlobal('fetch', api(runs));
     render(<ReplayPage />);
     await screen.findByRole('heading', { name: 'Start' });
+    // A turn with nothing from the shipyards has no section for them.
+    expect(screen.queryByRole('heading', { name: 'Shipyards and construction' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'red: red raider at (1, 0)' }));
     expect(screen.getByRole('heading', { name: 'At (1, 0), Inner' })).toBeTruthy();

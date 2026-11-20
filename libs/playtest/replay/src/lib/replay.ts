@@ -54,6 +54,21 @@ export interface QbitSummary {
   refused: { label: string; cost: number }[];
 }
 
+/** A player's matter over one turn (MAT-01). */
+export interface MatterSummary {
+  opening: number;
+  spent: number;
+  /** Matter mined this turn. */
+  production: number;
+  closing: number;
+  /** How many mines produced it. */
+  mines: number;
+  /** What they paid for, in the ledger's words: a build, a `Produce` order. */
+  purchases: { label: string; cost: number }[];
+  /** What they tried to pay for and couldn't afford. */
+  refused: { label: string; cost: number }[];
+}
+
 /** One player's side of a turn: what they were told, what they decided and what it cost. */
 export interface PlayerTurnView {
   player: string;
@@ -66,6 +81,8 @@ export interface PlayerTurnView {
   spoofs: HijackQuote[];
   oversights: OversightQuote[];
   qbits?: QbitSummary;
+  /** Only in a scenario with matter. */
+  matter?: MatterSummary;
 }
 
 /** The GM's side of a turn. Players saw none of it. */
@@ -93,6 +110,11 @@ export interface Frame {
   gm?: GmView;
   /** What the engine corrected in the GM's resolution, in its own words. */
   corrections: string[];
+  /**
+   * What the engine decided about shipyards and construction this turn, in its own words (PROD-04, ECON-03):
+   * each `Produce` order accepted or rejected, each unit a yard finished. Empty in a scenario without matter.
+   */
+  production: string[];
   overrides: EngineOverride[];
   gameOver: boolean;
   /** The GM's verdict when the game ended this turn; otherwise empty. */
@@ -116,6 +138,8 @@ interface TurnEvents {
   state?: Extract<PlaytestEvent, { type: 'state' }>;
   resolution?: Extract<PlaytestEvent, { type: 'setup' | 'gm_resolution' }>['resolution'];
   statements: Extract<PlaytestEvent, { type: 'qbits' }>['statements'];
+  matter: Extract<PlaytestEvent, { type: 'matter' }>['statements'];
+  production: string[];
   corrections: string[];
   overrides: EngineOverride[];
   reports: Map<string, string>;
@@ -127,6 +151,8 @@ interface TurnEvents {
 
 const emptyTurn = (): TurnEvents => ({
   statements: [],
+  matter: [],
+  production: [],
   corrections: [],
   overrides: [],
   reports: new Map(),
@@ -172,6 +198,12 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
         break;
       case 'qbits':
         at(e.turn).statements.push(...e.statements);
+        break;
+      case 'matter':
+        at(e.turn).matter.push(...e.statements);
+        break;
+      case 'production':
+        at(e.turn).production.push(...e.notes);
         break;
       case 'report':
         at(e.turn).reports.set(e.player, e.text);
@@ -230,6 +262,7 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
           : scenario.players.map(({ id: player }) => {
               const submission = t.submissions.get(player);
               const statement = t.statements.find((s) => s.player === player);
+              const matter = t.matter.find((s) => s.player === player);
               return {
                 player,
                 report: t.reports.get(player),
@@ -247,6 +280,15 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
                   purchases: statement.spends.map(({ label, cost }) => ({ label, cost })),
                   refused: statement.refusals.map(({ label, cost }) => ({ label, cost })),
                 },
+                matter: matter && {
+                  opening: matter.opening,
+                  spent: matter.spends.reduce((sum, s) => sum + s.cost, 0),
+                  production: matter.production,
+                  closing: matter.closing,
+                  mines: matter.mines.length,
+                  purchases: matter.spends.map(({ label, cost }) => ({ label, cost })),
+                  refused: matter.refusals.map(({ label, cost }) => ({ label, cost })),
+                },
               };
             }),
       gm: t.resolution && {
@@ -256,6 +298,7 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
         messages: t.resolution.messages,
       },
       corrections: t.corrections,
+      production: t.production,
       overrides: t.overrides,
       gameOver: t.resolution?.game_over ?? false,
       outcome: t.resolution?.outcome ?? '',

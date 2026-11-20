@@ -20,7 +20,7 @@ The star system's hex map, drawn in React and SVG. It knows hexes, units and ove
 | `Links` | Lines between pairs of hexes, such as a web's links |
 | `Moves` | An arrow from where units began the turn to where they ended; units that made the same move share one |
 | `Losses` | A cross where an owner lost units |
-| `Units` | One marker for each owner's fleets in a hex and one for their nodes: its most important unit's shape, the strength it adds up to and a count. A dashed ring is drawn for each owner in `sightedBy` |
+| `Units` | One marker for each owner's fleets in a hex and one for their structures (nodes and mines): its most important unit's shape, the strength it adds up to and a count. A dashed ring is drawn for each owner in `sightedBy` |
 
 `layout.ts` is the geometry and grouping with no rendering in it (`hexCenter`, `hexCorners`, `discHexes`, `stackTokens`, `mergeSegments`), so another renderer can draw from the same layout.
 

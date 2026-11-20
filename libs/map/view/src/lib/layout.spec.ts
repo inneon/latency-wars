@@ -90,6 +90,21 @@ describe('stackTokens', () => {
   });
 });
 
+describe('stackTokens with mines', () => {
+  it('draws a fleet apart from the structures of its hex, and leads them with the mine', () => {
+    const tokens = stackTokens([
+      unit('mine', 'blue', 1, 1, { shape: 'mine', strength: 3 }),
+      unit('node', 'blue', 1, 1, { shape: 'node', strength: 2 }),
+      unit('raider', 'blue', 1, 1),
+    ]);
+    // The fleet is one marker; the mine and the node share another, led by the mine.
+    expect(tokens.map((t) => [t.shape, t.units.map((u) => u.id)]).sort()).toEqual([
+      ['fleet', ['raider']],
+      ['mine', ['mine', 'node']],
+    ]);
+  });
+});
+
 describe('mergeSegments', () => {
   it('counts units that made the same move, and keeps other moves apart', () => {
     const a = { q: 0, r: 0 };

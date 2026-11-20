@@ -323,6 +323,11 @@ function tokenShape(token: Token, c: Point, fill: string) {
       const d = SIZE * 0.3;
       return <polygon className="lw-focus" points={points([{ x: c.x, y: c.y - d }, { x: c.x + d, y: c.y + d * 0.8 }, { x: c.x - d, y: c.y + d * 0.8 }])} style={edge} />;
     }
+    case 'mine': {
+      const d = SIZE * 0.28;
+      const hexagon = [0, 1, 2, 3, 4, 5].map((i) => ({ x: c.x + d * Math.cos((Math.PI / 3) * i), y: c.y + d * Math.sin((Math.PI / 3) * i) }));
+      return <polygon className="lw-focus" points={points(hexagon)} style={edge} />;
+    }
     case 'node': {
       const d = SIZE * 0.22;
       return <rect className="lw-focus" x={c.x - d} y={c.y - d} width={2 * d} height={2 * d} rx={d * 0.25} style={edge} />;
@@ -363,7 +368,7 @@ export function Units({ units }: UnitsProps) {
               <circle key={observer} data-sighted-by={observer} cx={c.x} cy={c.y} r={SIZE * (0.6 + 0.09 * i)} style={{ fill: 'none', stroke: colour(observer), strokeWidth: 0.22, strokeOpacity: 0.85, strokeDasharray: '0.9 0.7' }} />
             ))}
             {tokenShape(token, c, fill)}
-            {token.shape !== 'node' && token.strength > 0 && (
+            {token.shape !== 'node' && token.shape !== 'mine' && token.strength > 0 && (
               <text x={c.x} y={c.y + SIZE * 0.13} textAnchor="middle" style={{ fill: THEME.space, fontSize: SIZE * 0.36, fontWeight: 700 }}>
                 {token.strength}
               </text>

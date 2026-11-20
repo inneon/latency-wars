@@ -97,6 +97,53 @@ describe('buildReplay', () => {
     expect(frame?.gm).toMatchObject({ log: 'log 1', trueState: 'state 1' });
   });
 
+  it("gathers each player's matter and what the engine decided at the shipyards, in a scenario with matter", () => {
+    const mine = unit('blue-mine', 'blue', -3, 0, { class: 'mine', speed: 0, strength: 3 });
+    const units = [...start, mine];
+    const events: PlaytestEvent[] = [
+      header(units),
+      state(0, units),
+      resolved(1),
+      state(1, units),
+      {
+        type: 'matter',
+        turn: 1,
+        statements: [
+          {
+            player: 'blue',
+            turn: 1,
+            opening: 8,
+            spends: [{ accepted: true, player: 'blue', turn: 1, label: 'produce probe at blue-mine', cost: 1, balanceAfter: 7 }],
+            refusals: [{ accepted: false, player: 'blue', turn: 1, label: 'produce line at blue-mine', cost: 9, balance: 7 }],
+            mines: [mine],
+            production: 3,
+            closing: 10,
+          },
+        ],
+      },
+      { type: 'production', turn: 1, notes: ['Produce(probe) at blue-mine (blue): accepted.', 'Produce(dreadnought) at red-mine (red): rejected.'] },
+    ];
+    const frame = buildReplay('run', events).frames[1];
+    expect(frame?.units.map((u) => u.class)).toContain('mine');
+    expect(frame?.players[0]?.matter).toEqual({
+      opening: 8,
+      spent: 1,
+      production: 3,
+      closing: 10,
+      mines: 1,
+      purchases: [{ label: 'produce probe at blue-mine', cost: 1 }],
+      refused: [{ label: 'produce line at blue-mine', cost: 9 }],
+    });
+    expect(frame?.players[1]?.matter).toBeUndefined();
+    expect(frame?.production).toEqual(['Produce(probe) at blue-mine (blue): accepted.', 'Produce(dreadnought) at red-mine (red): rejected.']);
+  });
+
+  it('has no matter and no production notes in a scenario without matter', () => {
+    const frame = buildReplay('run', [header(start), state(0, start), resolved(1), state(1, start)]).frames[1];
+    expect(frame?.production).toEqual([]);
+    expect(frame?.players.map((p) => p.matter)).toEqual([undefined, undefined]);
+  });
+
   it("doesn't show a turn the engine hasn't settled yet", () => {
     const replay = buildReplay('run', [header(start), state(0, start), { type: 'report', turn: 1, player: 'blue', text: 'r' }, resolved(1)]);
     expect(replay.frames.map((f) => f.turn)).toEqual([0]);

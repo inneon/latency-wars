@@ -73,8 +73,8 @@ export function sensorCoverage(sensors: readonly Sensor[], radius: number): Map<
   return coverage;
 }
 
-/** How a unit is drawn. A scout is a fleet that can't fight; a node doesn't move. */
-export type UnitShape = 'flagship' | 'fleet' | 'scout' | 'node';
+/** How a unit is drawn. A scout is a fleet that can't fight; nodes and mines are structures and don't move. */
+export type UnitShape = 'flagship' | 'fleet' | 'scout' | 'node' | 'mine';
 
 export interface MapUnit {
   readonly id: string;
@@ -89,7 +89,7 @@ export interface MapUnit {
   readonly sightedBy?: readonly string[];
 }
 
-/** One drawn marker: all of one owner's fleets in a hex, or all of their nodes there. */
+/** One drawn marker: all of one owner's fleets in a hex, or all of their structures there. */
 export interface Token {
   readonly key: string;
   readonly owner: string;
@@ -104,12 +104,12 @@ export interface Token {
   readonly sightedBy: readonly string[];
 }
 
-const RANK: Record<UnitShape, number> = { flagship: 0, fleet: 1, scout: 2, node: 3 };
+const RANK: Record<UnitShape, number> = { flagship: 0, fleet: 1, scout: 2, mine: 3, node: 4 };
 
 /**
  * Groups units into the markers to draw. A hex can hold any number of
  * units, so each owner's fleets in a hex share one marker, placed so that
- * two owners in the same hex sit side by side. Nodes get their own marker
+ * two owners in the same hex sit side by side. Structures (nodes and mines) get their own marker
  * below. `owners` fixes the left-to-right order.
  */
 export function stackTokens(units: readonly MapUnit[], owners: readonly string[] = []): Token[] {
@@ -141,8 +141,9 @@ export function stackTokens(units: readonly MapUnit[], owners: readonly string[]
     const ownersOf = (members: MapUnit[]) => [...new Set(members.map((u) => u.owner))].sort((a, b) => order(a) - order(b) || a.localeCompare(b));
     const spread = (index: number, count: number, y: number): Point => ({ x: count === 1 ? 0 : (index - (count - 1) / 2) * (count === 2 ? 0.8 : 0.56), y });
 
-    const mobile = here.filter((u) => u.shape !== 'node');
-    const nodes = here.filter((u) => u.shape === 'node');
+    const isStructure = (u: MapUnit) => u.shape === 'node' || u.shape === 'mine';
+    const mobile = here.filter((u) => !isStructure(u));
+    const nodes = here.filter(isStructure);
     const mobileOwners = ownersOf(mobile);
     const nodeOwners = ownersOf(nodes);
     for (const [i, owner] of nodeOwners.entries()) {
