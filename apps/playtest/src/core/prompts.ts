@@ -77,7 +77,11 @@ How play works: a game master (GM) holds the true game state. At the start of ea
 
 Everything you do is an order to one of your units, including your flagship's own moves and doctrine changes (ORD-05), or a qBit purchase. Every qBit action, instant orders included, is priced by QBIT-08. Scans, spoofs, seizes and oversight go in qbit_purchases: list any and you'll be shown your scan results and quoted the rest before you submit for real. A spoof aimed at one enemy fleet reaches every fleet of that player in the same hex (QBIT-02). Oversight protects one of your fleets from spoofs for the turn, and a spoof can carry extra strength to beat it; a fleet in your flagship's own hex has 1 oversight for free (QBIT-09); neither side sees what the other paid.${scenario.parameters.hijack.seizeCost !== undefined ? seizeForPlayers : ''} Anything your balance doesn't cover when it's charged is refused and costs nothing (QBIT-01): an instant order you can't afford isn't sent at all.${scenario.parameters.matter ? matterForPlayers : ''}
 
-Play to win, within the rules. Your play style: ${player.persona}
+Play to win, within the rules. Your personality is ${player.persona.name}:
+
+${player.persona.text}
+
+Let it shape what you prefer and how you write, but it never overrides trying to win: if the position calls for something out of character, do it, and say why.
 
 You know only what the GM has told you. Don't assume anything about the present beyond what your knowledge state supports. Reason about how stale it is.
 
@@ -254,7 +258,12 @@ export function synthesisSystem(scenario: Scenario): SystemPrompt {
   const rules = ruleDocuments(scenario);
   return {
     documents: rules,
-    instructions: `You are helping the designer of Latency Wars, a prototype strategy game, make sense of a play-test. The rules are in ${names(rules)}. LLM agents played the scenario "${scenario.title}": a GM and ${scenario.players.length} players. You will get their debrief feedback and the logs of rulings and rules confusions from the game.`,
+    instructions: `You are helping the designer of Latency Wars, a prototype strategy game, make sense of a play-test. The rules are in ${names(rules)}. LLM agents played the scenario "${scenario.title}": a GM and ${scenario.players.length} players. You will get their debrief feedback and the logs of rulings and rules confusions from the game.
+
+Each player was given a personality, which shaped how it played:
+${scenario.players.map((p) => `- ${p.name}: ${p.persona.name}. ${p.persona.text.replace(/\s+/g, ' ')}`).join('\n')}
+
+When you weigh what happened, separate what came from a personality from what the rules made happen. A pattern that only one personality showed may say more about that personality than about the rules.`,
   };
 }
 

@@ -127,7 +127,8 @@ export const ScenarioFile = z.object({
       z.object({
         id: z.string().regex(/^[a-z0-9-]+$/),
         name: z.string(),
-        persona: z.string(),
+        /** The id of a personality in apps/playtest/personas: the player's default, which a run MAY replace. */
+        persona: z.string().regex(/^[a-z0-9-]+$/),
         /** Private to this player. */
         briefing: z.string(),
       }),
@@ -170,9 +171,17 @@ export interface Scenario {
   players: ScenarioPlayer[];
 }
 
+/** A player's personality (apps/playtest/personas): how they like to play. */
+export interface Persona {
+  id: string;
+  name: string;
+  /** What the player is told about it. */
+  text: string;
+}
+
 export interface ScenarioPlayer {
   id: string;
   name: string;
-  persona: string;
+  persona: Persona;
   briefing: string;
 }

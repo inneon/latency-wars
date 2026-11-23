@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { type Scenario, ScenarioFile } from '../types/scenario';
+import { assignPersonas, loadPersonas, type PersonaChoice } from './personas';
 
 export function findWorkspaceRoot(from = process.cwd()): string {
   let dir = path.resolve(from);
@@ -13,8 +14,12 @@ export function findWorkspaceRoot(from = process.cwd()): string {
   return dir;
 }
 
-/** `scenario` is either a directory path or the name of a directory under apps/playtest/scenarios. */
-export async function loadScenario(workspaceRoot: string, scenario: string): Promise<Scenario> {
+/**
+ * `scenario` is either a directory path or the name of a directory under
+ * apps/playtest/scenarios. Each player gets the scenario's default
+ * personality unless `personas` chooses others.
+ */
+export async function loadScenario(workspaceRoot: string, scenario: string, personas?: PersonaChoice): Promise<Scenario> {
   const dir = existsSync(scenario)
     ? path.resolve(scenario)
     : path.join(workspaceRoot, 'apps/playtest/scenarios', scenario);
@@ -40,6 +45,10 @@ export async function loadScenario(workspaceRoot: string, scenario: string): Pro
     ),
     common: await read(file.common),
     gmBriefing: await read(file.gm),
-    players: await Promise.all(file.players.map(async (p) => ({ ...p, briefing: await read(p.briefing) }))),
+    players: assignPersonas(
+      await Promise.all(file.players.map(async (p) => ({ ...p, briefing: await read(p.briefing) }))),
+      await loadPersonas(workspaceRoot),
+      personas,
+    ),
   };
 }

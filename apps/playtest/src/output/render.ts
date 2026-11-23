@@ -168,6 +168,7 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
   const name = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
   const out = [`# Play-test report: ${scenario.title}`];
   if (duration) out.push(`_Ran in ${duration}._`);
+  out.push(`_Personalities: ${scenario.players.map((p) => `${p.name}, ${p.persona.name}`).join('; ')}._`);
 
   const warnings = events.filter((e) => e.type === 'warning');
   if (warnings.length) {

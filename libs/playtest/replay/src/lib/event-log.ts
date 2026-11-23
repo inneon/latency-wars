@@ -53,7 +53,8 @@ export const ScenarioHeader = z.object({
   }),
   /** Light speed `C` and `TRACK_DECAY`, plus whatever else the scenario set, kept as written. */
   parameters: z.looseObject({ c: z.number(), trackDecay: z.number().optional() }),
-  players: z.array(z.object({ id: z.string(), name: z.string() })),
+  /** Each player, with the personality it played (apps/playtest/personas), in runs that record one. */
+  players: z.array(z.object({ id: z.string(), name: z.string(), persona: z.string().optional(), personaName: z.string().optional() })),
   /** The true state at the end of turn 0. */
   units: z.array(PlaytestUnit),
 });

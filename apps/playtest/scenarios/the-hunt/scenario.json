@@ -144,13 +144,13 @@
     {
       "id": "blue",
       "name": "Blue",
-      "persona": "Bold and aggressive. You like decisive plays and big risks, and you get impatient with bookkeeping.",
+      "persona": "bold",
       "briefing": "blue.md"
     },
     {
       "id": "red",
       "name": "Red",
-      "persona": "Careful and analytical. You read the rules closely, want to know exactly what each rule permits, and plan several turns ahead.",
+      "persona": "careful",
       "briefing": "red.md"
     }
   ]

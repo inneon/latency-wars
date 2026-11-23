@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { EFFORTS, type Effort } from '../types/agent';
 import { BACKENDS } from '../types/run-config';
+import { parsePersonaChoice, type PersonaChoice } from './personas';
 
 export const USAGE = `Run an LLM play-test of a scenario.
 
@@ -8,6 +9,8 @@ Usage: pnpm playtest --scenario <name|dir> [options]
 
   --scenario       Scenario name (under apps/playtest/scenarios) or directory   (required)
   --rounds         Maximum turns to play (default: the scenario's maxRounds)
+  --persona        Players' personalities, from apps/playtest/personas: random (a different one each),
+                   or pairs such as blue=spymaster,red=industrialist   (default: the scenario's own)
   --backend        Where replies come from                                       (default: api)
                      api          Anthropic API; needs ANTHROPIC_API_KEY
                      claude-code  The claude CLI in headless mode, on your Claude Code login
@@ -31,6 +34,7 @@ export type CliArgs =
       help: false;
       scenario: string;
       rounds?: number;
+      personas?: PersonaChoice;
       backend: (typeof BACKENDS)[number];
       claudeBin?: string;
       pasteLimit?: number;
@@ -49,6 +53,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     options: {
       scenario: { type: 'string' },
       rounds: { type: 'string' },
+      persona: { type: 'string' },
       backend: { type: 'string', default: 'api' },
       'claude-bin': { type: 'string' },
       'paste-limit': { type: 'string' },
@@ -77,6 +82,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     help: false,
     scenario: values.scenario,
     rounds,
+    personas: values.persona === undefined ? undefined : parsePersonaChoice(values.persona),
     backend,
     claudeBin: values['claude-bin'],
     pasteLimit,

@@ -96,7 +96,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       maxRounds,
       map: scenario.map,
       parameters: scenario.parameters,
-      players: scenario.players.map(({ id, name }) => ({ id, name })),
+      players: scenario.players.map(({ id, name, persona }) => ({ id, name, persona: persona.id, personaName: persona.name })),
       units: scenario.units,
     },
   });
