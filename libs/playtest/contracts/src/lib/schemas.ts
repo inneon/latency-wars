@@ -6,27 +6,28 @@ import { z } from 'zod';
 /** Something a player spends qBits on in Planning (QBIT-01), other than an instant order. */
 export const QbitPurchase = z.object({
   kind: z
-    .enum(['scan', 'spoof', 'oversee'])
+    .enum(['scan', 'spoof', 'seize', 'oversee'])
     .describe(
-      'scan: what one of your units saw at the end of last turn, at age 0 (FB-11). spoof: override an enemy fleet for this turn (QBIT-02). ' +
-        'oversee: protect one of your fleets from spoofs this turn (QBIT-09).',
+      'scan: what one of your units saw at the end of last turn, at age 0 (FB-11). spoof: override an enemy fleet, and every fleet of its owner in its hex, for this turn (QBIT-02). ' +
+        'seize: take command of one enemy fleet for this turn; it follows any order you give, Attack included, and fights on your side (QBIT-10). ' +
+        'oversee: protect one of your fleets from spoofs and seizes this turn (QBIT-09).',
     ),
   target: z
     .string()
     .optional()
-    .describe('The unit id: one of yours (fleet, node or flagship) for a scan, the enemy fleet for a spoof, one of your fleets for oversight.'),
+    .describe('The unit id: one of yours (fleet, node or flagship) for a scan, the enemy fleet for a spoof or seize, one of your fleets for oversight.'),
   order: z
     .string()
     .optional()
-    .describe('Spoof only: the order the spoofed fleet carries out this turn: MoveTo, Hold or ReturnHome (QBIT-02).'),
+    .describe('Spoof or seize only: the order the fleet carries out this turn. A spoof: MoveTo, Hold or ReturnHome (QBIT-02). A seize: any order (QBIT-10).'),
   strength: z
     .number()
     .int()
     .min(0)
     .optional()
     .describe(
-      'The command strength, in qBits paid on top of the price (QBIT-09). Spoof: optional, default 0. Oversee: required, at least 1. ' +
-        'A spoof on an overseen fleet lands only if its strength is greater than the oversight\'s.',
+      'The command strength, in qBits paid on top of the price (QBIT-09). Spoof or seize: optional, default 0. Oversee: required, at least 1. ' +
+        'A spoof or seize on an overseen fleet lands only if its strength is greater than the oversight\'s.',
     ),
 });
 export type QbitPurchase = z.infer<typeof QbitPurchase>;
@@ -38,10 +39,10 @@ export const PlayerTurn = z.object({
   qbit_purchases: z
     .array(QbitPurchase)
     .describe(
-      'qBit purchases for this Planning phase: scans, spoofs and oversight, priced by QBIT-08. Instant orders are not listed here; ' +
+      'qBit purchases for this Planning phase: scans, spoofs, seizes and oversight, priced by QBIT-08. Instant orders are not listed here; ' +
         "mark them in orders. The first time a turn's submission lists any purchase, it is a request for quotes: scans are bought and " +
-        'shown to you then, spoofs and oversight are only priced, and your orders are ignored until you submit again. ' +
-        'Spoofs and oversight in that final submission are bought; scans there are ignored. Leave empty to buy nothing.',
+        'shown to you then, spoofs, seizes and oversight are only priced, and your orders are ignored until you submit again. ' +
+        'Spoofs, seizes and oversight in that final submission are bought; scans there are ignored. Leave empty to buy nothing.',
     ),
   orders: z
     .array(

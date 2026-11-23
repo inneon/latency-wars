@@ -1,6 +1,7 @@
 import { formatHex } from '@latency-wars/domain';
 import {
   balanceOf,
+  canAfford,
   closeMatterTurn,
   matterIncome,
   type MatterLedger,
@@ -8,8 +9,10 @@ import {
   matterStatementFor,
   openMatterLedger,
   produceMatter,
+  type QbitLedger,
   type Refusal,
   type Spend,
+  spend as spendQbits,
   spendMatter,
 } from '@latency-wars/economy';
 import type { BuildReport } from '@latency-wars/playtest-contracts';
@@ -26,19 +29,28 @@ import type { QueuedMessage, SentOrder } from './engine';
  * Pure: no I/O, no mutation. `engine.ts` owns the state and calls these.
  */
 
-/** What a shipyard is making. */
+/** What a shipyard is making, in one of its slots. */
 export interface Production {
   /** The scenario's name for the class (`PROD-03`). */
   readonly unitClass: string;
   /** Economy phases still to count (`PRODUCE_TURNS`). */
   readonly turnsLeft: number;
+  /** qBits the unit will carry (QBIT-11), already paid for. Absent when unseeded. */
+  readonly seed?: number;
 }
+
+/** `producing` keys a yard's side slot (PROD-05) as its id plus this; its main slot is its id alone. */
+const SIDE = '#side';
+const slotKey = (yardId: string, side: boolean) => (side ? `${yardId}${SIDE}` : yardId);
+const yardOf = (key: string) => (key.endsWith(SIDE) ? key.slice(0, -SIDE.length) : key);
 
 export interface MatterState {
   readonly ledger: MatterLedger<PlaytestUnit>;
   readonly config: MatterParameters;
-  /** The yards that are producing, by mine id. */
+  /** What each yard is producing: its main slot keyed by mine id, its side slot (PROD-05) by mine id plus `#side`. */
   readonly producing: ReadonlyMap<string, Production>;
+  /** The qBits each seeded unit still carries, by unit id (QBIT-11). */
+  readonly seeded: ReadonlyMap<string, number>;
   /** Builds already paid for, by builder id: what it is building. A build that resets must be paid again (ECON-03). */
   readonly paid: ReadonlyMap<string, 'node' | 'mine'>;
   /** Orders already judged, so none is charged twice. */
@@ -57,6 +69,7 @@ export function startMatter(scenario: Scenario): MatterState | undefined {
     ledger: openMatterLedger<PlaytestUnit>(1, Object.fromEntries(scenario.players.map((p) => [p.id, config.start]))),
     config,
     producing: new Map(),
+    seeded: new Map(),
     paid: new Map(),
     judged: new Set(),
     playerNames: new Map(scenario.players.map((p) => [p.id, p.name])),
@@ -65,24 +78,37 @@ export function startMatter(scenario: Scenario): MatterState | undefined {
 }
 
 /** What a player's own status report says about a shipyard (LIGHT-02), after whatever the GM wrote. */
-const YARD_STATUS = /;?\s*Shipyard: [^;]*$/;
-const yardStatus = (production: Production | undefined) =>
-  production ? `Shipyard: producing ${production.unitClass}, ${production.turnsLeft} Economy phase(s) to go` : 'Shipyard: idle';
-const withYardStatus = (unit: PlaytestUnit, production: Production | undefined): PlaytestUnit => {
+const YARD_STATUS = /;?\s*Shipyard: .*$/;
+const making = (p: Production) => `producing ${p.unitClass}${p.seed ? ` seeded with ${p.seed} qBits` : ''}, ${p.turnsLeft} Economy phase(s) to go`;
+const yardStatus = (main: Production | undefined, side: Production | undefined) => {
+  const parts = [main ? making(main) : '', side ? `side slot ${making(side)}` : ''].filter(Boolean);
+  return parts.length ? `Shipyard: ${parts.join('; ')}` : 'Shipyard: idle';
+};
+const withYardStatus = (unit: PlaytestUnit, producing: ReadonlyMap<string, Production>): PlaytestUnit => {
   const gm = (unit.status ?? '').replace(YARD_STATUS, '').trim();
-  return { ...unit, status: `${gm ? `${gm}; ` : ''}${yardStatus(production)}` };
+  return { ...unit, status: `${gm ? `${gm}; ` : ''}${yardStatus(producing.get(slotKey(unit.id, false)), producing.get(slotKey(unit.id, true)))}` };
 };
 
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const normalise = (s: string) => s.trim().toLowerCase().replace(/[`'"]/g, '').replace(/\s+/g, '-');
 
-/** `Produce(raider)`: the class a `Produce` order names, as written. `undefined` if it names none. */
+/**
+ * `Produce(raider)` or `Produce(probe, seed 3)`: the class a `Produce` order
+ * names, as written, and the qBits it seeds the unit with (QBIT-11).
+ * `unitClass` is `undefined` if it names none; `seed` is `NaN` if a seed is
+ * given but isn't a whole number of at least 1.
+ */
 const PRODUCE_ORDER = /^\s*Produce\b(?:\s*\(\s*([^)]*?)\s*\))?/i;
-export function parseProduce(order: string): { isProduce: boolean; unitClass?: string } {
+const SEED = /^seed\s*[=:]?\s*(\S+)$/i;
+export function parseProduce(order: string): { isProduce: boolean; unitClass?: string; seed?: number } {
   const match = PRODUCE_ORDER.exec(order);
   if (!match) return { isProduce: false };
-  const named = match[1] ? normalise(match[1]) : '';
-  return { isProduce: true, unitClass: named || undefined };
+  const [named = '', ...rest] = (match[1] ?? '').split(',').map((s) => s.trim());
+  const unitClass = normalise(named) || undefined;
+  const seedPart = rest.find((s) => SEED.test(s));
+  if (!seedPart) return { isProduce: true, unitClass };
+  const n = Number(SEED.exec(seedPart)?.[1]);
+  return { isProduce: true, unitClass, seed: Number.isInteger(n) && n >= 1 ? n : Number.NaN };
 }
 
 /** A `Produce` order, as it reaches a yard (PROD-04). */
@@ -94,15 +120,18 @@ export interface ProduceDelivery {
 
 export interface Judged {
   readonly matter: MatterState;
+  /** The qBit ledger, after paying for seeds (QBIT-11). */
+  readonly qbits: QbitLedger<PlaytestUnit>;
   /** For the GM and the log: what was decided, in plain words. */
   readonly notes: string[];
 }
 
 /**
  * The Decision phase's check of every `Produce` order delivered this turn
- * (PROD-04): rejected if the yard is already producing, the class isn't on the
- * scenario's list, or the owner's matter can't cover its cost; otherwise
- * accepted, paid at once, and production starts. `units` are the true units
+ * (PROD-04): rejected if the class isn't on the scenario's list, the slot it
+ * needs is already producing (PROD-05), the class can't be seeded but the
+ * order seeds it, or the owner's matter or qBits can't cover the cost and the
+ * seed (QBIT-11); otherwise accepted, paid at once, and production starts. `units` are the true units
  * at the start of the turn. Orders go in the order sent, so when matter
  * covers only one of two orders from one player, the earlier-sent is paid for.
  * Each yard's ack is held in the outbox, to be sent in the Observation phase
@@ -113,8 +142,10 @@ export function judgeProduceOrders(
   deliveries: readonly ProduceDelivery[],
   units: readonly PlaytestUnit[],
   turn: number,
+  qbitLedger: QbitLedger<PlaytestUnit>,
 ): Judged {
   let { ledger } = matter;
+  let qbits = qbitLedger;
   const producing = new Map(matter.producing);
   const judged = new Set(matter.judged);
   const outbox = [...matter.outbox];
@@ -136,25 +167,37 @@ export function judgeProduceOrders(
     };
 
     const def = matter.config.units.find((u) => u.class === parsed.unitClass);
-    if (producing.has(yard.id)) {
-      reject('the yard is already producing', 'the yard is already producing.');
-    } else if (!def) {
+    const seed = parsed.seed;
+    const slot = def ? slotKey(yard.id, def.sideSlot === true) : yard.id;
+    if (!def) {
       reject(`${parsed.unitClass ?? 'no class'} isn't on the scenario's list`, parsed.unitClass ? "that isn't a unit this yard can build." : 'no unit class named.');
-    } else {
+    } else if (producing.has(slot)) {
+      const which = def.sideSlot ? 'its side slot is' : 'the yard is';
+      reject(`${which} already producing (PROD-05)`, `${which} already producing.`);
+    } else if (seed !== undefined && Number.isNaN(seed)) {
+      reject('the seed isn\'t a whole number of at least 1', 'a seed must be a whole number of qBits, at least 1 (QBIT-11).');
+    } else if (seed !== undefined && !def.seedable) {
+      reject(`${def.class} can't be seeded in this scenario`, `a ${def.class} can't carry seeded qBits (QBIT-11).`);
+    } else if (!canAfford(ledger, yard.owner, def.cost)) {
       const spent = spendMatter(ledger, yard.owner, turn, `produce ${def.class} at ${yard.id}`, def.cost);
       ledger = spent.ledger;
-      if (!spent.outcome.accepted) {
-        reject(`${yard.owner}'s matter (${formatMatter(spent.outcome.balance)}) can't cover ${formatMatter(def.cost)}`, 'not enough matter.');
-      } else {
-        producing.set(yard.id, { unitClass: def.class, turnsLeft: def.turns });
-        ack(`Accepted: Produce(${def.class}).`);
-        notes.push(
-          `Produce(${def.class}) at ${yard.id} (${yard.owner}): accepted, ${formatMatter(def.cost)} matter paid, completes in the Economy phase of turn ${turn + def.turns - 1} if the yard doesn't fight (PROD-04).`,
-        );
-      }
+      reject(`${yard.owner}'s matter (${formatMatter(balanceOf(ledger, yard.owner))}) can't cover ${formatMatter(def.cost)}`, 'not enough matter.');
+    } else if (seed !== undefined && !canAfford(qbits, yard.owner, seed)) {
+      const spent = spendQbits(qbits, yard.owner, turn, `seed ${def.class} at ${yard.id}`, seed);
+      qbits = spent.ledger;
+      reject(`${yard.owner}'s qBits (${formatMatter(balanceOf(qbits, yard.owner))}) can't cover a seed of ${seed}`, 'not enough qBits for the seed.');
+    } else {
+      ledger = spendMatter(ledger, yard.owner, turn, `produce ${def.class} at ${yard.id}`, def.cost).ledger;
+      if (seed !== undefined) qbits = spendQbits(qbits, yard.owner, turn, `seed ${def.class} at ${yard.id} with ${seed}`, seed).ledger;
+      producing.set(slot, { unitClass: def.class, turnsLeft: def.turns, ...(seed !== undefined ? { seed } : {}) });
+      const seeded = seed !== undefined ? `, seed ${seed}` : '';
+      ack(`Accepted: Produce(${def.class}${seeded}).`);
+      notes.push(
+        `Produce(${def.class}${seeded}) at ${yard.id} (${yard.owner}): accepted${def.sideSlot ? ' in the side slot' : ''}, ${formatMatter(def.cost)} matter${seed !== undefined ? ` and ${seed} qBits` : ''} paid, completes in the Economy phase of turn ${turn + def.turns - 1} if the yard doesn't fight (PROD-04).`,
+      );
     }
   }
-  return { matter: { ...matter, ledger, producing, judged, outbox }, notes };
+  return { matter: { ...matter, ledger, producing, judged, outbox }, qbits, notes };
 }
 
 /** What the Economy phase needs to know (TURN-03). */
@@ -222,14 +265,15 @@ export function settleMatterEconomy(matter: MatterState, input: EconomyInput): S
   for (const id of yardsInCombat) {
     if (standing(id)?.class !== 'mine') adjustments.push(`${id} was listed in yards_in_combat, but it isn't a mine in the game; ignored.`);
   }
-  for (const [yardId, p] of producing) {
+  for (const [key, p] of producing) {
+    const yardId = yardOf(key);
     if (!standing(yardId)) {
-      producing.delete(yardId);
-      notes.push(`${yardId} was destroyed, so its ${p.unitClass} is lost and the matter paid for it stays spent (PROD-04).`);
+      producing.delete(key);
+      notes.push(`${yardId} was destroyed, so its ${p.unitClass} is lost and the matter${p.seed ? ' and the seeded qBits' : ''} paid for it stay spent (PROD-04, QBIT-11).`);
     } else if (yardsInCombat.includes(yardId)) {
       notes.push(`${yardId} fought, so this Economy phase doesn't count towards its ${p.unitClass} (PROD-04).`);
     } else {
-      producing.set(yardId, { ...p, turnsLeft: p.turnsLeft - 1 });
+      producing.set(key, { ...p, turnsLeft: p.turnsLeft - 1 });
     }
   }
 
@@ -286,27 +330,30 @@ export function settleMatterEconomy(matter: MatterState, input: EconomyInput): S
 
   // Unit production last (TURN-03): a finished yard makes its unit, at the yard's hex, with no order and default doctrine (PROD-04).
   const messages: QueuedMessage[] = [];
-  for (const [yardId, p] of producing) {
+  // Seeded units that are gone take their seed with them (QBIT-11). The engine reports their silence when it uses the seeds.
+  const seeded = new Map(matter.seeded);
+  for (const [key, p] of producing) {
     if (p.turnsLeft > 0) continue;
-    const yard = standing(yardId);
+    const yard = standing(yardOf(key));
     const def = config.units.find((u) => u.class === p.unitClass);
     if (!yard || !def) continue;
     const unit = newUnitFor(yard, def, [...roster.keys(), ...units.map((u) => u.id)], playerNames.get(yard.owner) ?? yard.owner);
     units = [...units, unit];
-    producing.delete(yardId);
-    notes.push(`${yard.id} completed ${def.class}: ${unit.id} joined at ${formatHex(yard.hex)} (PROD-04).`);
+    producing.delete(key);
+    if (p.seed) seeded.set(unit.id, p.seed);
+    notes.push(`${yard.id} completed ${def.class}${p.seed ? ` seeded with ${p.seed} qBits` : ''}: ${unit.id} joined at ${formatHex(yard.hex)} (PROD-04${p.seed ? ', QBIT-11' : ''}).`);
     messages.push({ player: yard.owner, fromUnit: yard.id, fromName: yard.name, hex: yard.hex, sentTurn: turn, text: `Completed: ${unit.name} (\`${unit.id}\`).`, instant: false, reportsDestroyed: [] });
   }
 
   // Every yard's status report says what it is making (LIGHT-02).
-  units = units.map((u) => (u.class === 'mine' ? withYardStatus(u, producing.get(u.id)) : u));
+  units = units.map((u) => (u.class === 'mine' ? withYardStatus(u, producing) : u));
 
   // Acks go out in the Observation phase (FB-02), so only a yard that survived the turn sends one (FB-05).
   const alive = new Set(units.map((u) => u.id));
   messages.unshift(...matter.outbox.filter((m) => alive.has(m.fromUnit)));
 
   return {
-    matter: { ...matter, ledger: closeMatterTurn(ledger, turn), producing, paid, outbox: [] },
+    matter: { ...matter, ledger: closeMatterTurn(ledger, turn), producing, seeded, paid, outbox: [] },
     units,
     adjustments,
     notes,
@@ -370,10 +417,7 @@ export function renderMatterForGm(matter: MatterState, units: readonly PlaytestU
   });
   const yards = units
     .filter((u) => u.class === 'mine')
-    .map((u) => {
-      const p = matter.producing.get(u.id);
-      return `- \`${u.id}\` (${u.owner}): ${p ? `producing ${p.unitClass}, ${p.turnsLeft} Economy phase(s) to go` : 'idle'}`;
-    });
+    .map((u) => `- \`${u.id}\` (${u.owner}): ${yardStatus(matter.producing.get(slotKey(u.id, false)), matter.producing.get(slotKey(u.id, true))).replace(/^Shipyard: /, '')}`);
   return [
     `The matter ledger for this turn, kept by the engine (authoritative). Produce orders delivered this turn have been judged and, if accepted, paid for. The engine adds each mine's output in the Economy phase (MAT-01) from the mines still standing after Combat, charges a builder's cost on its first progress (ECON-03), advances each yard's production unless you list it in yards_in_combat, and adds finished units itself (PROD-04). Don't keep balances or production yourself, and don't list units a yard makes.`,
     '',
@@ -385,6 +429,6 @@ export function renderMatterForGm(matter: MatterState, units: readonly PlaytestU
     '',
     `Produce orders (the engine judged these; PROD-04):\n${judgement.length ? judgement.map((n) => `- ${n}`).join('\n') : '- None delivered.'}`,
     '',
-    `Unit classes shipyards can produce: ${config.units.map((u) => `${u.class} (cost ${u.cost}, ${u.turns} turn(s))`).join(', ') || 'none'}. Costs: node ${config.nodeCost}, mine ${config.mineCost}.`,
+    `Unit classes shipyards can produce: ${config.units.map((u) => `${u.class} (cost ${u.cost}, ${u.turns} turn(s)${u.sideSlot ? ', side slot' : ''}${u.seedable ? ', can be seeded' : ''})`).join(', ') || 'none'}. Costs: node ${config.nodeCost}, mine ${config.mineCost}. The engine also runs seeded units' free scans each Planning phase (QBIT-11); you have nothing to do for them.`,
   ].join('\n');
 }

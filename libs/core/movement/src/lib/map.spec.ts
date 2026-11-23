@@ -1,5 +1,5 @@
 import { hexDistance } from '@latency-wars/domain';
-import { enterable, furthestToward, illegalMove, pathLength } from './movement';
+import { enterable, furthestToward, illegalMove, pathLength } from './map';
 
 // The Hunt's map: radius 6, the star at (0, 0) impassable.
 const map = { radius: 6, impassable: [{ q: 0, r: 0 }] };

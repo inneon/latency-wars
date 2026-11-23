@@ -162,7 +162,7 @@ function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: str
           ))}
           {view.spoofs.map((s, i) => (
             <li key={`spoof${i}`}>
-              Spoof <code>{s.target}</code> to {s.order}
+              {s.kind === 'seize' ? 'Seize' : 'Spoof'} <code>{s.target}</code> to {s.order}
               {s.refused ? `: refused. ${s.refused}` : ` (${qbits(s.cost ?? 0)})`}
               {s.reaches && s.reaches.length > 1 && `; reaches ${s.reaches.join(', ')}`}
               {s.blocked && s.blocked.length > 0 && `; blocked by oversight on ${s.blocked.map((b) => b.unit).join(', ')}`}

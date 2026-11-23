@@ -44,11 +44,6 @@ export function startMovement(): MovementState {
   return { step: 0, engagements: [], stoppedAt: {} };
 }
 
-/** How many steps Movement has: the fastest speed on the map (MOVE-01). */
-export function stepCount(units: readonly Unit[]): number {
-  return units.reduce((most, u) => Math.max(most, u.speed), 0);
-}
-
 /** Whether `unit` has engaged this Movement phase, so it moves no further (MOVE-03). */
 export function isEngaged(state: MovementState, unit: UnitId): boolean {
   return state.stoppedAt[unit] !== undefined;

@@ -17,12 +17,14 @@ const UnitFile = z.object({
   strength: z.number().int().nonnegative(),
 });
 
-/** What the engine needs to price a spoof (QBIT-08) and check it can be aimed (QBIT-04). */
+/** What the engine needs to price a spoof or a seize (QBIT-08) and check it can be aimed (QBIT-04). */
 const HijackParameters = z.object({
   /** `QBIT_SPOOF_COST` */
   spoofCost: z.number().nonnegative(),
   /** `HIJACK_MAX_AGE` */
   maxTrackAge: z.number().int().nonnegative(),
+  /** `QBIT_SEIZE_COST`. A scenario without it doesn't use seizes (QBIT-10): every one is refused. */
+  seizeCost: z.number().nonnegative().optional(),
 });
 export type HijackParameters = z.infer<typeof HijackParameters>;
 
@@ -58,6 +60,10 @@ const ProducibleUnit = z.object({
   cost: z.number().nonnegative(),
   /** `PRODUCE_TURNS`. */
   turns: z.number().int().positive(),
+  /** Produced in a yard's side slot, alongside its main production (PROD-05). */
+  sideSlot: z.boolean().optional(),
+  /** Can be seeded with qBits when produced (QBIT-11). */
+  seedable: z.boolean().optional(),
 });
 export type ProducibleUnit = z.infer<typeof ProducibleUnit>;
 

@@ -2,6 +2,7 @@ import { engagementGroups, groupOf } from './groups';
 import { afterStep, type Engagement, startMovement } from './movement';
 import { hex, situation, unit } from './fixtures.spec-helper';
 import type { Decisions } from './willingness';
+import { runMovement } from '@latency-wars/movement';
 
 const engagement = (a: string, b: string, aReasons: Engagement['a']['reasons'] = ['attack']): Engagement => ({ step: 1, a: { unit: a, reasons: aReasons }, b: { unit: b, reasons: [] } });
 const members = (g: { members: readonly { unit: string }[] } | undefined) => g?.members.map((m) => m.unit);
@@ -127,5 +128,23 @@ describe('the Ycnetal endgame (v0.12 play-test)', () => {
     const step = afterStep(startMovement(), situation([...red.filter((u) => u.class !== 'fleet'), raider], decisions));
     expect(step.engagements).toEqual([]);
     expect(engagementGroups(step.state.engagements, situation(step.units, decisions)).groups).toEqual([]);
+  });
+
+  it('with the movement system: a pursuing raider stops at the escorts and doesn’t reach the flagship’s hex', () => {
+    const map = { radius: 8, impassable: [hex(0, 0)] };
+    const raider = unit('blue-raider-4', 'blue', 'fleet', hex(3, -6), 2);
+    const decisions: Decisions = { ...escorting, 'blue-raider-4': { order: { kind: 'attack', target: 'red-flagship' } } };
+    let engagement = startMovement();
+    const moved = runMovement(map, [...red, raider], { 'blue-raider-4': { kind: 'pursue', target: 'red-flagship' } }, (units) => {
+      const step = afterStep(engagement, situation(units, decisions));
+      engagement = step.state;
+      return { stopped: step.engagements.flatMap((e) => [e.a.unit, e.b.unit]), units: step.units };
+    });
+    // Step 1 leaves it at (2, -6), two hexes out; step 2 at (1, -6), within ENGAGE_RANGE, where it engages and stops.
+    expect(moved.units.find((u) => u.id === 'blue-raider-4')?.hex).toEqual(hex(1, -6));
+    expect(engagement.engagements.every((e) => e.step === 2)).toBe(true);
+    const combats = engagementGroups(engagement.engagements, situation(moved.units, decisions));
+    expect(combats.groups).toHaveLength(1);
+    expect(combats.bystanders).toEqual([{ unit: 'red-mine-yaled', group: 0 }]);
   });
 });

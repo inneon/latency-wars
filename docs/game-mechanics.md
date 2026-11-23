@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.12)
+# Latency Wars - Game Mechanics (v0.14)
 
 ## 0. About This Document
 
@@ -51,6 +51,8 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Engagement** | Two hostile units that come within `ENGAGE_RANGE` during Movement, at least one of them willing. Engaged units stop and fight. |
 | **Engagement group** | All units joined by engagements, plus any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight. Each group fights one combat. |
 | **Spoof** | A qBit action that overrides the orders of an enemy fleet, and of every other fleet of that player in its hex, for one turn (`QBIT-02`). |
+| **Seeded unit** | A unit produced carrying qBits. Each Planning phase it spends one to send its owner a free scan of itself (`QBIT-11`). |
+| **Seize** | A qBit action that takes command of one enemy fleet for one turn: it follows any order, `Attack` included, and fights on the seizer's side (`QBIT-10`). |
 | **Oversight** | A qBit action that protects one of a player's own fleets from spoofs for one turn (`QBIT-09`). |
 | **Strength (of a command)** | The qBits paid into a spoof or an oversight beyond its price. The stronger command wins (`QBIT-09`). |
 | **Matter** | The physical resource. Mines produce it; building nodes, mines and units costs it (`MAT-01`). |
@@ -89,6 +91,7 @@ All values are placeholders, to be tuned by playtesting.
 | `QBIT_SCAN_COST` | Base cost of a scan | 1 | `QBIT-08` adds distance. |
 | `QBIT_ORDER_COST` | Base cost of an instant order | 3 | `QBIT-08` adds distance. |
 | `QBIT_SPOOF_COST` | Base cost of a spoof | 3 | `QBIT-08` adds distance. |
+| `QBIT_SEIZE_COST` | Base cost of a seize | 12 | `QBIT-08` adds distance. High on purpose: only a sustained income lead can seize often (`QBIT-10`). |
 | `HIJACK_MAX_AGE` | Oldest track a spoof can be aimed with | 1 turn | `QBIT-04` |
 
 ---
@@ -104,7 +107,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 | # | Phase | What happens |
 |---|---|---|
 | 1 | **Planning** | Each player sees their knowledge state (section 5). They may buy scans, which are resolved at once (`FB-11`), and then submit orders. |
-| 2 | **Emission** | Light orders are emitted from the flagship's current hex. Instant orders, oversight and spoofs are delivered and their qBits spent. Each spoof is settled against the oversight on every fleet it reaches (`QBIT-09`). |
+| 2 | **Emission** | Light orders are emitted from the flagship's current hex. Instant orders, oversight, spoofs and seizes are delivered and their qBits spent. Each spoof and seize is settled against the oversight on every fleet it reaches (`QBIT-09`). |
 | 3 | **Delivery** | Light orders whose wavefront has reached their recipient are delivered (`ORD-04`). |
 | 4 | **Decision** | Each fleet works out its behaviour for the turn: it resolves newly delivered orders and applies its doctrine (`RES-01`, `AUTO-03`). A spoofed fleet follows the spoofer's order instead (`QBIT-02`). |
 | 5 | **Movement** | All units move simultaneously, step by step. Engaged units stop (`MOVE-01`, `MOVE-03`). |
@@ -172,7 +175,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 - **LIGHT-18** The **entangled channel** is everything a player learns instantly. It carries only:
   - the player's own qBit balance and total production, as totals (never per node or per link);
   - the player's own matter balance and total output, as totals (never per mine) (`MAT-01`);
-  - scan results (`FB-11`);
+  - scan results (`FB-11`), including the free scans from seeded units, and the absence of one from a seeded unit that is gone (`QBIT-11`);
   - the acks for instant orders and spoofs, which say only Delivered or No answer (`ORD-09`, `QBIT-02`);
   - prices (`QBIT-08`), worked out only from what the paying player knows.
 
@@ -265,8 +268,8 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ### 6.3 The flagship
 - **FLAG-01** The flagship is never willing to fight (`MOVE-04`) and can't be given an `Attack` order. Once engaged, it fights back like any unit (`COMBAT-01`). Fleets MAY be ordered to `Attack` an enemy flagship's track.
   - *Why:* zero command lag makes the flagship the best-commanded unit on the map. If it could also start fights, "lead from the front" would dominate. It should be valuable to keep near the front, not a warship.
-- **FLAG-02** The flagship can't build (`ECON-03`), and can't be spoofed (`QBIT-04`).
-- **FLAG-03** If a spoof lands this turn on a fleet escorting the flagship (`RES-08`) from the flagship's own hex, the flagship doesn't move that turn, unless its order is `AtAllCosts`. Its order resumes the next turn.
+- **FLAG-02** The flagship can't build (`ECON-03`), and can't be spoofed or seized (`QBIT-04`).
+- **FLAG-03** If a spoof or seize lands this turn on a fleet escorting the flagship (`RES-08`) from the flagship's own hex, the flagship doesn't move that turn, unless its order is `AtAllCosts`. Its order resumes the next turn.
   - *Why:* the flagship sees its escorts turn away as it happens (`LIGHT-03`), so it doesn't march on alone. The spoof still opens a gap, but the attacker has to exploit it.
 
 ---
@@ -434,7 +437,7 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
 - **COMBAT-02** Each engagement group fights one combat in the Combat phase. Damage on both sides is dealt simultaneously, from strengths at the start of the Combat phase. A group is:
   - the units joined by engagements (`MOVE-03`); plus
   - any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight (`MOVE-04`); plus
-  - any fleet with an `Escort` order on a unit in the group, within `ENGAGE_RANGE` of that unit (`RES-08`). A spoofed fleet has no `Escort` order that turn (`QBIT-02`).
+  - any fleet with an `Escort` order on a unit in the group, within `ENGAGE_RANGE` of that unit (`RES-08`). A spoofed or seized fleet has no `Escort` order of its owner's that turn (`QBIT-02`, `QBIT-10`).
 
   Any other unit in that hex is a bystander: it neither fights nor stops moving.
 - **COMBAT-03** Where damage goes. The steps apply in order, each to the strengths the steps before it left. Wherever damage **fills** units, it goes to one unit at a time, up to that unit's remaining strength, and the rest **spills** to the next.
@@ -473,15 +476,17 @@ There are two resources. qBits are information: the web in orbital zones produce
   - Each player holds one pool of matter, whichever mine produced it (`OPEN-16`).
   - *Why:* matter grows with the number of planets held, one mine at a time, while qBits grow with the shape of the web. A lead in one doesn't bring a lead in the other, and each makes a different target.
 - **MAT-02** A planet holds at most one mine. A fleet builds one with `Build(planet)` (`ECON-03`). A scenario MAY start players with mines.
-- **PROD-03** Every mine is a **shipyard**. A shipyard accepts one kind of order, `Produce(class)`, naming a unit class from the scenario's unit list. Orders reach it like any other, by light or instantly (`ORD-04`, `ORD-06`), at most one per turn (`ORD-08`). It has no commitment, leash, fallback or doctrine.
+- **PROD-03** Every mine is a **shipyard**. A shipyard accepts one kind of order, `Produce(class)` or `Produce(class, seed n)` (`QBIT-11`), naming a unit class from the scenario's unit list. Orders reach it like any other, by light or instantly (`ORD-04`, `ORD-06`), at most one per turn (`ORD-08`). It has no commitment, leash, fallback or doctrine.
   - *Why:* production is ordered from the flagship like everything else, so a distant yard builds what it was told some turns ago. A planet is worth fighting over twice: it pays for ships and it builds them.
-- **PROD-04** On delivery, the shipyard checks the order (`RES-01`). It is **Rejected** if the yard is already producing, if the class isn't on the scenario's list, or if its owner's matter can't cover the class's `UNIT_COST`. Otherwise it is **Accepted**, the cost is paid at once, and production starts.
+- **PROD-04** On delivery, the shipyard checks the order (`RES-01`). It is **Rejected** if the class isn't on the scenario's list, if the slot the class needs is already producing (`PROD-05`), or if its owner's matter can't cover the class's `UNIT_COST`, or their qBits the seed (`QBIT-11`). Otherwise it is **Accepted**, the cost and any seed are paid at once, and production starts.
   - Production takes the class's `PRODUCE_TURNS` Economy phases, counting the delivery turn's. An Economy phase in which the yard fought doesn't count.
   - The new unit appears in the yard's hex at the end of the Economy phase that completes it, with no order, default doctrine (`AUTO-01`), and the yard as its home. The yard reports `Completed`. Its owner learns of the new unit from its first status report, sent in that turn's Observation phase, like any other (`ORD-10`).
-  - If the yard is destroyed, the unit in production and the matter paid for it are lost.
+  - If the yard is destroyed, the unit in production and the matter and seed paid for it are lost.
+- **PROD-05** A shipyard has a **side slot** as well as its main one. The scenario's unit list says which classes are built in the side slot, usually only light units such as probes. Each slot produces one unit at a time and is judged on its own under `PROD-04`, so a yard can build a probe while it builds a Line. Starting both still takes two orders, in two turns (`ORD-08`).
+  - *Why:* scouts shouldn't compete with warships for a yard's time. It gives matter a cheap use, and seeded probes (`QBIT-11`) a steady supply.
 
 ### 11.4 Spending qBits
-- **QBIT-01** In Planning, a player MAY spend qBits on: scans (`FB-11`), instant orders (`ORD-06`), spoofs (`QBIT-02`) and oversight (`QBIT-09`). Each is priced by `QBIT-08`.
+- **QBIT-01** In Planning, a player MAY spend qBits on: scans (`FB-11`), instant orders (`ORD-06`), spoofs (`QBIT-02`), seizes (`QBIT-10`) and oversight (`QBIT-09`). Each is priced by `QBIT-08`. A player also spends qBits by seeding a unit as it is produced (`QBIT-11`).
 - **QBIT-08** Every qBit action costs its base cost plus `L(d)` (`LIGHT-14`), where `d` is the distance from the player's flagship to the unit acted on. That is one qBit for each turn of light delay skipped.
 
 | Action | Base cost |
@@ -489,6 +494,7 @@ There are two resources. qBits are information: the web in orbital zones produce
 | Scan | `QBIT_SCAN_COST` |
 | Instant order | `QBIT_ORDER_COST` |
 | Spoof | `QBIT_SPOOF_COST`, plus the strength bought (`QBIT-09`) |
+| Seize | `QBIT_SEIZE_COST`, plus the strength bought (`QBIT-09`) |
 | Oversight | None: only the strength bought (`QBIT-09`) |
 
   - `d` is measured from the flagship's position at the start of the turn to where the player knows the unit to be: its latest status report for their own units, or the track for an enemy fleet. True positions are never used (`LIGHT-18`).
@@ -497,27 +503,38 @@ There are two resources. qBits are information: the web in orbital zones produce
   - *Example (placeholder values, `C = 3`):* an instant order to a fleet 5 hexes from the flagship costs 3 + 2 = 5. Spoofing an enemy fleet tracked 2 hexes away costs 3 + 1 = 4.
 - **QBIT-02** **Spoof:** inject a fake order into an enemy player's command net. A spoof is aimed at one enemy fleet, its **target**, and reaches every fleet of that player in the hex where the target actually is in Emission, the target included, whatever the spoofer's track showed. It is delivered in Emission. Each fleet it lands on carries out a non-combat order of the spoofer's choosing (`MoveTo`, `Hold` or `ReturnHome`) for that turn, overriding its own order and doctrine. A spoofed fleet can't start a fight, but fights back if engaged (`COMBAT-01`): it can pass an enemy flagship, or another spoofed fleet, without one. Its own active order resumes the next turn.
   - A spoof never reaches a flagship (`QBIT-04`). It is settled against each fleet's own oversight (`QBIT-09`), so it MAY land on some fleets in the hex and be blocked on others.
-  - If more than one spoof lands on a fleet, it follows the strongest; ties go to the one bought first.
+  - If more than one spoof or seize lands on a fleet, it follows the strongest; ties go to the one bought first.
   - A spoofed `MoveTo` MAY end in a hex holding the spoofer's fleets. They are then in the same hex, so `MOVE-04` makes them willing to fight it. Spoofing a fleet into an ambush is intended.
   - The spoofer gets a receipt over the entangled channel in the next Planning phase (`LIGHT-18`): **Delivered** if it landed on at least one fleet, or **No answer** if it landed on none (`QBIT-04`, `QBIT-09`, `FB-09`). It says nothing about which fleets it reached or what they did, and a blocked spoof looks the same as one whose target is gone.
   - *Why:* it is easier to make chaos than to bring order. Stacking fleets concentrates the risk of a spoof instead of spreading it.
-- **QBIT-04** A spoof needs:
+- **QBIT-04** A spoof or a seize needs:
   - a track on the target no older than `HIJACK_MAX_AGE`, because you need to know where to aim;
   - a target that isn't a flagship.
 
   No hex is safe: a fleet in its own flagship's hex can be spoofed like any other. Its owner can protect it with oversight, which is cheapest there (`QBIT-09`). A stack is no safer: one spoof reaches every fleet in it (`QBIT-02`), and each needs its own oversight.
 
   A spoof decides what the fleet does in that turn. An order its owner delivers in the same turn is still checked as usual (`RES-01`) and, if accepted, becomes the fleet's active order from the next turn. The owner's ack for it says nothing about the spoof.
-- **QBIT-06** The status report for that turn of each fleet a spoof landed on records that it was spoofed, and what it did. A fleet whose oversight blocked a spoof records the blocked attempt. The owner learns either only when that report arrives, at light speed.
+- **QBIT-06** The status report for that turn of each fleet a spoof or seize landed on records that it was spoofed or seized, and what it did. A fleet whose oversight blocked one records the blocked attempt. The owner learns either only when that report arrives, at light speed.
   - *Why:* the victim only finds out after the fact, through delayed reports.
 - **QBIT-09** **Oversight and the command contest.**
   - In Planning, a player MAY pay for **oversight** of any of their fleets for the turn, at most once per fleet. It has a **strength** of at least 1, chosen by the player, and costs `L(d)` from their flagship plus that strength (`QBIT-08`).
-  - A spoof's **strength** is whatever its buyer pays beyond its `QBIT-08` price, which MAY be 0.
-  - A spoof is settled separately on each fleet it reaches (`QBIT-02`). On a fleet with oversight it lands only if its strength is greater than the oversight's. Otherwise it is **blocked** on that fleet: it has no effect there. On a fleet without oversight it lands as usual. Its qBits are spent whatever happens.
+  - A spoof's or seize's **strength** is whatever its buyer pays beyond its `QBIT-08` price, which MAY be 0.
+  - A spoof is settled separately on each fleet it reaches (`QBIT-02`), and a seize on its one target (`QBIT-10`), in the same way. On a fleet with oversight it lands only if its strength is greater than the oversight's. Otherwise it is **blocked** on that fleet: it has no effect there. On a fleet without oversight it lands as usual. Its qBits are spent whatever happens.
   - Both players commit to oversight and spoofs in secret, at the same time. Neither learns what the other paid, except through receipts (`QBIT-02`) and status reports (`QBIT-06`).
   - **Command presence:** a fleet in its own flagship's hex in Emission has oversight of strength 1 for free, added to any oversight bought for it. Without bought oversight, only a spoof of strength 2 or more lands on it.
   - The flagship itself can never be spoofed (`FLAG-02`), so it needs no oversight.
   - *Why:* every protection is a price, not a wall, so a richer player can break through defences and a poorer one has to choose what to protect. A fortress costs its owner every turn, while an attacker chooses when to pay. One spoof reaches a whole hex while oversight protects one fleet, so keeping a whole stack under command costs more the bigger it is. Holding a hex is a different sum: it takes enough fleets the spoof can't move to win the fight that follows. Oversight is cheapest close to the flagship, and command presence makes the cheapest spoof fail there, so staying close still helps.
+- **QBIT-10** **Seize:** take command of one enemy fleet, its **target**, for one turn. A seize needs what a spoof needs (`QBIT-04`), is delivered in Emission, and is settled against the target's oversight like a spoof (`QBIT-09`), command presence included. It reaches only its target, never the other fleets in its hex.
+  - If it lands, the target carries out any order the seizer chooses (`ORD-01`), `Attack` included, for that turn, overriding its own order and doctrine. For that turn it is the seizer's unit: it is hostile to its owner's units, `MOVE-04` judges its willingness as the seizer's, and it fights on the seizer's side (`COMBAT-02`, `COMBAT-03`).
+  - It returns to its owner at the end of the turn's Combat phase. Its own active order resumes the next turn. Damage it took stays.
+  - Its owner's `Escort` and `Defend` orders that name it don't count for that turn.
+  - The seizer gets a receipt like a spoof's (`QBIT-02`): **Delivered** or **No answer**. The seized fleet's status report records what happened (`QBIT-06`).
+  - *Why:* it turns a qBit lead into force at the point that matters. Its price keeps it rare: with decay (`ECON-04`) only a sustained income lead can afford it often. Unlike the seize retired in v0.5 (`QBIT-03`), it can reach a fleet in its owner's flagship's hex, so an escort can be turned against the flagship it guards, and a big stack at home is a risk as well as a shield. Oversight answers it, at the defender's price.
+- **QBIT-11** **Seeding.** A `Produce` order MAY seed the new unit with qBits: `Produce(class, seed n)`, for any whole number `n` of at least 1, if the scenario's unit list lets that class be seeded. There is no limit on `n`. The qBits are paid with the matter, when the yard accepts the order (`PROD-04`). A unit can be seeded only when it is produced.
+  - The seed belongs to the unit. It isn't part of its owner's balance, doesn't decay (`ECON-04`), can't be spent on anything else, and is lost with the unit, or with its yard while it is being produced.
+  - At the start of each Planning phase, a seeded unit with at least 1 qBit left spends 1, and its owner gets a scan of it (`FB-11`) at no other cost: everything it observed at the end of the previous turn, at age 0, its own status report included. It does this every turn while its seed lasts, whether or not it sees anything.
+  - If the unit is gone, no scan comes, and its owner sees that at once (`LIGHT-18`). That is part of the price of instant reporting.
+  - *Why:* entangled pairs have to be carried out physically, so a player commits qBits to a place in advance, and risks losing the whole seed to the nearest raider. It gives a current picture far from the flagship, which also keeps tracks fresh enough for spoofs and seizes (`QBIT-04`). It reports every turn, not only when it sees something, because a report sent only on a sighting would make a quiet turn free news.
 
 ---
 
@@ -537,6 +554,7 @@ There are two resources. qBits are information: the web in orbital zones produce
 | `OPEN-13` | **Overload.** Should a player be able to overload their nodes for a short burst of extra production, at the cost of damaging or burning them out? | A catch-up mechanic proposed by a play-test player. It helps whoever is behind regardless of how they played, which cuts against design doc 2.6 (catch-up should punish over-extension, not prop up the loser). |
 | `OPEN-14` | **Node-loss penalty.** Should losing a node cost its owner more than that node's production, for example two turns of its output taken from the bank? | Two things need settling first. (1) If the bank can't cover it, does the balance go negative (a debt future production pays off first), or stop at zero? (2) If two linked nodes are destroyed in the same turn, each one's output includes the link between them, so the penalty could count that link twice or feed back on itself. One option is to work out every lost node's penalty from the web as it stood before that turn's combat, so the total is fixed and nothing cascades. |
 | `OPEN-16` | Should matter be held per planet, not in one pool per player (`MAT-01`)? | A shipyard would build only from its own planet's stock, which its owner would learn of through status reports, delayed by light. That is more physical and gives each planet its own value, but building a node somewhere else would need matter carried there. Start with one pool. |
+| `OPEN-17` | **Flagship concealment.** Should qBits buy ways to make the flagship harder to find or to hit: masking its sightings, decoy tracks, or jamming the enemy's picture near it? | Raised after the first Ycnetal game, where both flagships sat at home for 16 turns. A flagship that can hide could afford to move. Links to `OPEN-02` (decoys), `OPEN-03` (does transmitting reveal you) and `OPEN-04` (jamming). |
 
 ---
 
@@ -552,7 +570,7 @@ Rules taken out of the mechanics. Their IDs stay reserved here so they aren't re
 | `FB-08` | v0.5 | `FB-11` | Pings are covered by scans: a scan of a unit includes its own status report. |
 | `FB-10` | v0.5 | `FB-11` | The flat-price intel snapshot was bought nearly every turn and made light delay optional. Scans of single units replace it. |
 | `RES-03` | v0.5 | `RES-04`, `ORD-07` | A query's round trip arrived after the fight. Discretion is now a condition the fleet checks itself; a player who disagrees sends a new order. |
-| `QBIT-03` | v0.5 | None | Seizing turned a node's defenders into its attackers. It may return as an endgame ability (design doc 8.1). |
+| `QBIT-03` | v0.5 | `QBIT-10` (v0.13) | Seizing turned a node's defenders into its attackers, and nothing could stop it. It returned in v0.13 as `QBIT-10`: priced high, settled against oversight, and able to reach a flagship's escort. |
 | `QBIT-05` | v0.5 | `QBIT-08` | The open question on instant-order pricing is settled: instant orders are priced by distance like every other qBit action. |
 | `OPEN-12` | v0.6 | `QBIT-09` | Answered: oversight is the defensive qBit spend. |
 | `AUTO-07` | v0.9 | None | Comms-silence made a fleet immune to spoofs at no cost: the kind of wall the command contest (`QBIT-09`) replaced with prices. It was also too loosely specified to adjudicate. It may return as a priced or limited ability. |

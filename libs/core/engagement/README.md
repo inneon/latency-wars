@@ -12,7 +12,6 @@ Import with `@latency-wars/engagement`. Types for hexes and units come from `@la
 |---|---|---|
 | `willingness(situation, unit, enemy)` | MOVE-04, FLAG-01, QBIT-02, AUTO-03 | Whether `unit` is willing to fight `enemy` now, with every clause that holds, or what rules it out |
 | `isWilling(situation, unit, enemy)` | MOVE-04 | The same, as a boolean |
-| `stepCount(units)` | MOVE-01 | How many steps Movement has |
 | `startMovement()` | — | An empty Movement phase |
 | `afterStep(state, situation)` | MOVE-03 | The engagements formed after a step, with the reasons on each side. Puts back any engaged unit that was moved anyway |
 | `isEngaged(state, unit)` | MOVE-03 | Whether a unit has stopped |
@@ -24,7 +23,8 @@ A `Situation` is every unit at one moment, each unit's `Decision`, and `ENGAGE_R
 ## Using it
 
 ```ts
-import { afterStep, type Decisions, engagementGroups, startMovement, stepCount } from '@latency-wars/engagement';
+import { afterStep, type Decisions, engagementGroups, startMovement } from '@latency-wars/engagement';
+import { runMovement } from '@latency-wars/movement';
 
 const decisions: Decisions = {
   'blue-raider-4': { stance: 'aggressive', order: { kind: 'attack', target: 'red-flagship' } },
@@ -32,17 +32,16 @@ const decisions: Decisions = {
   'blue-raider-6': { spoofed: true },
 };
 
-let movement = startMovement();
-let units = unitsAtStartOfMovement;
-for (let step = 1; step <= stepCount(units); step++) {
-  // Move every unit that isn't engaged one step (MOVE-02), then:
-  const result = afterStep(movement, { units: moveOneStep(units, movement), decisions, engageRange: 1 });
-  movement = result.state;
-  units = result.units; // engaged units stay where they stopped
-  result.corrections; // anything the mover got wrong
-}
+// Movement and engagement are separate systems: after each step, engagement
+// looks at the positions and tells movement which units have stopped.
+let engagement = startMovement();
+const moved = runMovement(map, unitsAtStartOfMovement, intents, (units) => {
+  const step = afterStep(engagement, { units, decisions, engageRange: 1 });
+  engagement = step.state;
+  return { stopped: step.engagements.flatMap((e) => [e.a.unit, e.b.unit]), units: step.units };
+});
 
-const { groups, bystanders } = engagementGroups(movement.engagements, { units, decisions, engageRange: 1 });
+const { groups, bystanders } = engagementGroups(engagement.engagements, { units: moved.units, decisions, engageRange: 1 });
 // groups[0].members: [{ unit: 'red-line-1', how: { kind: 'escort', charge: 'red-flagship' } }, …]
 ```
 

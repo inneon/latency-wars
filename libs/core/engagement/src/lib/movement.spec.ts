@@ -1,11 +1,5 @@
-import { afterStep, isEngaged, startMovement, stepCount } from './movement';
+import { afterStep, isEngaged, startMovement } from './movement';
 import { at, hex, situation, unit } from './fixtures.spec-helper';
-
-describe('stepCount (MOVE-01)', () => {
-  it('is the fastest speed on the map', () => {
-    expect(stepCount([unit('a', 'blue', 'fleet', hex(0, 0), 2), unit('m', 'red', 'mine', hex(1, 0))])).toBe(2);
-  });
-});
 
 describe('afterStep (MOVE-03)', () => {
   const raider = unit('blue-raider', 'blue', 'fleet', hex(3, 0), 2);

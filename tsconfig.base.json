@@ -27,6 +27,9 @@
       "@latency-wars/visibility": [
         "./libs/core/visibility/src/index.ts"
       ],
+      "@latency-wars/movement": [
+        "./libs/core/movement/src/index.ts"
+      ],
       "@latency-wars/engagement": [
         "./libs/core/engagement/src/index.ts"
       ],

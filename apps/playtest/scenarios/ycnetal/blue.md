@@ -1,3 +1,3 @@
 You command Blue. Your home is the planet Thgil. Your starting forces, with their positions at the end of turn 0, are listed under "Your forces" below. Your flagship is where you are: lose it and you lose the game.
 
-You have 8 qBits and 8 matter. Your mine on Thgil produces 3 matter a turn. Your nodes at Thgil L1 and L2 are 2 hexes apart, so your web produces 4 ÷ 32 = 0.125 qBits a turn: you will need to build further out. Red holds the mirror-image position at Yaled, 12 hexes away; you don't know where their units are now.
+You have 8 qBits and 8 matter. Your mine on Thgil produces 3 matter a turn. Your nodes at Thgil L1, Thgil L2 and Langis L4 (0, 3) produce Σ length² 78 ÷ 16 ≈ 4.9 qBits a turn. The Langis node is 6 hexes from home: it carries almost all your income. Red holds the mirror-image position at Yaled, 12 hexes away; you don't know where their units are now.

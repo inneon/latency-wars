@@ -34,7 +34,7 @@ import {
 import { judgeProduceOrders, type MatterState, settleMatterEconomy, startMatter } from './matter';
 import type { HijackQuote, IntelPurchase, OversightQuote, RankingRow } from '../types/quotes';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
-import { furthestToward, type GameMap, illegalMove } from './movement';
+import { furthestToward, type GameMap, illegalMove } from '@latency-wars/movement';
 import type { EngineOverride, GmResolution, PlayerTurn, QbitPurchase, UnitState } from '@latency-wars/playtest-contracts';
 
 /*
@@ -325,8 +325,8 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
  */
 export function judgeProduction(engine: EngineState, scenario: Scenario, turn: number): { engine: EngineState; notes: string[] } {
   if (!engine.matter) return { engine, notes: [] };
-  const judged = judgeProduceOrders(engine.matter, deliveries(engine, scenario, turn), engine.units, turn);
-  return { engine: { ...engine, matter: judged.matter }, notes: judged.notes };
+  const judged = judgeProduceOrders(engine.matter, deliveries(engine, scenario, turn), engine.units, turn, engine.ledger);
+  return { engine: { ...engine, matter: judged.matter, ledger: judged.qbits }, notes: judged.notes };
 }
 
 /** A unit joining the game: a built node or mine (ECON-03) or a new fleet. Returns undefined if it can't join. */
@@ -449,7 +449,7 @@ export function queueSpoofReceipts(engine: EngineState, player: string, turn: nu
         fromName: target?.name ?? q.target,
         hex: target?.hex ?? { q: 0, r: 0 },
         sentTurn: turn,
-        text: `Spoof → ${q.order}: ${q.fails ? NO_ANSWER : RECEIPT}`,
+        text: `${q.kind === 'seize' ? 'Seize' : 'Spoof'} → ${q.order}: ${q.fails ? NO_ANSWER : RECEIPT}`,
         instant: true,
         reportsDestroyed: [],
       };
@@ -801,10 +801,63 @@ export function settleCommandContest(
         if (blocked.length === 0) return q;
         if (blocked.length < reaches.length) return { ...q, blocked };
         const against = blocked.map((b) => `${b.unit} at ${b.oversight}`).join(', ');
-        return { ...q, blocked, fails: `blocked by oversight on every fleet it reached: spoof strength ${strength} against ${against} (QBIT-09).` };
+        return { ...q, blocked, fails: `blocked by oversight on every fleet it reached: ${q.kind} strength ${strength} against ${against} (QBIT-09).` };
       }),
     ]),
   );
+}
+
+/** What one seeded unit did in a Planning phase (QBIT-11). */
+export interface SeedReport {
+  readonly unit: string;
+  readonly name: string;
+  /** qBits it still carries after this turn's scan. Absent when it is gone. */
+  readonly left?: number;
+  /** It is no longer on the map, so no scan came. */
+  readonly gone?: true;
+}
+
+/**
+ * The Planning phase of `turn` for seeded units (QBIT-11): each one still on
+ * the map spends 1 of its qBits and its owner gets a scan of it, free
+ * (FB-11). One that is gone sends nothing, and its owner is told at once; its
+ * seed is forgotten. A unit with no qBits left stops reporting. Does nothing
+ * in a scenario without matter.
+ */
+export function useSeeds(engine: EngineState, turn: number): { engine: EngineState; reports: Map<string, SeedReport[]> } {
+  const reports = new Map<string, SeedReport[]>();
+  if (!engine.matter || engine.matter.seeded.size === 0) return { engine, reports };
+  const add = (player: string, r: SeedReport) => reports.set(player, [...(reports.get(player) ?? []), r]);
+  const seeded = new Map(engine.matter.seeded);
+  let next = engine;
+  for (const [id, seed] of engine.matter.seeded) {
+    const unit = engine.units.find((u) => u.id === id);
+    const known = engine.roster.get(id);
+    if (!unit) {
+      seeded.delete(id);
+      if (known) add(known.owner, { unit: id, name: known.name, gone: true });
+      continue;
+    }
+    if (seed < 1) {
+      seeded.delete(id);
+      continue;
+    }
+    next = recordIntel(next, unit.owner, turn, scanObservations(engine, unit.owner, turn, id));
+    seeded.set(id, seed - 1);
+    add(unit.owner, { unit: id, name: unit.name, left: seed - 1 });
+  }
+  return { engine: { ...next, matter: next.matter && { ...next.matter, seeded } }, reports };
+}
+
+/** The seeded-units section of a player's report: which reported, how much each has left, and which have gone quiet (QBIT-11). */
+export function renderSeedReports(reports: readonly SeedReport[]): string {
+  if (reports.length === 0) return '';
+  const lines = reports.map((r) =>
+    r.gone
+      ? `- **${r.name}** (\`${r.unit}\`): no report. It is no longer there, and its seed is lost.`
+      : `- **${r.name}** (\`${r.unit}\`): reported at age 0; its sightings are in your sensor picture. ${r.left === 0 ? 'Its seed is now used up: no more instant reports.' : `${r.left} seeded qBit(s) left.`}`,
+  );
+  return `## Seeded units (QBIT-11)\n\n${lines.join('\n')}`;
 }
 
 /** A qBit amount for people to read. Balances are kept unrounded; this is display only. */
@@ -865,37 +918,44 @@ const SPOOF_ORDERS = /^\s*(MoveTo|Hold|ReturnHome)\b/i;
  * (`settleCommandContest`).
  */
 export function quoteHijack(engine: EngineState, scenario: Scenario, player: string, turn: number, purchase: QbitPurchase): HijackQuote {
-  const kind = 'spoof';
+  const kind = purchase.kind === 'seize' ? 'seize' : 'spoof';
+  const done = kind === 'seize' ? 'seized' : 'spoofed';
   const target = purchase.target ?? '';
   const order = purchase.order ?? '';
   const refuse = (refused: string): HijackQuote => ({ kind, target, order, refused });
-  if (purchase.kind !== 'spoof') return refuse(`${purchase.kind} isn't a spoof.`);
+  if (purchase.kind !== 'spoof' && purchase.kind !== 'seize') return refuse(`${purchase.kind} isn't a spoof or a seize.`);
+  const { hijack } = scenario.parameters;
+  const base = kind === 'seize' ? hijack.seizeCost : hijack.spoofCost;
+  if (base === undefined) return refuse("This scenario doesn't use seizes (QBIT-10).");
   if (!target) return refuse('No target given.');
-  if (!order) return refuse('No order given for the spoofed fleet.');
-  if (!SPOOF_ORDERS.test(order)) return refuse('A spoof can only order MoveTo, Hold or ReturnHome (QBIT-02).');
+  if (!order) return refuse(`No order given for the ${done} fleet.`);
+  // A seized fleet takes any order (QBIT-10); a spoofed one only a non-combat order (QBIT-02).
+  if (kind === 'spoof' && !SPOOF_ORDERS.test(order)) return refuse('A spoof can only order MoveTo, Hold or ReturnHome (QBIT-02).');
 
   const known = knowledge(engine, scenario, player, turn);
   if (known.own.some((e) => e.unit.id === target)) return refuse(`${target} is your own unit.`);
   const track = known.contacts.find((c) => c.unit.id === target);
   if (!track) return refuse(`You have no track on ${target}.`);
-  if (track.unit.class === 'flagship') return refuse(`${target} is a flagship, which can't be spoofed (QBIT-04).`);
+  if (track.unit.class === 'flagship') return refuse(`${target} is a flagship, which can't be ${done} (QBIT-04).`);
   if (track.unit.class === 'node' || track.unit.class === 'mine') return refuse(`${target} is a ${track.unit.class}, not a fleet.`);
   if (track.removed) return refuse(`Your last sight of ${target} was it leaving the game.`);
-  const { hijack } = scenario.parameters;
   if (track.age > hijack.maxTrackAge) {
-    return refuse(`Your track on ${target} is ${track.age} turns old; a spoof needs one no older than ${hijack.maxTrackAge} (QBIT-04).`);
+    return refuse(`Your track on ${target} is ${track.age} turns old; a ${kind} needs one no older than ${hijack.maxTrackAge} (QBIT-04).`);
   }
   const strength = Math.max(0, Math.floor(purchase.strength ?? 0));
-  const price = qbitPrice(engine, scenario, player, hijack.spoofCost, track.unit.hex);
+  const price = qbitPrice(engine, scenario, player, base, track.unit.hex);
   const cost = price.cost + strength;
   const breakdown = `${price.breakdown} + strength ${strength}`;
   const truth = engine.units.find((u) => u.id === target);
   if (!truth) return { kind, target, order, strength, cost, breakdown, fails: `${target} is no longer on the map.`, reaches: [] };
-  // Every fleet of the target's owner in its hex, the target first (QBIT-02).
-  const others = engine.units
-    .filter((u) => u.id !== target && u.owner === truth.owner && u.class === 'fleet' && hexDistance(u.hex, truth.hex) === 0)
-    .map((u) => u.id)
-    .sort();
+  // A spoof reaches every fleet of the target's owner in its hex, the target first (QBIT-02); a seize only its target (QBIT-10).
+  const others =
+    kind === 'seize'
+      ? []
+      : engine.units
+          .filter((u) => u.id !== target && u.owner === truth.owner && u.class === 'fleet' && hexDistance(u.hex, truth.hex) === 0)
+          .map((u) => u.id)
+          .sort();
   // Fleets in their own flagship's hex have command presence (QBIT-09) and keep it from moving if spoofed (FLAG-03).
   const atFlagship = engine.units.some((u) => u.owner === truth.owner && u.class === 'flagship' && hexDistance(u.hex, truth.hex) === 0);
   return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target, ...others], atFlagship };
@@ -937,7 +997,8 @@ export function renderQuotes(quotes: readonly HijackQuote[], oversights: readonl
       return `- ${what}: ${o.cost} qBits (${o.breakdown}). Include it in your final submission to buy it.`;
     }),
   ];
-  return `## Spoof and oversight quotes (QBIT-08, QBIT-09)\n\n${lines.join('\n')}`;
+  const title = quotes.some((q) => q.kind === 'seize') ? 'Spoof, seize and oversight quotes (QBIT-08, QBIT-09, QBIT-10)' : 'Spoof and oversight quotes (QBIT-08, QBIT-09)';
+  return `## ${title}\n\n${lines.join('\n')}`;
 }
 
 /**
@@ -956,17 +1017,24 @@ export function renderHijacksForGm(quotes: readonly HijackQuote[], oversights: r
       const stopped = blocked.length
         ? ` Blocked by oversight on ${blocked.map((b) => `\`${b.unit}\` (strength ${b.oversight} against ${q.strength ?? 0})`).join(', ')}${q.atFlagship ? ', counting 1 for command presence' : ''}.`
         : '';
+      const effect =
+        q.kind === 'seize'
+          ? 'it carries out this order this turn as the seizer\'s unit: hostile to its owner\'s units, willing as the seizer\'s (MOVE-04), and fighting on the seizer\'s side (COMBAT-02, COMBAT-03). It returns to its owner at the end of Combat, keeping any damage, and its own order resumes next turn (QBIT-10).'
+          : `${landed.length > 1 ? 'each carries' : 'it carries'} out this order this turn (QBIT-02).`;
       const fate = q.fails
-        ? ` It does not land: ${q.fails} It was paid for anyway, and the spoofer is told "No answer" (QBIT-02).`
-        : ` It lands on ${ids(landed)}: ${landed.length > 1 ? 'each carries' : 'it carries'} out this order this turn (QBIT-02).${stopped}${
+        ? ` It does not land: ${q.fails} It was paid for anyway, and the buyer is told "No answer" (QBIT-02, QBIT-10).`
+        : ` It lands on ${ids(landed)}: ${effect}${stopped}${
             q.atFlagship
               ? " These fleets were in their own flagship's hex: if any it landed on was escorting the flagship, the flagship doesn't move this turn unless its order is AtAllCosts (FLAG-03)."
               : ''
           }`;
       return `- ${q.kind} \`${q.target}\` → ${q.order}: ${q.cost} qBits (${q.breakdown}).${fate}`;
     });
+    const seizes = bought.some((q) => q.kind === 'seize')
+      ? ' A seize reaches only its target (QBIT-10).'
+      : '';
     parts.push(
-      `Spoofs bought, priced and settled against oversight by the engine (authoritative, QBIT-08, QBIT-09). A spoof reaches every fleet of the target's owner in the target's hex (QBIT-02), and is settled on each separately. The engine sends each spoofer its receipt; don't write one. A blocked spoof has no effect on that fleet, but its status report records the attempt (QBIT-06):\n${lines.join('\n')}`,
+      `${seizes ? 'Spoofs and seizes' : 'Spoofs'} bought, priced and settled against oversight by the engine (authoritative, QBIT-08, QBIT-09). A spoof reaches every fleet of the target's owner in the target's hex (QBIT-02), and is settled on each separately.${seizes} The engine sends each buyer its receipt; don't write one. A blocked spoof or seize has no effect on that fleet, but its status report records the attempt (QBIT-06):\n${lines.join('\n')}`,
     );
   }
   if (overseen.length) {

@@ -1,0 +1,15 @@
+{
+  "name": "movement",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/core/movement/src",
+  "projectType": "library",
+  "tags": ["type:core", "scope:shared"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p libs/core/movement/tsconfig.lib.json --noEmit && tsc -p libs/core/movement/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}

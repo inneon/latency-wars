@@ -24,11 +24,14 @@ import {
   renderQbits,
   renderQbitsForGm,
   renderQuotes,
+  renderSeedReports,
   renderSensorPicture,
   resolveScans,
+  type SeedReport,
   settleCommandContest,
   startEngine,
   unaccountedUnits,
+  useSeeds,
 } from './engine';
 import { renderMatter, renderMatterForGm } from './matter';
 import * as prompts from './prompts';
@@ -105,7 +108,11 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
 
   for (let turn = 1; turn <= maxRounds && !latest.game_over; turn++) {
     engine = deliverReportedLosses(engine, scenario, turn);
-    const reports = composeReports(engine, scenario, latest, turn);
+    // Seeded units report first, at the start of Planning (QBIT-11), so their scans are in the reports.
+    const seeds = useSeeds(engine, turn);
+    engine = seeds.engine;
+    for (const [id, list] of seeds.reports) record({ type: 'seeded', turn, player: id, reports: list });
+    const reports = composeReports(engine, scenario, latest, turn, seeds.reports);
     for (const [id, text] of reports) record({ type: 'report', turn, player: id, text });
 
     // Simultaneous turns (TURN-01): players plan in parallel, in private.
@@ -141,7 +148,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
         intel = resolved.purchases;
         parts.push(resolved.text);
       }
-      const hijacks = purchases.filter((q) => q.kind === 'spoof').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
+      const hijacks = purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
       const oversights = purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, scenario, p.id, turn, q));
       if (hijacks.length > 0 || oversights.length > 0) parts.push(renderQuotes(hijacks, oversights));
       const text = parts.join('\n\n');
@@ -175,7 +182,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     for (const p of scenario.players) {
       const submission = submissions.get(p.id);
       if (!submission) continue;
-      const quoted = submission.qbit_purchases.filter((q) => q.kind === 'spoof').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
+      const quoted = submission.qbit_purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
       const guarded = submission.qbit_purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, scenario, p.id, turn, q));
       const paid = payForEmission(engine, scenario, p.id, turn, submission, quoted, guarded);
       engine = recordOrders(paid.engine, p.id, turn, paid.submission.orders);
@@ -273,7 +280,13 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
  * (rules answers), their qBits, the messages that have just reached them,
  * their orders still in flight, and the sensor picture.
  */
-function composeReports(engine: EngineState, scenario: Scenario, resolution: GmResolution, turn: number): Map<string, string> {
+function composeReports(
+  engine: EngineState,
+  scenario: Scenario,
+  resolution: GmResolution,
+  turn: number,
+  seeds: ReadonlyMap<string, readonly SeedReport[]> = new Map(),
+): Map<string, string> {
   return new Map(
     scenario.players.map((p) => {
       const note = resolution.player_notes.find((n) => n.player_id === p.id)?.note ?? '';
@@ -286,7 +299,8 @@ function composeReports(engine: EngineState, scenario: Scenario, resolution: GmR
       const picture = renderSensorPicture(knowledge(engine, scenario, p.id, turn));
       const outbox = renderOutbox(engine, scenario, p.id, turn);
       const matter = engine.matter ? renderMatter(engine.matter, p.id, turn) : '';
-      return [p.id, [note, renderQbits(engine, p.id, turn), matter, messages, outbox, picture].filter(Boolean).join('\n\n')];
+      const seeded = renderSeedReports(seeds.get(p.id) ?? []);
+      return [p.id, [note, renderQbits(engine, p.id, turn), matter, seeded, messages, outbox, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }
@@ -359,7 +373,7 @@ ${rulings.join('\n') || '(none)'}
 ${engineNotes.join('\n') || '(none)'}
 </engine_corrections>
 
-<spoofs note="Spoofs bought, at the engine's prices (QBIT-08).">
+<spoofs note="Spoofs and seizes bought, at the engine's prices (QBIT-08).">
 ${hijackNotes.join('\n') || '(none)'}
 </spoofs>
 

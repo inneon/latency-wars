@@ -22,7 +22,9 @@ import {
   renderSensorPicture,
   resolveScans,
   scanObservations,
+  renderSeedReports,
   settleCommandContest,
+  useSeeds,
   startEngine,
   unaccountedUnits,
 } from './engine';
@@ -379,6 +381,23 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     expect(q.cost).toBe(5);
   });
 
+  const withSeize = (): Scenario => ({ ...scenario, parameters: { ...scenario.parameters, hijack: { ...scenario.parameters.hijack, seizeCost: 12 } } });
+
+  it('prices a seize from its own base cost, takes any order, and reaches only its target (QBIT-10)', () => {
+    // Red Line and Red Raider share (1, −1): a spoof would reach both, a seize only its target.
+    const engine = scanned(play(resolution(states({ 'blue-line': [-1, 1], 'red-line': [1, -1], 'red-raider': [1, -1] }))).engine, 2);
+    const q = quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-line', order: 'Attack(red-raider)', strength: 1 });
+    expect(q).toMatchObject({ kind: 'seize', cost: 12 + 2 + 1, breakdown: 'base 12 + distance 2 + strength 1', reaches: ['red-line'] });
+    expect(q.refused).toBeUndefined();
+    expect(renderQuotes([q])).toContain('## Spoof, seize and oversight quotes');
+  });
+
+  it("refuses a seize in a scenario that doesn't use them, and a seize of a flagship (QBIT-10, QBIT-04)", () => {
+    expect(quote(scanned(contact(), 2), 2, { kind: 'seize', target: 'red-line', order: 'Hold' }).refused).toContain("doesn't use seizes");
+    const engine = scanned(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
+    expect(quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-flagship', order: 'Hold' }).refused).toContain("can't be seized");
+  });
+
   it('renders quotes for the player without what the true state shows', () => {
     const text = renderQuotes([
       { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 5, breakdown: 'base 3 + distance 2', fails: 'secret' },
@@ -460,6 +479,17 @@ describe('oversight and the command contest (QBIT-09)', () => {
   it('tells the GM when a spoof lands beside the flagship, so it holds if those were its escorts (FLAG-03)', () => {
     const text = renderHijacksForGm([{ ...spoof('red-line', 2), reaches: ['red-line'], atFlagship: true }]);
     expect(text).toContain("the flagship doesn't move this turn unless its order is AtAllCosts (FLAG-03)");
+  });
+
+  it('settles a seize against oversight like a spoof, command presence included, and tells the GM whose side it fights on (QBIT-10)', () => {
+    const seize = { kind: 'seize' as const, target: 'red-line', order: 'Attack(red-flagship)', strength: 1, cost: 13, breakdown: '', reaches: ['red-line'], atFlagship: true };
+    const settle = (strength: number) => settleCommandContest(new Map([['blue', [{ ...seize, strength }]]]), new Map()).get('blue')?.[0];
+    expect(settle(1)?.fails).toContain('seize strength 1 against red-line at 1');
+    expect(settle(2)?.fails).toBeUndefined();
+    const text = renderHijacksForGm([{ ...seize, strength: 2 }]);
+    expect(text).toContain("Spoofs and seizes bought");
+    expect(text).toContain("as the seizer's unit");
+    expect(text).toContain('(FLAG-03)');
   });
 
   it('ignores oversight that was refused', () => {
@@ -739,5 +769,43 @@ describe('the private ranking', () => {
       { player: 'blue', flagshipDamage: 0, flagshipDestroyed: false, fleetStrength: 9, production: 4 },
       { player: 'red', flagshipDamage: 1, flagshipDestroyed: false, fleetStrength: 13, production: 4 },
     ]);
+  });
+});
+
+describe('seeded units (QBIT-11)', () => {
+  let ycnetal: Scenario;
+  beforeAll(async () => {
+    ycnetal = await loadScenario(findWorkspaceRoot(__dirname), 'ycnetal');
+  });
+  const seededWith = (seed: number) => {
+    const engine = startEngine(ycnetal);
+    return { ...engine, matter: engine.matter && { ...engine.matter, seeded: new Map([['blue-probe', seed]]) } };
+  };
+
+  it('spends one qBit at the start of Planning and gives its owner a scan of the unit, free', () => {
+    const before = seededWith(2);
+    const { engine, reports } = useSeeds(before, 1);
+    expect(reports.get('blue')).toEqual([{ unit: 'blue-probe', name: 'Blue Probe', left: 1 }]);
+    expect(reports.has('red')).toBe(false);
+    expect(engine.matter?.seeded.get('blue-probe')).toBe(1);
+    expect(engine.log.instant.length).toBeGreaterThan(before.log.instant.length);
+    expect(engine.ledger).toBe(before.ledger);
+    expect(renderSeedReports(reports.get('blue') ?? [])).toContain('1 seeded qBit(s) left');
+  });
+
+  it('stops when the seed is used up', () => {
+    const once = useSeeds(seededWith(1), 1);
+    expect(renderSeedReports(once.reports.get('blue') ?? [])).toContain('used up');
+    const twice = useSeeds(once.engine, 2);
+    expect(twice.reports.size).toBe(0);
+    expect(twice.engine.matter?.seeded.size).toBe(0);
+  });
+
+  it("tells the owner at once when a seeded unit is gone, and forgets its seed", () => {
+    const engine = seededWith(3);
+    const { engine: after, reports } = useSeeds({ ...engine, units: engine.units.filter((u) => u.id !== 'blue-probe') }, 1);
+    expect(reports.get('blue')).toEqual([{ unit: 'blue-probe', name: 'Blue Probe', gone: true }]);
+    expect(after.matter?.seeded.size).toBe(0);
+    expect(renderSeedReports(reports.get('blue') ?? [])).toContain('no report');
   });
 });

@@ -59,9 +59,9 @@ export const ScenarioHeader = z.object({
 });
 export type ScenarioHeader = z.infer<typeof ScenarioHeader>;
 
-/** A spoof, priced from what the spoofer knows (QBIT-08) and checked against the true state (QBIT-04). */
+/** A spoof or a seize, priced from what its buyer knows (QBIT-08) and checked against the true state (QBIT-04). */
 export const HijackQuote = z.object({
-  kind: z.literal('spoof'),
+  kind: z.enum(['spoof', 'seize']),
   target: z.string(),
   order: z.string(),
   /** Command strength: qBits paid on top of the QBIT-08 price (QBIT-09). */
@@ -80,8 +80,9 @@ export const HijackQuote = z.object({
    */
   fails: z.string().optional(),
   /**
-   * Every fleet the spoof reaches on the true state: the target and every
-   * other fleet of its owner in its hex (QBIT-02). For the GM.
+   * Every fleet it reaches on the true state: for a spoof, the target and
+   * every other fleet of its owner in its hex (QBIT-02); for a seize, the
+   * target alone (QBIT-10). For the GM.
    */
   reaches: z.array(z.string()).readonly().optional(),
   /**
@@ -223,6 +224,16 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
    * rejected, each unit a yard finished, each production a destroyed yard lost. True state: for the designer and the GM, never players.
    */
   z.object({ type: z.literal('production'), turn, notes: z.array(z.string()) }),
+  /**
+   * What the player's seeded units did at the start of a turn's Planning phase (QBIT-11): each scan used, the qBits
+   * left, and the units that have gone quiet. The player is shown this.
+   */
+  z.object({
+    type: z.literal('seeded'),
+    turn,
+    player,
+    reports: z.array(z.object({ unit: z.string(), name: z.string(), left: z.number().optional(), gone: z.literal(true).optional() })),
+  }),
   /** A reply sent back to be fixed, with the problems found. */
   z.object({ type: z.literal('correction'), agent: z.string(), label: z.string(), problems: z.string() }),
   /** A reply accepted with its problems, because the corrections ran out. The game continues as it says. */

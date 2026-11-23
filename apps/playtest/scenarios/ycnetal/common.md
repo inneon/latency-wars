@@ -1,6 +1,6 @@
 ## Situation
 
-Ycnetal is a star with three planets. Blue holds Thgil and Red holds Yaled. Each has a mine on its home planet and a small entanglement web at the planet's inner and outer Lagrange points. The third planet, Langis, lies behind the star and belongs to nobody.
+Ycnetal is a star with three planets. Blue holds Thgil and Red holds Yaled. Each has a mine on its home planet and a small entanglement web: nodes at its home planet's inner and outer Lagrange points, and a third at one of Langis's Trojan points (Blue at Langis L4, Red at Langis L5). The third planet, Langis, lies behind the star and belongs to nobody.
 
 ## Map
 
@@ -65,15 +65,17 @@ Hex distance, with the steps by the shortest legal path in brackets where the st
 
 `C` = 3. `V_STD` = 1, `V_FAST` = 2, `V_FLAG` = 1. `SENSOR_FLEET` = 2, `SENSOR_NODE` = 2, `SENSOR_FLAG` = 3.
 
-`QBIT_DIVISOR` = 32: this map's links are long. `MINE_OUTPUT` = 3, `NODE_COST` = 4, `MINE_COST` = 8. Each player starts with 8 qBits and 8 matter. All other parameters use the placeholder values in the mechanics doc.
+`QBIT_DIVISOR` = 16. `MINE_OUTPUT` = 3, `NODE_COST` = 4, `MINE_COST` = 8, `QBIT_SEIZE_COST` = 12. Each player starts with 8 qBits and 8 matter. All other parameters use the placeholder values in the mechanics doc.
 
 ## Units shipyards can produce
 
-| Class | Strength | Speed | Sensor range | `UNIT_COST` (matter) | `PRODUCE_TURNS` |
-|---|---|---|---|---|---|
-| Probe | 0 | `V_FAST` | `SENSOR_FLEET` | 1 | 1 |
-| Raider | 2 | `V_FAST` | `SENSOR_FLEET` | 4 | 2 |
-| Line | 4 | `V_STD` | `SENSOR_FLEET` | 6 | 3 |
+| Class | Strength | Speed | Sensor range | `UNIT_COST` (matter) | `PRODUCE_TURNS` | Yard slot (`PROD-05`) | Can be seeded (`QBIT-11`) |
+|---|---|---|---|---|---|---|---|
+| Probe | 0 | `V_FAST` | `SENSOR_FLEET` | 1 | 1 | Side | Yes |
+| Raider | 2 | `V_FAST` | `SENSOR_FLEET` | 4 | 2 | Main | No |
+| Line | 4 | `V_STD` | `SENSOR_FLEET` | 6 | 3 | Main | No |
+
+A seeded probe is ordered as `Produce(probe, seed n)`: it costs 1 matter and `n` qBits, and reports to you instantly for `n` turns, or until it is destroyed.
 
 ## House rules
 

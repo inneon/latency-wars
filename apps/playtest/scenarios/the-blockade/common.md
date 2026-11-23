@@ -29,6 +29,7 @@ These are stopgaps for things the rules leave as placeholders. They are not part
 - **Sensors:** a sensor sees an enemy unit's exact strength.
 - **Probes:** strength 0, speed `V_FAST`, sensor range `SENSOR_FLEET`. A probe is never willing to fight, can't escort, and is destroyed by any engagement. A probe that ends a movement step in the same hex as an enemy fleet or flagship that can deal damage (strength above 0) is also destroyed, even if nothing there is willing to fight it. Enemy probes that meet don't harm each other. It counts as a fleet for orders and status reports, but accepts only `MoveTo`, `Patrol` and `Hold`: any other order is rejected as impossible (`RES-01`).
 - **Transmissions** (`OPEN-03`): sending orders and status reports does not reveal the sender.
+- **No seizes:** seizing (`QBIT-10`) isn't used in this scenario. Spoofs and oversight are as the mechanics doc says.
 
 ## Victory
 
