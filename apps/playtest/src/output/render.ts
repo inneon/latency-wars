@@ -1,8 +1,9 @@
 import { renderStatement } from '../core/engine';
 import { renderMatterStatement } from '../core/matter';
+import { renderMovementPhase } from '../core/movement-phase';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
-import type { Feedback, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
+import type { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
 import type { AgentUsage } from '../types/usage';
 
 // Pure formatters: events in, Markdown out. Writing the files is run-writer's job.
@@ -37,6 +38,19 @@ function playerTurn(name: string, step: string, s: PlayerTurn): string {
   return parts.join('\n\n');
 }
 
+function gmDecisions(d: GmDecisions): string {
+  const hex = (h: { q: number; r: number } | undefined) => (h ? `(${h.q}, ${h.r})` : '');
+  const table = [
+    '| Unit | Move | Order | Stance | Evading |',
+    '|---|---|---|---|---|',
+    ...d.decisions.map(
+      (x) =>
+        `| ${x.unit} | ${x.move} ${x.move_unit ?? hex(x.move_hex)} | ${x.order} ${x.order_target ?? hex(x.order_hex)} | ${x.stance} | ${x.evading ? 'yes' : ''} |`,
+    ),
+  ].join('\n');
+  return [d.rulings.length ? `#### Rulings\n\n${rulingsTable(d.rulings)}` : '', details('GM write-up', d.decision_log), table].filter(Boolean).join('\n\n');
+}
+
 function gmResolution(r: GmResolution): string {
   const units = [
     '| Unit | Owner | Hex | Strength |',
@@ -65,6 +79,8 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       e.type === 'player_turn' ||
       e.type === 'quotes' ||
       e.type === 'hijacks' ||
+      e.type === 'gm_decisions' ||
+      e.type === 'movement' ||
       e.type === 'gm_resolution' ||
       e.type === 'qbits' ||
       e.type === 'matter' ||
@@ -90,6 +106,8 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
           );
         }
       }
+      if (e.type === 'gm_decisions') out.push(`### GM decisions (Delivery and Decision)`, gmDecisions(e.decisions));
+      if (e.type === 'movement') out.push(`### Movement (engine)`, renderMovementPhase(e.phase));
       if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(e.resolution));
       if (e.type === 'qbits') out.push(`#### qBit ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderStatement(st)}`).join('\n')}`);
       if (e.type === 'matter') out.push(`#### Matter ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderMatterStatement(st)}`).join('\n')}`);
@@ -180,7 +198,9 @@ export function renderReport(scenario: Scenario, events: PlaytestEvent[], usage:
     if (e.type === 'player_feedback') out.push(feedbackSection(name(e.player), e.feedback));
   }
 
-  const allRulings = events.flatMap((e) => (e.type === 'setup' || e.type === 'gm_resolution' ? e.resolution.rulings : []));
+  const allRulings = events.flatMap((e) =>
+    e.type === 'setup' || e.type === 'gm_resolution' ? e.resolution.rulings : e.type === 'gm_decisions' ? e.decisions.rulings : [],
+  );
   const gaps = allRulings.filter((r) => r.basis !== 'explicit');
   const engine = events.filter((e) => e.type === 'engine');
   const overrides = engine.flatMap((e) => e.overrides.map((o) => ({ turn: e.turn, ...o })));

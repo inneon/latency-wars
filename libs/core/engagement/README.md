@@ -10,7 +10,7 @@ Import with `@latency-wars/engagement`. Types for hexes and units come from `@la
 
 | Function | Rule | What it answers |
 |---|---|---|
-| `willingness(situation, unit, enemy)` | MOVE-04, FLAG-01, QBIT-02, AUTO-03 | Whether `unit` is willing to fight `enemy` now, with every clause that holds, or what rules it out |
+| `willingness(situation, unit, enemy)` | MOVE-04, FLAG-01, QBIT-02, AUTO-03 | Whether `unit` is willing to fight `enemy` now, with every clause that holds, or what rules it out (including a house rule's `unwilling`) |
 | `isWilling(situation, unit, enemy)` | MOVE-04 | The same, as a boolean |
 | `startMovement()` | — | An empty Movement phase |
 | `afterStep(state, situation)` | MOVE-03 | The engagements formed after a step, with the reasons on each side. Puts back any engaged unit that was moved anyway |
@@ -18,7 +18,7 @@ Import with `@latency-wars/engagement`. Types for hexes and units come from `@la
 | `engagementGroups(engagements, situation)` | COMBAT-02, RES-08 | Each combat's members and why each is in it, plus the bystanders in their hexes |
 | `groupOf(combats, unit)` | COMBAT-02 | Which combat a unit fights in |
 
-A `Situation` is every unit at one moment, each unit's `Decision`, and `ENGAGE_RANGE`. A `Decision` holds what the Decision phase fixed for the turn: the active order (only `Attack`, `Defend` and `Escort` matter; everything else is `{ kind: 'other' }`), the stance, and whether the fleet is spoofed or evading. A unit with no entry has no order and the default stance.
+A `Situation` is every unit at one moment, each unit's `Decision`, and `ENGAGE_RANGE`. A `Decision` holds what the Decision phase fixed for the turn: the active order (only `Attack`, `Defend` and `Escort` matter; everything else is `{ kind: 'other' }`), the stance, and whether the fleet is spoofed, evading, or never willing under a house rule (`unwilling`). A unit with no entry has no order and the default stance.
 
 ## Using it
 

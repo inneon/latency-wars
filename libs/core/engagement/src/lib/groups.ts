@@ -92,7 +92,7 @@ export function engagementGroups<U extends Unit>(engagements: readonly Engagemen
     }
     const decision = decisionOf(situation.decisions, u.id);
     const order = decision.order;
-    if (u.class === 'fleet' && order?.kind === 'escort' && !decision.spoofed && !decision.evading && how.has(order.charge)) {
+    if (u.class === 'fleet' && order?.kind === 'escort' && !decision.spoofed && !decision.unwilling && !decision.evading && how.has(order.charge)) {
       const charge = byId.get(order.charge);
       if (charge && hexDistance(u.hex, charge.hex) <= situation.engageRange) found.push({ group: root(charge.id), how: { kind: 'escort', charge: charge.id } });
     }

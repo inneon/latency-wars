@@ -27,6 +27,8 @@ export interface Decision {
   readonly spoofed?: boolean;
   /** It is evading this turn (AUTO-03 priority 2). */
   readonly evading?: boolean;
+  /** Never willing this turn, whatever its order, because a scenario's house rule says so (a probe, say). */
+  readonly unwilling?: boolean;
 }
 
 /** Each unit's Decision, by unit ID. A unit missing here has no order and the default stance. */
@@ -46,9 +48,10 @@ export type WillingReason = 'attack' | 'defend' | 'escort' | 'aggressive' | 'sam
 
 /**
  * What rules a unit out, or limits it to the same-hex clause: `flagship`
- * (FLAG-01), `structure`, `spoofed` (QBIT-02) or `evading` (AUTO-03).
+ * (FLAG-01), `structure`, `spoofed` (QBIT-02), `unwilling` (a house rule) or
+ * `evading` (AUTO-03).
  */
-export type WillingLimit = 'flagship' | 'structure' | 'spoofed' | 'evading';
+export type WillingLimit = 'flagship' | 'structure' | 'spoofed' | 'unwilling' | 'evading';
 
 export interface Willingness {
   readonly willing: boolean;
@@ -74,6 +77,7 @@ export function willingness<U extends Unit>(situation: Situation<U>, unit: U, en
   if (isStructure(unit)) return { willing: false, reasons: NONE, limit: 'structure' };
   const decision = decisionOf(situation.decisions, unit.id);
   if (decision.spoofed) return { willing: false, reasons: NONE, limit: 'spoofed' };
+  if (decision.unwilling) return { willing: false, reasons: NONE, limit: 'unwilling' };
 
   const range = situation.engageRange;
   const reasons: WillingReason[] = [];

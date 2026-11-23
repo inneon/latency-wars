@@ -2,7 +2,7 @@ import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { Agent, JsonSchema, PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
-import type { Feedback, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import type { Feedback, FleetDecision, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { runPlaytest } from './game';
 
 class ScriptedAgent implements Agent {
@@ -56,6 +56,15 @@ const resolution = (scenario: Scenario, turn: number, over = false, extra: Parti
   ...extra,
 });
 
+/** The GM's Decision phase: every fleet and flagship in the prompt's unit table holds, unless `given` says otherwise. */
+const decisions = (prompt: string, given: readonly FleetDecision[] = []): GmDecisions => ({
+  decision_log: 'decided',
+  decisions: [...prompt.matchAll(/\| `([^`]+)` \| [^|]+ \| (?:fleet|flagship) \|/g)].map(
+    ([, unit]) => given.find((d) => d.unit === unit) ?? { unit: unit ?? '', move: 'hold', order: 'none', stance: 'balanced', evading: false },
+  ),
+  rulings: [],
+});
+
 const turn = (purchases: PlayerTurn['qbit_purchases'] = [], orders: PlayerTurn['orders'] = [{ unit: 'Line', order: 'Hold', delivery: 'light' }]): PlayerTurn => ({
   situation_assessment: '',
   qbit_purchases: purchases,
@@ -72,16 +81,23 @@ function setup(
     stubOnTurn = 0,
     purchases = {},
     orders = {},
+    given = {},
+    resolutions = {},
   }: {
     speedingOnTurn?: number;
     stubOnTurn?: number;
+    given?: Record<number, FleetDecision[]>;
+    resolutions?: Record<number, Partial<GmResolution>>;
     purchases?: Record<string, PlayerTurn['qbit_purchases']>;
     orders?: Record<string, PlayerTurn['orders']>;
   } = {},
 ) {
-  const gm = new ScriptedAgent('gm', (label) => {
+  const gm: ScriptedAgent = new ScriptedAgent('gm', (label: string, prompt: string): unknown => {
     if (label === 'setup') return resolution(scenario, 0);
     const n = Number(label.split(' ')[1]);
+    // A correction's prompt has no unit table, so decide from the turn's first prompt.
+    if (label.includes('decide')) return decisions(gm.prompts.find((p) => p.label === `turn ${n} decide`)?.prompt ?? prompt, given[n]);
+    if (resolutions[n]) return resolution(scenario, n, n === gameOverOnTurn, resolutions[n]);
     // On the speeding turn, the GM moves Blue Line two hexes; its speed is 1.
     const units = unitStates(scenario).map((u) => (n === speedingOnTurn && u.id === 'blue-line' ? { ...u, q: 0, r: 2 } : u));
     // On the stub turn, the GM's first reply leaves every unit out; its correction puts them back.
@@ -144,7 +160,7 @@ describe('runPlaytest', () => {
     // The-hunt: 8 qBits to start; a scan of the flagship itself costs the base QBIT_SCAN_COST, 1.
     expect(red.prompts[1]?.prompt).toContain('Scan `red-flagship` (FB-11): 1 qBits (base 1 + distance 0). Balance now 7.');
     expect(red.prompts[1]?.prompt).toContain('## Scan results (as of the end of turn 0, age 0)');
-    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve']);
+    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 decide', 'turn 1 resolve']);
     expect(gm.prompts[1]?.prompt).toContain('## Orders delivered in turn 1');
     expect(gm.prompts[1]?.prompt).toContain('| red | 7 | scan red-flagship (1) | nothing | 4 |');
   });
@@ -176,7 +192,7 @@ describe('runPlaytest', () => {
     });
     await runPlaytest({ scenario, agents, maxRounds: 2, emit: () => undefined });
 
-    const resolve = gm.prompts.find((p) => p.label === 'turn 1 resolve')?.prompt ?? '';
+    const resolve = gm.prompts.find((p) => p.label === 'turn 1 decide')?.prompt ?? '';
     // The flagship's own order is local and free (ORD-05).
     expect(resolve).toContain('blue → `blue-flagship` (sent turn 1, light)');
     expect(resolve).toContain('blue → `blue-raider` (sent turn 1, instant)');
@@ -199,7 +215,7 @@ describe('runPlaytest', () => {
     await runPlaytest({ scenario, agents, maxRounds: 2, emit: (e) => events.push(e) });
 
     // A quote needs no GM call.
-    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve', 'turn 2 resolve']);
+    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 decide', 'turn 1 resolve', 'turn 2 decide', 'turn 2 resolve']);
     expect(red.prompts.map((p) => p.label)).toEqual(['turn 1', 'turn 1 final', 'turn 2', 'debrief']);
     expect(red.prompts[1]?.prompt).toContain('spoof `blue-line` → Hold: refused. You have no track on blue-line.');
     expect(blue.prompts.find((p) => p.label === 'turn 2 final')?.prompt).toContain('spoof `red-line`');
@@ -220,7 +236,7 @@ describe('runPlaytest', () => {
     await runPlaytest({ scenario, agents, maxRounds: 1, emit: (e) => events.push(e) });
 
     expect(blue.prompts.find((p) => p.label === 'turn 1 final')?.prompt).toContain('oversee `blue-line` at strength 1: 2 qBits (distance 1 + strength 1)');
-    const resolve = gm.prompts.find((p) => p.label === 'turn 1 resolve')?.prompt ?? '';
+    const resolve = gm.prompts.find((p) => p.label === 'turn 1 decide')?.prompt ?? '';
     expect(resolve).toContain('Oversight bought (QBIT-09)');
     expect(resolve).toContain('`blue-line` at strength 1');
     expect(events.filter((e) => e.type === 'hijacks').map((e) => e.type === 'hijacks' && [e.player, e.quotes.length, e.oversights.length])).toEqual([['blue', 0, 1]]);
@@ -272,7 +288,7 @@ describe('runPlaytest', () => {
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario, agents, maxRounds: 2, emit: (e) => events.push(e) });
 
-    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 resolve', 'turn 1 resolve (correction 1)']);
+    expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 decide', 'turn 1 resolve', 'turn 1 resolve (correction 1)']);
     expect(events.filter((e) => e.type === 'correction')).toEqual([
       expect.objectContaining({ agent: 'gm', label: 'turn 1 resolve', problems: expect.stringContaining('blue-flagship') }),
     ]);
@@ -280,19 +296,61 @@ describe('runPlaytest', () => {
     expect(events.filter((e) => e.type === 'engine')).toEqual([]);
   });
 
-  it("corrects a GM's illegal move itself, and tells the GM next turn instead of sending the turn back", async () => {
+  it("puts back a unit the GM reports somewhere Movement didn't leave it, and tells the GM next turn instead of sending the turn back", async () => {
     const { gm, agents } = setup(scenario, 99, { speedingOnTurn: 1 });
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario, agents, maxRounds: 2, emit: (e) => events.push(e) });
 
     expect(events.filter((e) => e.type === 'correction')).toEqual([]);
     expect(events.filter((e) => e.type === 'engine')).toEqual([
-      expect.objectContaining({ turn: 1, adjustments: [expect.stringContaining('blue-line moved to (0, 2), but getting from (-2, 2) to (0, 2) takes 2 steps')] }),
+      expect.objectContaining({ turn: 1, adjustments: [expect.stringContaining('blue-line moved to (0, 2), but the Movement phase left it at (-2, 2)')] }),
     ]);
-    const nextResolve = gm.prompts.find((p) => p.label === 'turn 2 resolve')?.prompt ?? '';
-    expect(nextResolve).toContain('The engine corrected your last resolution');
-    expect(nextResolve).toContain('blue-line moved to (0, 2)');
-    expect(nextResolve).toMatch(/\| `blue-line` \| blue \| fleet \| \(-1, \d\) \|/);
+    const nextDecide = gm.prompts.find((p) => p.label === 'turn 2 decide')?.prompt ?? '';
+    expect(nextDecide).toContain('The engine corrected your last resolution');
+    expect(nextDecide).toContain('| `blue-line` | blue | fleet | (-2, 2) |');
+  });
+
+  it('asks the GM for a decision for every fleet and flagship before Movement', async () => {
+    const { gm, agents } = setup(scenario, 99);
+    const events: PlaytestEvent[] = [];
+    // The first reply leaves everyone out; the scripted correction gives them all.
+    let first = true;
+    const send = gm.send.bind(gm);
+    gm.send = async (label, prompt, schema) => {
+      const reply = await send(label, prompt, schema);
+      if (label !== 'turn 1 decide' || !first) return reply;
+      first = false;
+      return JSON.stringify({ decision_log: '', decisions: [], rulings: [] });
+    };
+    await runPlaytest({ scenario, agents, maxRounds: 1, emit: (e) => events.push(e) });
+
+    expect(events).toContainEqual(expect.objectContaining({ type: 'correction', label: 'turn 1 decide', problems: expect.stringContaining('blue-flagship') }));
+    expect(events.find((e) => e.type === 'gm_decisions')).toMatchObject({ turn: 1, decisions: { decisions: expect.arrayContaining([expect.objectContaining({ unit: 'red-raider' })]) } });
+  });
+
+  it('moves units from the GM\'s decisions, works out the fight, and gives the GM both to resolve Combat', async () => {
+    // Blue's raider (speed 2) attacks Red's raider, which holds; Red's line escorts it from (2, -2).
+    const given = {
+      1: [
+        { unit: 'blue-raider', move: 'move_to', move_hex: { q: 1, r: -2 }, order: 'attack', order_target: 'red-raider', stance: 'balanced', evading: false },
+        { unit: 'red-line', move: 'hold', order: 'escort', order_target: 'red-raider', stance: 'balanced', evading: false },
+      ] satisfies FleetDecision[],
+    };
+    const { gm, agents } = setup(scenario, 99, { given });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents, maxRounds: 1, emit: (e) => events.push(e) });
+
+    const movement = events.find((e) => e.type === 'movement');
+    expect(movement?.type === 'movement' && movement.phase.moved.filter((m) => m.unit === 'blue-raider')).toHaveLength(2);
+    expect(movement?.type === 'movement' && movement.phase.combats).toEqual([]);
+    const resolve = gm.prompts.find((p) => p.label === 'turn 1 resolve')?.prompt ?? '';
+    expect(resolve).toContain('Movement, step by step');
+    expect(resolve).toContain('`blue-raider` (-1, 3) → ');
+    expect(resolve).toContain('Combats this turn (COMBAT-02):\n- None: nobody engaged.');
+    // The GM reported nobody moving, so the engine puts the raider where Movement left it.
+    const state = events.find((e) => e.type === 'state' && e.turn === 1);
+    const raider = state?.type === 'state' ? state.units.find((u) => u.id === 'blue-raider') : undefined;
+    expect(raider?.hex).toEqual(movement?.type === 'movement' ? movement.phase.moved.at(-1)?.to : undefined);
   });
 
   it("debriefs the GM in a new conversation, with the game's record instead of its turns", async () => {
@@ -384,7 +442,7 @@ describe('runPlaytest with matter (Ycnetal)', () => {
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario: ycnetal, agents, maxRounds: 2, emit: (e) => events.push(e) });
 
-    const gmTurn1 = gm.prompts.find((p) => p.label === 'turn 1 resolve')?.prompt ?? '';
+    const gmTurn1 = gm.prompts.find((p) => p.label === 'turn 1 decide')?.prompt ?? '';
     expect(gmTurn1).toContain('Produce orders (the engine judged these');
     expect(gmTurn1).toContain('probe');
     const production = events.filter((e) => e.type === 'production');

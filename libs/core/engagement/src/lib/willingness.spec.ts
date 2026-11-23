@@ -86,4 +86,13 @@ describe('willingness (MOVE-04)', () => {
     const sharing = { ...raider, hex: hex(0, 0) };
     expect(willingness(situation([sharing, line], decisions), sharing, line)).toEqual({ willing: true, reasons: ['same-hex'], limit: 'evading' });
   });
+
+  it('a fleet a house rule makes unwilling is never willing, even in an enemy’s hex', () => {
+    const probe = { ...raider, hex: hex(0, 0) };
+    expect(willingness(situation([probe, line], { 'blue-raider': { unwilling: true, stance: 'aggressive' } }), probe, line)).toEqual({
+      willing: false,
+      reasons: [],
+      limit: 'unwilling',
+    });
+  });
 });

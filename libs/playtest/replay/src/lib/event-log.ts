@@ -4,7 +4,7 @@
  * schemas, so neither can change without the other.
  */
 import type { MatterStatement as LedgerMatterStatement, QbitStatement as LedgerStatement } from '@latency-wars/economy';
-import { EngineOverride, Feedback, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import { EngineOverride, Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { z } from 'zod';
 
 /**
@@ -184,6 +184,40 @@ export type MatterStatement = LedgerMatterStatement<PlaytestUnit>;
 const turn = z.number().int();
 const player = z.string();
 
+const WillingReason = z.enum(['attack', 'defend', 'escort', 'aggressive', 'same-hex']);
+
+/** Why a unit is in a combat (COMBAT-02), as `@latency-wars/engagement` works it out. */
+export const Membership = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('engaged'), with: z.array(z.string()) }),
+  z.object({ kind: z.literal('willing'), enemy: z.string(), reasons: z.array(WillingReason) }),
+  z.object({ kind: z.literal('targeted'), by: z.string(), reasons: z.array(WillingReason) }),
+  z.object({ kind: z.literal('escort'), charge: z.string() }),
+]);
+export type Membership = z.infer<typeof Membership>;
+
+/** What the engine's Movement phase did: every step, every engagement and the combats they form (MOVE-01 to MOVE-04, COMBAT-02). */
+export const MovementPhase = z.object({
+  steps: z.number().int(),
+  moved: z.array(z.object({ step: z.number().int(), unit: z.string(), from: Hex, to: Hex })),
+  engagements: z.array(
+    z.object({
+      step: z.number().int(),
+      a: z.object({ unit: z.string(), reasons: z.array(WillingReason) }),
+      b: z.object({ unit: z.string(), reasons: z.array(WillingReason) }),
+    }),
+  ),
+  combats: z.array(z.object({ members: z.array(z.object({ unit: z.string(), how: Membership })), players: z.array(z.string()), hexes: z.array(Hex) })),
+  /** Units in a combat's hex that don't fight. `group` indexes `combats`. */
+  bystanders: z.array(z.object({ unit: z.string(), group: z.number().int() })),
+  /** Fleets a spoof landed on this turn (QBIT-02). */
+  spoofed: z.array(z.string()),
+  /** Fleets a seize landed on this turn, and who seized each (QBIT-10). */
+  seized: z.array(z.object({ unit: z.string(), by: z.string() })),
+  /** What the engine did with the GM's decisions that the GM should know: decisions filled in or set aside. */
+  notes: z.array(z.string()),
+});
+export type MovementPhase = z.infer<typeof MovementPhase>;
+
 /** Everything that happens in a play-test, in order. The outputs are all derived from these. */
 export const PlaytestEvent = z.discriminatedUnion('type', [
   /** Always first: which game this is, and the format the rest of the log is written in. */
@@ -205,6 +239,10 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
    * refused. Each spoof's `fails` says whether it was blocked (QBIT-09).
    */
   z.object({ type: z.literal('hijacks'), turn, player, quotes: z.array(HijackQuote), oversights: z.array(OversightQuote) }),
+  /** The GM's Delivery and Decision phases: how every fleet moves this turn, and what MOVE-04 reads of it. */
+  z.object({ type: z.literal('gm_decisions'), turn, decisions: GmDecisions }),
+  /** The engine's Movement phase, run from the GM's decisions. */
+  z.object({ type: z.literal('movement'), turn, phase: MovementPhase }),
   z.object({ type: z.literal('gm_resolution'), turn, resolution: GmResolution }),
   /** Exactly what a player was told for a Planning phase: the GM's messages plus the computed sensor picture. */
   z.object({ type: z.literal('report'), turn, player, text: z.string() }),

@@ -106,10 +106,12 @@ export const ScenarioFile = z.object({
   maxRounds: z.number().int().positive(),
   /** The map the engine checks movement against. */
   map: MapFile,
-  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), spoof pricing, the qBit ledger and, if the scenario has matter, its ledger. */
+  /** The parameters the engine needs: light delay (`C`, `TRACK_DECAY`), `ENGAGE_RANGE`, spoof pricing, the qBit ledger and, if the scenario has matter, its ledger. */
   parameters: z.object({
     c: z.number().positive(),
     trackDecay: z.number().int().positive().optional(),
+    /** `ENGAGE_RANGE` (MOVE-03). */
+    engageRange: z.number().int().nonnegative().default(1),
     hijack: HijackParameters,
     qbits: QbitParameters,
     matter: MatterParameters.optional(),
@@ -159,7 +161,7 @@ export interface Scenario {
   /** How many turns the game lasts. A run's --rounds replaces the scenario's own. */
   maxRounds: number;
   map: { radius: number; impassable: Hex[]; features: MapFeature[] };
-  parameters: { c: number; trackDecay?: number; hijack: HijackParameters; qbits: QbitParameters; matter?: MatterParameters };
+  parameters: { c: number; trackDecay?: number; engageRange?: number; hijack: HijackParameters; qbits: QbitParameters; matter?: MatterParameters };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];
   rules: { path: string; content: string }[];

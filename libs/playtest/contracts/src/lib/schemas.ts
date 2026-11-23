@@ -153,6 +153,46 @@ export const BuildReport = z.object({
 });
 export type BuildReport = z.infer<typeof BuildReport>;
 
+const HexRef = z.object({ q: z.number().int(), r: z.number().int() });
+
+/** What one fleet or flagship settled on in the Decision phase (AUTO-03). The engine moves it and works out its fights from this. */
+export const FleetDecision = z.object({
+  unit: z.string().describe('The fleet or flagship.'),
+  move: z
+    .enum(['hold', 'move_to', 'pursue', 'escort'])
+    .describe(
+      'How it moves this turn. move_to: towards move_hex by the shortest path (an objective tied to a hex, a last known position, evading home, ReturnHome, ' +
+        'a spoof\'s MoveTo). pursue: after move_unit, which its sensors show (RES-04). escort: with move_unit, its charge (RES-08). hold: stays put.',
+    ),
+  move_hex: HexRef.optional().describe('move_to only: where it heads.'),
+  move_unit: z.string().optional().describe('pursue: the target. escort: the charge.'),
+  order: z
+    .enum(['none', 'attack', 'defend', 'escort', 'other'])
+    .describe(
+      'Its active order after Delivery and Decision, as MOVE-04 reads it: a fallback counts only once it has taken effect (ORD-01). ' +
+        'other: any objective but Attack, Defend and Escort. none: no order, so its stance decides.',
+    ),
+  order_target: z.string().optional().describe('attack: the unit attacked. escort: the charge.'),
+  order_hex: HexRef.optional().describe('defend: the defended hex, or the defended node\'s hex.'),
+  stance: z.enum(['aggressive', 'balanced', 'evasive']).describe('Its doctrine\'s stance (AUTO-01).'),
+  evading: z.boolean().describe('True if it evades this turn (AUTO-03 priority 2).'),
+  unwilling: z
+    .boolean()
+    .optional()
+    .describe('True if a scenario house rule says it is never willing to fight, such as a probe. Leave out otherwise.'),
+});
+export type FleetDecision = z.infer<typeof FleetDecision>;
+
+/** The GM's Delivery and Decision phases. The engine then runs Movement, and the GM resolves the rest of the turn. */
+export const GmDecisions = z.object({
+  decision_log: z
+    .string()
+    .describe('A write-up of the Delivery and Decision phases for the designer: each delivered order checked (RES-01), and why each fleet does what it does (AUTO-03). Players never see it.'),
+  decisions: z.array(FleetDecision).describe('One for every fleet and flagship in play, including those that hold. Not for nodes or mines.'),
+  rulings: z.array(Ruling).describe('Every ruling the Delivery and Decision phases needed. Include routine explicit ones only if notable.'),
+}).meta({ title: 'GmDecisions' });
+export type GmDecisions = z.infer<typeof GmDecisions>;
+
 export const GmResolution = z.object({
   resolution_log: z
     .string()

@@ -40,12 +40,13 @@ import type { EngineOverride, GmResolution, PlayerTurn, QbitPurchase, UnitState 
 /*
  * The engine side of the strangler fig: the facts code owns, so the GM doesn't
  * have to work them out. Today that's positions, visibility (LIGHT-*), when
- * messages and light orders arrive (FB-04, ORD-04, ORD-09), legal movement
- * (MOVE-01, MOVE-02), the qBit ledger (ECON-01, ECON-04, QBIT-01) and, in
+ * messages and light orders arrive (FB-04, ORD-04, ORD-09), the Movement
+ * phase and who fights whom (MOVE-01 to MOVE-04, COMBAT-02; see
+ * `movement-phase.ts`), the qBit ledger (ECON-01, ECON-04, QBIT-01) and, in
  * scenarios with matter, the matter ledger, Produce orders and the units
  * shipyards make (MAT-01, ECON-03, PROD-03, PROD-04; see `matter.ts`); the GM
- * still owns what other orders make units do, combat, and whether a build made
- * progress.
+ * still owns the Decision phase (what orders make units do), combat, and
+ * whether a build made progress.
  *
  * The GM decides what happens; the engine has the last word on what it
  * models. It never sends the GM back to redo a turn. It corrects what breaks
@@ -178,8 +179,18 @@ export function unaccountedUnits(engine: EngineState, resolution: GmResolution):
  * sent back; only `unaccountedUnits` is checked before, while the GM can
  * still be asked again. Turn 0 is setup: the scenario's units stand,
  * whatever the GM copied.
+ *
+ * `afterMovement` is where the engine's Movement phase left every unit. Nothing
+ * moves after Movement, so a unit the GM reports anywhere else is put back.
+ * Without it, the GM's positions are only checked against each unit's speed.
  */
-export function applyResolution(engine: EngineState, resolution: GmResolution, players: readonly string[], turn: number): Applied {
+export function applyResolution(
+  engine: EngineState,
+  resolution: GmResolution,
+  players: readonly string[],
+  turn: number,
+  afterMovement?: readonly PlaytestUnit[],
+): Applied {
   const adjustments: string[] = [];
   const overrides: EngineOverride[] = [];
   const previous = engine.units;
@@ -203,6 +214,20 @@ export function applyResolution(engine: EngineState, resolution: GmResolution, p
    * which.
    */
   const reach = (unit: PlaytestUnit, to: Hex, what: string): { at: Hex; legal: boolean } => {
+    const moved = afterMovement?.find((u) => u.id === unit.id);
+    if (moved) {
+      if (moved.hex.q === to.q && moved.hex.r === to.r) return { at: to, legal: true };
+      const override = overrideFor(unit.id);
+      if (override) {
+        overrides.push(override);
+        return { at: to, legal: true };
+      }
+      adjustments.push(
+        `${unit.id} ${what} ${formatHex(to)}, but the Movement phase left it at ${formatHex(moved.hex)}, and nothing moves after Movement (TURN-03). The engine used ${formatHex(moved.hex)}.`,
+      );
+      // It could be there, so a unit reported destroyed is still destroyed, where Movement left it.
+      return { at: moved.hex, legal: true };
+    }
     const problem = illegalMove(engine.map, unit.hex, to, unit.speed);
     if (!problem) return { at: to, legal: true };
     const override = overrideFor(unit.id);

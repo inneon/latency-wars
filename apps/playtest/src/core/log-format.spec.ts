@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { hexDistance } from '@latency-wars/domain';
-import type { Feedback, GmResolution, PlayerTurn, UnitState } from '@latency-wars/playtest-contracts';
+import type { Feedback, FleetDecision, GmDecisions, GmResolution, PlayerTurn, UnitState } from '@latency-wars/playtest-contracts';
 import { buildReplay, LOG_VERSION, readEventLog } from '@latency-wars/playtest-replay';
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { Agent, JsonSchema, PlaytestAgents } from '../types/agent';
@@ -41,9 +41,19 @@ function expectGoldenToRead(file: string): void {
   if (read.ok) expect(buildReplay('golden', read.events).frames.length).toBeGreaterThan(1);
 }
 
-const agent = (id: string, reply: (label: string) => unknown): Agent => ({
+const agent = (id: string, reply: (label: string, prompt: string) => unknown): Agent => ({
   id,
-  send: async (label: string, _prompt: string, responseSchema?: JsonSchema) => (responseSchema ? JSON.stringify(reply(label)) : String(reply(label))),
+  send: async (label: string, prompt: string, responseSchema?: JsonSchema) =>
+    responseSchema ? JSON.stringify(reply(label, prompt)) : String(reply(label, prompt)),
+});
+
+/** The GM's Decision phase: every fleet and flagship in the prompt's unit table holds, unless `given` says otherwise. */
+const decisions = (prompt: string, given: readonly FleetDecision[] = []): GmDecisions => ({
+  decision_log: 'decided',
+  decisions: [...prompt.matchAll(/\| `([^`]+)` \| [^|]+ \| (?:fleet|flagship) \|/g)].map(
+    ([, unit]) => given.find((d) => d.unit === unit) ?? { unit: unit ?? '', move: 'hold', order: 'none', stance: 'balanced', evading: false },
+  ),
+  rulings: [],
 });
 
 const feedback: Feedback = {
@@ -95,9 +105,15 @@ async function playScriptedGame(scenario: Scenario): Promise<PlaytestEvent[]> {
       return { id: u.id, owner: u.owner, class: u.class, q, r, strength: u.strength, status: 'Hold; Balanced' };
     });
   const turn2 = place({ 'blue-raider': [0, 2], 'blue-line': [0, 2] });
-  const gm = agent('gm', (label) => {
+  const gm = agent('gm', (label, prompt) => {
     if (label === 'setup') return resolution(place({}));
-    // The raider's move is legal. Blue Line's is two hexes at speed 1, so the engine shortens it.
+    // Both head for (0, 2): the raider gets there, and Blue Line, at speed 1, gets one hex.
+    if (label === 'turn 1 decide') {
+      const to = (unit: string): FleetDecision => ({ unit, move: 'move_to', move_hex: { q: 0, r: 2 }, order: 'other', stance: 'balanced', evading: false });
+      return decisions(prompt, [to('blue-raider'), to('blue-line')]);
+    }
+    if (label.includes('decide')) return decisions(prompt);
+    // The GM puts Blue Line at (0, 2) anyway, where Movement didn't leave it, so the engine puts it back.
     if (label.startsWith('turn 1')) return resolution(place({ 'blue-raider': [0, 2], 'blue-line': [0, 2] }));
     return resolution(
       [
@@ -146,7 +162,8 @@ async function playMatterGame(scenario: Scenario): Promise<PlaytestEvent[]> {
     const units = settled?.type === 'state' ? settled.units : scenario.units;
     return units.map((u) => ({ id: u.id, owner: u.owner, class: u.class, q: u.hex.q, r: u.hex.r, strength: u.strength, status: 'Hold; Balanced' }));
   };
-  const gm = agent('gm', (label) => {
+  const gm = agent('gm', (label, prompt) => {
+    if (label.includes('decide')) return decisions(prompt);
     const last = label.startsWith('turn 3');
     return resolution(standing(), { game_over: last, outcome: last ? 'A draw' : '' });
   });
@@ -206,7 +223,7 @@ describe('the event log', () => {
     const [start, first, second] = replay.frames;
     expect(start?.units).toEqual(scenario.units);
 
-    // The GM put Blue Line two hexes away; the engine let it go one.
+    // Movement took Blue Line one hex; the GM reported it two away, and the engine put it back.
     const line = first?.units.find((u) => u.id === 'blue-line');
     const lineStart = scenario.units.find((u) => u.id === 'blue-line');
     expect(line && lineStart && hexDistance(line.hex, lineStart.hex)).toBe(1);

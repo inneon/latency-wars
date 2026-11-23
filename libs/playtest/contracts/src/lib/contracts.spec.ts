@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { seatPath } from './remote-seat';
-import { Feedback, GmFeedback, GmResolution, PlayerTurn } from './schemas';
+import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from './schemas';
 
 describe('response schemas', () => {
   it.each([
     ['PlayerTurn', PlayerTurn],
+    ['GmDecisions', GmDecisions],
     ['GmResolution', GmResolution],
     ['Feedback', Feedback],
     ['GmFeedback', GmFeedback],

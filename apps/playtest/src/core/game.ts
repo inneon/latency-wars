@@ -1,8 +1,8 @@
 import type { PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { HijackQuote, IntelPurchase, OversightQuote } from '../types/quotes';
-import type { Scenario } from '../types/scenario';
-import { Feedback, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import type { PlaytestUnit, Scenario } from '../types/scenario';
+import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { LOG_VERSION } from '@latency-wars/playtest-replay';
 import { askFor } from './ask';
 import {
@@ -34,6 +34,7 @@ import {
   useSeeds,
 } from './engine';
 import { renderMatter, renderMatterForGm } from './matter';
+import { commandEffects, decisionProblems, renderMovementForGm, runMovementPhase } from './movement-phase';
 import * as prompts from './prompts';
 
 export interface PlaytestOptions {
@@ -71,8 +72,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   // back, and the GM hears about any corrections at the start of its next
   // resolution.
   let engine = startEngine(scenario);
-  const apply = (resolution: GmResolution, turn: number): Applied => {
-    const applied = applyResolution(engine, resolution, players, turn);
+  const apply = (resolution: GmResolution, turn: number, afterMovement?: readonly PlaytestUnit[]): Applied => {
+    const applied = applyResolution(engine, resolution, players, turn, afterMovement);
     if (applied.adjustments.length || applied.overrides.length) {
       record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides });
     }
@@ -208,26 +209,42 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       .filter(Boolean)
       .join('\n\n');
 
-    const label = `turn ${turn} resolve`;
-    const prompt = prompts.gmResolvePrompt(
-      turn,
-      scenario,
-      submissions,
-      hijacks,
-      oversights,
-      engine.units,
-      renderOrdersForGm(engine, scenario, turn),
-      ledgers,
-      applied.adjustments,
-      applied.notes,
-      turn === maxRounds,
+    // Delivery and Decision (TURN-03): the GM works out how every fleet behaves this turn (RES-01, AUTO-03).
+    const decideLabel = `turn ${turn} decide`;
+    const atStart = engine.units;
+    const decided = await askFor(
+      gm,
+      decideLabel,
+      prompts.gmDecidePrompt(
+        turn,
+        scenario,
+        submissions,
+        hijacks,
+        oversights,
+        engine.units,
+        renderOrdersForGm(engine, scenario, turn),
+        ledgers,
+        applied.adjustments,
+        applied.notes,
+      ),
+      GmDecisions,
+      { ...corrections('gm', decideLabel), check: (d) => decisionProblems(atStart, d) },
     );
+    record({ type: 'gm_decisions', turn, decisions: decided });
+
+    // Movement (TURN-03): the engine moves every unit and works out who fights (MOVE-01 to MOVE-04, COMBAT-02).
+    const movement = runMovementPhase(engine.map, engine.units, decided, scenario.parameters.engageRange ?? 1, commandEffects(hijacks));
+    record({ type: 'movement', turn, phase: movement.phase });
+
+    // Combat onward (TURN-03): the GM resolves the rest of the turn from where Movement left everyone.
+    const label = `turn ${turn} resolve`;
+    const prompt = prompts.gmResolvePrompt(turn, renderMovementForGm(movement, engine.units), turn === maxRounds);
     // A resolution that leaves units out goes back to the GM: the engine can't tell what happened to them.
     const before = engine;
     latest = await askFor(gm, label, prompt, GmResolution, { ...corrections('gm', label), check: (r) => unaccountedUnits(before, r) });
     lastTurn = turn;
     record({ type: 'gm_resolution', turn, resolution: latest });
-    applied = apply(latest, turn);
+    applied = apply(latest, turn, movement.units);
     engine = applied.engine;
     const productionNotes = [...judged.notes, ...applied.notes];
     if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });
@@ -355,6 +372,14 @@ function gameRecord(events: PlaytestEvent[]): string {
           `- ${r.player}: flagship ${r.flagshipDestroyed ? 'destroyed' : `damage ${r.flagshipDamage}`}; fleet strength ${r.fleetStrength} (flagship included); production ${Math.round(r.production * 1000) / 1000} qBits/turn${r.matterOutput === undefined ? '' : `, ${r.matterOutput} matter/turn`}`,
         );
       }
+    }
+    if (e.type === 'gm_decisions') {
+      for (const r of e.decisions.rulings) {
+        rulings.push(`- Turn ${e.turn}, Decision [${r.basis}] (${r.rule_ids.join(', ') || 'no rule'}) ${r.situation} → ${r.ruling}`);
+      }
+    }
+    if (e.type === 'movement') {
+      for (const n of e.phase.notes) engineNotes.push(`- Turn ${e.turn}, Movement: ${n}`);
     }
     if (e.type === 'setup' || e.type === 'gm_resolution') {
       const turn = e.type === 'setup' ? 0 : e.turn;

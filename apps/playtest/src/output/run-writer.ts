@@ -93,6 +93,10 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: quotes for ${e.player}${e.intel.length ? ` (with ${e.intel.filter((i) => i.bought).length} scan(s))` : ''}`;
     case 'hijacks':
       return `Turn ${e.turn}: ${e.player} bought ${e.quotes.filter((q) => !q.refused).length} spoof(s) and ${e.oversights.filter((o) => !o.refused).length} oversight(s)`;
+    case 'gm_decisions':
+      return `Turn ${e.turn}: GM decided every fleet's behaviour (${e.decisions.rulings.length} ruling(s))`;
+    case 'movement':
+      return `Turn ${e.turn}: engine ran Movement: ${e.phase.moved.length} move(s), ${e.phase.engagements.length} engagement(s), ${e.phase.combats.length} combat(s)`;
     case 'gm_resolution':
       return `Turn ${e.turn}: GM resolved the turn (${e.resolution.rulings.length} ruling(s))${
         e.resolution.game_over ? ` — game over: ${e.resolution.outcome}` : ''
