@@ -1,0 +1,250 @@
+import type { Hex, PlayerId, Unit, UnitId } from '@latency-wars/domain';
+import type { ActiveOrder, Bystander, Engagement, Membership, Stance } from '@latency-wars/engagement';
+import type { GameMap, MoveIntent, UnitMoved } from '@latency-wars/movement';
+
+/*
+ * What the engine holds and what it takes in. Every input is engine-shaped:
+ * whoever drives the engine (the playtest's GM adapter today) converts its
+ * own answers into these.
+ */
+
+/** A unit as the engine tracks it: the domain's minimum plus what status reports carry. */
+export interface GameUnit extends Unit {
+  readonly name: string;
+  readonly strength: number;
+  /** The rest of its status report (LIGHT-02): active order, doctrine. Only ever shown to its owner. */
+  readonly status?: string;
+}
+
+/** `QBIT_SPOOF_COST`, `QBIT_SEIZE_COST` and `HIJACK_MAX_AGE`: pricing and aiming spoofs and seizes (QBIT-04, QBIT-08). */
+export interface HijackParameters {
+  readonly spoofCost: number;
+  readonly maxTrackAge: number;
+  /** Without it, the game doesn't use seizes (QBIT-10): every one is refused. */
+  readonly seizeCost?: number;
+}
+
+/** What the qBit ledger needs (ECON-01, ECON-04, QBIT-01, QBIT-08). */
+export interface QbitParameters {
+  /** Every player's balance at the start of turn 1. */
+  readonly start: number;
+  /** `QBIT_DIVISOR` */
+  readonly divisor: number;
+  /** `QBIT_DECAY`, as a fraction. */
+  readonly decay: number;
+  /** `QBIT_ORDER_COST` */
+  readonly orderCost: number;
+  /** `QBIT_SCAN_COST` */
+  readonly scanCost: number;
+  /** The hexes with a zone bonus, and each one's `k` (ECON-01). */
+  readonly linkBonuses: readonly { readonly hex: readonly [number, number]; readonly k: number }[];
+  /** qBits each player gets every Economy phase whatever their web, by player id: supply from outside the system. */
+  readonly flatIncome: Readonly<Record<PlayerId, number>>;
+}
+
+/** A unit class a shipyard can produce (PROD-03, PROD-04). */
+export interface ProducibleUnit {
+  /** The name a `Produce(class)` order uses. */
+  readonly class: string;
+  readonly strength: number;
+  readonly speed: number;
+  readonly sensorRange: number;
+  /** `UNIT_COST`, in matter. */
+  readonly cost: number;
+  /** `PRODUCE_TURNS` */
+  readonly turns: number;
+  /** Produced in a yard's side slot (PROD-05). */
+  readonly sideSlot?: boolean;
+  /** Can be seeded with qBits when produced (QBIT-11). */
+  readonly seedable?: boolean;
+}
+
+/** What the matter ledger needs (MAT-01, ECON-03, PROD-04). */
+export interface MatterParameters {
+  readonly start: number;
+  /** `MINE_OUTPUT` */
+  readonly mineOutput: number;
+  /** `NODE_COST` */
+  readonly nodeCost: number;
+  /** `MINE_COST` */
+  readonly mineCost: number;
+  readonly units: readonly ProducibleUnit[];
+}
+
+export interface Parameters {
+  /** `C` */
+  readonly c: number;
+  /** `TRACK_DECAY` */
+  readonly trackDecay?: number;
+  /** `ENGAGE_RANGE` */
+  readonly engageRange?: number;
+  readonly hijack: HijackParameters;
+  readonly qbits: QbitParameters;
+  /** Without it, the game has no matter. */
+  readonly matter?: MatterParameters;
+}
+
+/** Everything the engine needs to start a game and look up its parameters. */
+export interface GameSetup {
+  readonly players: readonly { readonly id: PlayerId; readonly name: string }[];
+  /** The true state at the end of turn 0. */
+  readonly units: readonly GameUnit[];
+  readonly map: GameMap;
+  readonly parameters: Parameters;
+}
+
+// ---- Inputs ----
+
+/** An order as a player submits it. */
+export interface SubmittedOrder {
+  /** The recipient as the player named it: its id or its name. */
+  readonly unit: string;
+  readonly order: string;
+  readonly delivery: 'light' | 'instant';
+}
+
+/** Something a player spends qBits on in Planning (QBIT-01), other than an instant order. */
+export interface Purchase {
+  readonly kind: 'scan' | 'spoof' | 'seize' | 'oversee';
+  readonly target?: string;
+  /** Spoof or seize only. */
+  readonly order?: string;
+  /** Command strength (QBIT-09). */
+  readonly strength?: number;
+}
+
+/** What one fleet or flagship settled on in the Decision phase (AUTO-03). */
+export interface FleetPlan {
+  readonly unit: UnitId;
+  readonly intent: MoveIntent;
+  /** Its active order as MOVE-04 reads it. Absent for none. */
+  readonly order?: ActiveOrder;
+  readonly stance: Stance;
+  readonly evading: boolean;
+  /** A scenario house rule says it never fights. */
+  readonly unwilling?: boolean;
+}
+
+/** One unit's state at the end of a turn, as reported. */
+export interface ReportedUnit {
+  readonly id: UnitId;
+  readonly owner: PlayerId;
+  readonly class: GameUnit['class'];
+  readonly hex: Hex;
+  readonly strength: number;
+  readonly status?: string;
+  /** For a unit new to the game. */
+  readonly name?: string;
+  readonly speed?: number;
+  readonly sensorRange?: number;
+}
+
+/** A message a unit sends home this turn. */
+export interface ReportedMessage {
+  readonly fromUnit: UnitId;
+  readonly text: string;
+  /** The ack of an instant order (ORD-09). */
+  readonly instantAck: boolean;
+  /** Units it reports destroyed this turn. */
+  readonly reportsDestroyed?: readonly UnitId[];
+}
+
+/** What a builder's `Build` order did in this turn's Economy phase (ECON-03). */
+export interface BuildProgress {
+  readonly builder: UnitId;
+  readonly structure: 'node' | 'mine';
+  readonly progress: 'progressed' | 'reset';
+}
+
+/** A claim that a rule lets a unit break a constraint the engine enforces. */
+export interface Override {
+  readonly unitId: UnitId;
+  readonly reason: string;
+  readonly ruleIds: readonly string[];
+}
+
+/** What happened from Combat to the end of a turn, as the engine is told it. */
+export interface TurnOutcome {
+  /** Every unit still in the game. */
+  readonly units: readonly ReportedUnit[];
+  /** Every unit that left the game this turn, where it was last. */
+  readonly removed: readonly ReportedUnit[];
+  readonly messages: readonly ReportedMessage[];
+  readonly builds: readonly BuildProgress[];
+  /** Shipyards that fought this turn (PROD-04). */
+  readonly yardsInCombat: readonly UnitId[];
+  readonly overrides: readonly Override[];
+}
+
+// ---- Outputs ----
+
+/** A spoof or a seize, priced from what its buyer knows (QBIT-08) and checked against the true state (QBIT-04). */
+export interface HijackQuote {
+  readonly kind: 'spoof' | 'seize';
+  readonly target: string;
+  readonly order: string;
+  /** Command strength: qBits paid on top of the QBIT-08 price (QBIT-09). */
+  readonly strength?: number;
+  /** The price. Undefined when refused and nothing is bought. */
+  readonly cost?: number;
+  readonly breakdown?: string;
+  /** Why the player can't buy this, from what they know. Nothing is charged. */
+  readonly refused?: string;
+  /** Why it fails on the true state, which the player isn't told: they pay anyway (QBIT-08). */
+  readonly fails?: string;
+  /** Every fleet it reaches on the true state (QBIT-02, QBIT-10). */
+  readonly reaches?: readonly UnitId[];
+  /** The target's hex holds its owner's flagship in Emission (QBIT-09, FLAG-03). */
+  readonly atFlagship?: boolean;
+  /** The fleets it reaches whose oversight blocked it, with that oversight's strength (QBIT-09). */
+  readonly blocked?: readonly { readonly unit: UnitId; readonly oversight: number }[];
+}
+
+/** Oversight of one of the buyer's own fleets for the turn (QBIT-09). */
+export interface OversightQuote {
+  readonly target: string;
+  readonly strength: number;
+  readonly cost?: number;
+  readonly breakdown?: string;
+  readonly refused?: string;
+}
+
+/** A scan (FB-11), as the engine charged it. */
+export interface IntelPurchase {
+  readonly kind: 'scan';
+  readonly target?: string;
+  /** What was charged; 0 when refused. */
+  readonly cost: number;
+  readonly bought: boolean;
+  /** What the player is told about this purchase. */
+  readonly note: string;
+}
+
+/** One player's standing at the end of a game. */
+export interface RankingRow {
+  readonly player: PlayerId;
+  readonly flagshipDamage: number;
+  readonly flagshipDestroyed: boolean;
+  readonly fleetStrength: number;
+  readonly production: number;
+  readonly matterOutput?: number;
+}
+
+/** What the Movement phase did: every step, every engagement and the combats they form (MOVE-01 to MOVE-04, COMBAT-02). */
+export interface MovementPhase {
+  readonly steps: number;
+  readonly moved: readonly UnitMoved[];
+  readonly engagements: readonly Engagement[];
+  readonly combats: readonly {
+    readonly members: readonly { readonly unit: UnitId; readonly how: Membership }[];
+    readonly players: readonly PlayerId[];
+    readonly hexes: readonly Hex[];
+  }[];
+  readonly bystanders: readonly Bystander[];
+  /** Fleets a spoof landed on (QBIT-02). */
+  readonly spoofed: readonly UnitId[];
+  /** Fleets a seize landed on, and who seized each (QBIT-10). */
+  readonly seized: readonly { readonly unit: UnitId; readonly by: PlayerId }[];
+  /** What the engine did with the decisions: decisions filled in or set aside. */
+  readonly notes: readonly string[];
+}

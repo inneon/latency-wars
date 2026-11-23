@@ -1,8 +1,8 @@
 import { balanceOf, matterStatementFor, openLedger } from '@latency-wars/economy';
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
-import type { SentOrder } from './engine';
-import { judgeProduceOrders, type MatterState, parseProduce, renderMatter, settleMatterEconomy, startMatter } from './matter';
+import type { SentOrder } from './engine.spec-helper';
+import { judgeProduceOrders, type MatterState, parseProduce, renderMatter, settleMatterEconomy, startMatter } from './engine.spec-helper';
 
 let scenario: Scenario;
 let start: MatterState;

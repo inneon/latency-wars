@@ -1,6 +1,4 @@
-import { renderStatement } from '../core/engine';
-import { renderMatterStatement } from '../core/matter';
-import { renderMovementPhase } from '../core/movement-phase';
+import { renderMatterStatement, renderMovementPhase, renderStatement } from '@latency-wars/playtest-briefing';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import type { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';

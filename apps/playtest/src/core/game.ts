@@ -1,40 +1,50 @@
 import type { PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
-import type { HijackQuote, IntelPurchase, OversightQuote } from '../types/quotes';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
-import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
-import { LOG_VERSION } from '@latency-wars/playtest-replay';
-import { askFor } from './ask';
 import {
   type Applied,
-  applyResolution,
+  applyOutcome,
+  commandEffects,
   deliverReportedLosses,
   type EngineState,
+  type HijackQuote,
+  type IntelPurchase,
   judgeProduction,
   knowledge,
   messagesArriving,
+  outbox,
+  type OversightQuote,
   payForEmission,
   queueSpoofReceipts,
   quoteHijack,
   quoteOversight,
   ranking,
   recordOrders,
+  resolveScans,
+  runMovementPhase,
+  type SeedReport,
+  settleCommandContest,
+  startEngine,
+  useSeeds,
+} from '@latency-wars/engine';
+import {
+  renderMatter,
+  renderMatterForGm,
+  renderMessages,
+  renderMovementForGm,
   renderOrdersForGm,
   renderOutbox,
   renderQbits,
   renderQbitsForGm,
   renderQuotes,
+  renderScans,
   renderSeedReports,
   renderSensorPicture,
-  resolveScans,
-  type SeedReport,
-  settleCommandContest,
-  startEngine,
-  unaccountedUnits,
-  useSeeds,
-} from './engine';
-import { renderMatter, renderMatterForGm } from './matter';
-import { commandEffects, decisionProblems, renderMovementForGm, runMovementPhase } from './movement-phase';
+} from '@latency-wars/playtest-briefing';
+import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import { LOG_VERSION } from '@latency-wars/playtest-replay';
+import { askFor } from './ask';
+import { decisionProblems, toGmOverride, toOutcome, toPlans, unaccountedUnits } from './gm-adapter';
 import * as prompts from './prompts';
 
 export interface PlaytestOptions {
@@ -73,9 +83,9 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   // resolution.
   let engine = startEngine(scenario);
   const apply = (resolution: GmResolution, turn: number, afterMovement?: readonly PlaytestUnit[]): Applied => {
-    const applied = applyResolution(engine, resolution, players, turn, afterMovement);
+    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, afterMovement);
     if (applied.adjustments.length || applied.overrides.length) {
-      record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides });
+      record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides.map(toGmOverride) });
     }
     record({ type: 'state', turn, units: [...applied.engine.units], removed: [...applied.removed] });
     const statements = applied.engine.ledger.statements.filter((s) => s.turn === turn);
@@ -147,7 +157,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
         const resolved = resolveScans(engine, scenario, p.id, turn, intelRequests);
         engine = resolved.engine;
         intel = resolved.purchases;
-        parts.push(resolved.text);
+        parts.push(renderScans(resolved));
       }
       const hijacks = purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
       const oversights = purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, scenario, p.id, turn, q));
@@ -185,9 +195,9 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       if (!submission) continue;
       const quoted = submission.qbit_purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
       const guarded = submission.qbit_purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, scenario, p.id, turn, q));
-      const paid = payForEmission(engine, scenario, p.id, turn, submission, quoted, guarded);
-      engine = recordOrders(paid.engine, p.id, turn, paid.submission.orders);
-      submissions.set(p.id, paid.submission);
+      const paid = payForEmission(engine, scenario, p.id, turn, submission.orders, quoted, guarded);
+      engine = recordOrders(paid.engine, p.id, turn, paid.orders);
+      submissions.set(p.id, { ...submission, orders: paid.orders });
       if (paid.hijacks.length > 0) bought.set(p.id, paid.hijacks);
       if (paid.oversights.length > 0) oversights.set(p.id, paid.oversights);
     }
@@ -233,7 +243,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     record({ type: 'gm_decisions', turn, decisions: decided });
 
     // Movement (TURN-03): the engine moves every unit and works out who fights (MOVE-01 to MOVE-04, COMBAT-02).
-    const movement = runMovementPhase(engine.map, engine.units, decided, scenario.parameters.engageRange ?? 1, commandEffects(hijacks));
+    const movement = runMovementPhase(engine.map, engine.units, toPlans(decided), scenario.parameters.engageRange ?? 1, commandEffects(hijacks));
     record({ type: 'movement', turn, phase: movement.phase });
 
     // Combat onward (TURN-03): the GM resolves the rest of the turn from where Movement left everyone.
@@ -307,17 +317,12 @@ function composeReports(
   return new Map(
     scenario.players.map((p) => {
       const note = resolution.player_notes.find((n) => n.player_id === p.id)?.note ?? '';
-      const arriving = messagesArriving(engine, scenario, p.id, turn);
-      const messages = arriving.length
-        ? `## Messages received\n\n${arriving
-            .map((m) => `- **${m.fromName}** (\`${m.fromUnit}\`, sent turn ${m.sentTurn}${m.instant ? ', instant' : ''}): ${m.text}`)
-            .join('\n')}`
-        : '## Messages received\n\nNone.';
+      const messages = renderMessages(messagesArriving(engine, scenario, p.id, turn));
       const picture = renderSensorPicture(knowledge(engine, scenario, p.id, turn));
-      const outbox = renderOutbox(engine, scenario, p.id, turn);
+      const sent = renderOutbox(outbox(engine, scenario, p.id, turn), turn);
       const matter = engine.matter ? renderMatter(engine.matter, p.id, turn) : '';
       const seeded = renderSeedReports(seeds.get(p.id) ?? []);
-      return [p.id, [note, renderQbits(engine, p.id, turn), matter, seeded, messages, outbox, picture].filter(Boolean).join('\n\n')];
+      return [p.id, [note, renderQbits(engine, p.id, turn), matter, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }

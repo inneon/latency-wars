@@ -3,30 +3,20 @@ import {
   balanceOf,
   canAfford,
   closeMatterTurn,
-  matterIncome,
   type MatterLedger,
-  type MatterStatement,
-  matterStatementFor,
   openMatterLedger,
   produceMatter,
   type QbitLedger,
-  type Refusal,
-  type Spend,
   spend as spendQbits,
   spendMatter,
 } from '@latency-wars/economy';
-import type { BuildReport } from '@latency-wars/playtest-contracts';
-import type { MatterParameters, PlaytestUnit, ProducibleUnit, Scenario } from '../types/scenario';
-import type { QueuedMessage, SentOrder } from './engine';
+import type { QueuedMessage, SentOrder } from './state';
+import type { BuildProgress, GameSetup, GameUnit, MatterParameters, ProducibleUnit } from './types';
 
 /*
- * The matter half of the engine: the facts about matter, shipyards and
- * construction that code can own. It implements MAT-01, ECON-03 (the cost of
- * building), PROD-03 and PROD-04. The GM still decides the parts that need
- * judgment: whether a builder's phase counted (ECON-03) and whether a yard
- * fought (PROD-04). It reports those, and the engine does the rest.
- *
- * Pure: no I/O, no mutation. `engine.ts` owns the state and calls these.
+ * The matter half of the engine: matter, shipyards and construction (MAT-01,
+ * ECON-03, PROD-03, PROD-04). Whether a builder's phase counted (ECON-03) and
+ * whether a yard fought (PROD-04) come in with the turn's outcome.
  */
 
 /** What a shipyard is making, in one of its slots. */
@@ -45,7 +35,7 @@ const slotKey = (yardId: string, side: boolean) => (side ? `${yardId}${SIDE}` : 
 const yardOf = (key: string) => (key.endsWith(SIDE) ? key.slice(0, -SIDE.length) : key);
 
 export interface MatterState {
-  readonly ledger: MatterLedger<PlaytestUnit>;
+  readonly ledger: MatterLedger<GameUnit>;
   readonly config: MatterParameters;
   /** What each yard is producing: its main slot keyed by mine id, its side slot (PROD-05) by mine id plus `#side`. */
   readonly producing: ReadonlyMap<string, Production>;
@@ -61,18 +51,18 @@ export interface MatterState {
   readonly outbox: readonly QueuedMessage[];
 }
 
-/** The matter state at the start of a game, or nothing if the scenario has no matter. */
-export function startMatter(scenario: Scenario): MatterState | undefined {
-  const config = scenario.parameters.matter;
+/** The matter state at the start of a game, or nothing if the game has no matter. */
+export function startMatter(setup: GameSetup): MatterState | undefined {
+  const config = setup.parameters.matter;
   if (!config) return undefined;
   return {
-    ledger: openMatterLedger<PlaytestUnit>(1, Object.fromEntries(scenario.players.map((p) => [p.id, config.start]))),
+    ledger: openMatterLedger<GameUnit>(1, Object.fromEntries(setup.players.map((p) => [p.id, config.start]))),
     config,
     producing: new Map(),
     seeded: new Map(),
     paid: new Map(),
     judged: new Set(),
-    playerNames: new Map(scenario.players.map((p) => [p.id, p.name])),
+    playerNames: new Map(setup.players.map((p) => [p.id, p.name])),
     outbox: [],
   };
 }
@@ -84,7 +74,7 @@ const yardStatus = (main: Production | undefined, side: Production | undefined) 
   const parts = [main ? making(main) : '', side ? `side slot ${making(side)}` : ''].filter(Boolean);
   return parts.length ? `Shipyard: ${parts.join('; ')}` : 'Shipyard: idle';
 };
-const withYardStatus = (unit: PlaytestUnit, producing: ReadonlyMap<string, Production>): PlaytestUnit => {
+const withYardStatus = (unit: GameUnit, producing: ReadonlyMap<string, Production>): GameUnit => {
   const gm = (unit.status ?? '').replace(YARD_STATUS, '').trim();
   return { ...unit, status: `${gm ? `${gm}; ` : ''}${yardStatus(producing.get(slotKey(unit.id, false)), producing.get(slotKey(unit.id, true)))}` };
 };
@@ -121,7 +111,7 @@ export interface ProduceDelivery {
 export interface Judged {
   readonly matter: MatterState;
   /** The qBit ledger, after paying for seeds (QBIT-11). */
-  readonly qbits: QbitLedger<PlaytestUnit>;
+  readonly qbits: QbitLedger<GameUnit>;
   /** For the GM and the log: what was decided, in plain words. */
   readonly notes: string[];
 }
@@ -140,9 +130,9 @@ export interface Judged {
 export function judgeProduceOrders(
   matter: MatterState,
   deliveries: readonly ProduceDelivery[],
-  units: readonly PlaytestUnit[],
+  units: readonly GameUnit[],
   turn: number,
-  qbitLedger: QbitLedger<PlaytestUnit>,
+  qbitLedger: QbitLedger<GameUnit>,
 ): Judged {
   let { ledger } = matter;
   let qbits = qbitLedger;
@@ -204,19 +194,19 @@ export function judgeProduceOrders(
 export interface EconomyInput {
   readonly turn: number;
   /** The units at the start of the turn. */
-  readonly before: readonly PlaytestUnit[];
+  readonly before: readonly GameUnit[];
   /** The units at the end of the turn, after Combat, as the engine has settled them. A structure not in `before` was built this turn. */
-  readonly units: readonly PlaytestUnit[];
-  readonly builds: readonly BuildReport[];
+  readonly units: readonly GameUnit[];
+  readonly builds: readonly BuildProgress[];
   readonly yardsInCombat: readonly string[];
   /** Every unit that has been in the game: so a new unit's id is never one already used. */
-  readonly roster: ReadonlyMap<string, PlaytestUnit>;
+  readonly roster: ReadonlyMap<string, GameUnit>;
 }
 
 export interface Settled {
   readonly matter: MatterState;
   /** The units standing at the end of the turn: the engine's changes to `units` are in here. */
-  readonly units: PlaytestUnit[];
+  readonly units: GameUnit[];
   /** Where the GM's resolution broke a rule the engine enforces, and what the engine did. Told to the GM next turn. */
   readonly adjustments: string[];
   /** What the engine did that the GM should know, but isn't a correction. */
@@ -226,8 +216,8 @@ export interface Settled {
 }
 
 const costOf = (config: MatterParameters, structure: 'node' | 'mine') => (structure === 'node' ? config.nodeCost : config.mineCost);
-const isStructure = (u: PlaytestUnit): u is PlaytestUnit & { class: 'node' | 'mine' } => u.class === 'node' || u.class === 'mine';
-const sameHex = (a: PlaytestUnit, b: PlaytestUnit) => a.hex.q === b.hex.q && a.hex.r === b.hex.r;
+const isStructure = (u: GameUnit): u is GameUnit & { class: 'node' | 'mine' } => u.class === 'node' || u.class === 'mine';
+const sameHex = (a: GameUnit, b: GameUnit) => a.hex.q === b.hex.q && a.hex.r === b.hex.r;
 
 /**
  * The matter side of `turn`'s Economy phase, in TURN-03's order: production
@@ -362,7 +352,7 @@ export function settleMatterEconomy(matter: MatterState, input: EconomyInput): S
 }
 
 /** A unit a yard has made: `blue-raider-2`, "Blue Raider 2". */
-function newUnitFor(yard: PlaytestUnit, def: ProducibleUnit, taken: readonly string[], ownerName: string): PlaytestUnit {
+function newUnitFor(yard: GameUnit, def: ProducibleUnit, taken: readonly string[], ownerName: string): GameUnit {
   const base = `${yard.owner}-${def.class}`;
   const used = new Set(taken);
   let n = 1;
@@ -385,50 +375,7 @@ export function formatMatter(amount: number): string {
   return String(Math.round(amount * 100) / 100);
 }
 
-/** One line per settled turn: where a player's matter went, for the log and the GM. */
-export function renderMatterStatement(s: MatterStatement<PlaytestUnit>): string {
-  const line = (p: Spend | Refusal) =>
-    p.accepted ? `${p.label} (${formatMatter(p.cost)})` : `${p.label} (${formatMatter(p.cost)}, refused: balance ${formatMatter(p.balance)})`;
-  const spent = s.spends.length ? `spent ${s.spends.map(line).join(', ')}` : 'spent nothing';
-  const refused = s.refusals.length ? `; refused ${s.refusals.map(line).join(', ')}` : '';
-  return `Turn ${s.turn}: opened at ${formatMatter(s.opening)}; ${spent}${refused}; production +${formatMatter(s.production)} from ${s.mines.length} mine(s); closed at ${formatMatter(s.closing)}.`;
-}
-
-/**
- * The matter section of a player's report for the Planning phase of `turn`:
- * their balance and total output, as totals only (LIGHT-18). Never an itemised
- * statement, a mine, a yard or a build: each would say what has happened to
- * a unit before the news could arrive.
- */
-export function renderMatter(matter: MatterState, player: string, turn: number): string {
-  const last = matterStatementFor(matter.ledger, player, turn - 1);
-  const lines = [`Balance: ${formatMatter(balanceOf(matter.ledger, player))} matter.`];
-  if (last) lines.push(`Output: ${formatMatter(last.production)} matter a turn, as of last turn's Economy phase.`);
-  return `## Matter\n\n${lines.join('\n')}`;
-}
-
-/** The matter ledger and the yards as the GM needs them to resolve `turn`. True state: never for a player. */
-export function renderMatterForGm(matter: MatterState, units: readonly PlaytestUnit[], players: readonly string[], judgement: readonly string[]): string {
-  const { ledger, config } = matter;
-  const rows = players.map((id) => {
-    const mine = ledger.pending.filter((x) => x.player === id);
-    const spent = mine.filter((x) => x.accepted).map((x) => `${x.label} (${formatMatter(x.cost)})`).join(', ') || 'nothing';
-    return `| ${id} | ${formatMatter(balanceOf(ledger, id))} | ${spent} | ${formatMatter(matterIncome(units, id, config))} |`;
-  });
-  const yards = units
-    .filter((u) => u.class === 'mine')
-    .map((u) => `- \`${u.id}\` (${u.owner}): ${yardStatus(matter.producing.get(slotKey(u.id, false)), matter.producing.get(slotKey(u.id, true))).replace(/^Shipyard: /, '')}`);
-  return [
-    `The matter ledger for this turn, kept by the engine (authoritative). Produce orders delivered this turn have been judged and, if accepted, paid for. The engine adds each mine's output in the Economy phase (MAT-01) from the mines still standing after Combat, charges a builder's cost on its first progress (ECON-03), advances each yard's production unless you list it in yards_in_combat, and adds finished units itself (PROD-04). Don't keep balances or production yourself, and don't list units a yard makes.`,
-    '',
-    '| Player | Balance after purchases | Spent this turn | Output per turn (current mines) |',
-    '|---|---|---|---|',
-    ...rows,
-    '',
-    `Shipyards:\n${yards.join('\n') || '- None.'}`,
-    '',
-    `Produce orders (the engine judged these; PROD-04):\n${judgement.length ? judgement.map((n) => `- ${n}`).join('\n') : '- None delivered.'}`,
-    '',
-    `Unit classes shipyards can produce: ${config.units.map((u) => `${u.class} (cost ${u.cost}, ${u.turns} turn(s)${u.sideSlot ? ', side slot' : ''}${u.seedable ? ', can be seeded' : ''})`).join(', ') || 'none'}. Costs: node ${config.nodeCost}, mine ${config.mineCost}. The engine also runs seeded units' free scans each Planning phase (QBIT-11); you have nothing to do for them.`,
-  ].join('\n');
+/** What a yard's status report says it is making (LIGHT-02), e.g. `Shipyard: idle`. */
+export function yardStatusOf(matter: MatterState, yardId: string): string {
+  return yardStatus(matter.producing.get(slotKey(yardId, false)), matter.producing.get(slotKey(yardId, true)));
 }

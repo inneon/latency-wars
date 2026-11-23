@@ -1,0 +1,15 @@
+{
+  "name": "playtest-briefing",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/playtest/adapters/briefing/src",
+  "projectType": "library",
+  "tags": ["type:adapter", "scope:playtest"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p libs/playtest/adapters/briefing/tsconfig.lib.json --noEmit && tsc -p libs/playtest/adapters/briefing/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}

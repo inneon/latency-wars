@@ -2,8 +2,8 @@ import { formatHex } from '@latency-wars/domain';
 import type { AgentDocument, SystemPrompt } from '../types/agent';
 import type { PlaytestUnit, Scenario, ScenarioPlayer } from '../types/scenario';
 import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
-import type { HijackQuote, OversightQuote } from '../types/quotes';
-import { renderHijacksForGm } from './engine';
+import type { HijackQuote, OversightQuote } from '@latency-wars/engine';
+import { renderHijacksForGm } from '@latency-wars/playtest-briefing';
 import type { JsonSchema } from '../types/agent';
 import { toJsonSchema } from './ask';
 

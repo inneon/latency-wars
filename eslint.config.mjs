@@ -34,7 +34,9 @@ export default [
                         { sourceTag: "type:adapter", onlyDependOnLibsWithTags: ["type:core", "type:contracts", "type:util"] },
                         { sourceTag: "type:core", onlyDependOnLibsWithTags: ["type:core", "type:contracts", "type:util"] },
                         { sourceTag: "type:contracts", onlyDependOnLibsWithTags: ["type:contracts", "type:util"] },
-                        { sourceTag: "type:util", onlyDependOnLibsWithTags: ["type:util"] }
+                        { sourceTag: "type:util", onlyDependOnLibsWithTags: ["type:util"] },
+                        // The engine and the rule libs stand without the playtest: nothing shared depends on a playtest lib.
+                        { sourceTag: "scope:shared", onlyDependOnLibsWithTags: ["scope:shared"] }
                     ]
                 }
             ]

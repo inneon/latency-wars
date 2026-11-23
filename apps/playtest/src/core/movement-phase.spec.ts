@@ -1,8 +1,8 @@
 import { hex, type Hex } from '@latency-wars/domain';
 import type { FleetDecision, GmDecisions } from '@latency-wars/playtest-contracts';
-import type { HijackQuote } from '../types/quotes';
+import type { HijackQuote } from '@latency-wars/engine';
 import type { PlaytestUnit } from '../types/scenario';
-import { commandEffects, decisionProblems, renderMovementForGm, runMovementPhase } from './movement-phase';
+import { commandEffects, decisionProblems, renderMovementForGm, runMovementPhase } from './engine.spec-helper';
 
 // Ycnetal's shape: Red's home shipyard at (0, -6), its flagship on it with escorts.
 const map = { radius: 8, impassable: [hex(0, 0)] };

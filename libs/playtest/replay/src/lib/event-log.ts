@@ -4,6 +4,7 @@
  * schemas, so neither can change without the other.
  */
 import type { MatterStatement as LedgerMatterStatement, QbitStatement as LedgerStatement } from '@latency-wars/economy';
+import type * as Engine from '@latency-wars/engine';
 import { EngineOverride, Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { z } from 'zod';
 
@@ -16,8 +17,8 @@ export const LOG_VERSION = 1;
 
 const Hex = z.object({ q: z.number().int(), r: z.number().int() });
 
-/** A unit as the play-test tracks it: the domain's minimum plus what status reports carry. */
-export const PlaytestUnit = z.object({
+/** A unit as the engine tracks it. The annotation fails to compile if the schema and the engine's type drift apart. */
+export const PlaytestUnit: z.ZodType<Engine.GameUnit> = z.object({
   id: z.string(),
   name: z.string(),
   owner: z.string(),
@@ -29,7 +30,7 @@ export const PlaytestUnit = z.object({
   /** The rest of its status report (LIGHT-02): active order, doctrine. Written by the GM; shown only to its owner. */
   status: z.string().optional(),
 });
-export type PlaytestUnit = z.infer<typeof PlaytestUnit>;
+export type PlaytestUnit = Engine.GameUnit;
 
 /** A named hex worth marking on a map: an orbital zone (SPACE-02) or a planet. */
 export const MapFeature = z.object({
@@ -61,7 +62,7 @@ export const ScenarioHeader = z.object({
 export type ScenarioHeader = z.infer<typeof ScenarioHeader>;
 
 /** A spoof or a seize, priced from what its buyer knows (QBIT-08) and checked against the true state (QBIT-04). */
-export const HijackQuote = z.object({
+export const HijackQuote: z.ZodType<Engine.HijackQuote> = z.object({
   kind: z.enum(['spoof', 'seize']),
   target: z.string(),
   order: z.string(),
@@ -95,10 +96,10 @@ export const HijackQuote = z.object({
   /** The fleets it reaches whose oversight blocked it (QBIT-09), with that oversight's strength, command presence included. For the GM. */
   blocked: z.array(z.object({ unit: z.string(), oversight: z.number() })).readonly().optional(),
 });
-export type HijackQuote = z.infer<typeof HijackQuote>;
+export type HijackQuote = Engine.HijackQuote;
 
 /** Oversight of one of the buyer's own fleets for the turn (QBIT-09). */
-export const OversightQuote = z.object({
+export const OversightQuote: z.ZodType<Engine.OversightQuote> = z.object({
   target: z.string(),
   strength: z.number(),
   /** The price. Undefined when the purchase was refused and nothing is bought. */
@@ -107,10 +108,10 @@ export const OversightQuote = z.object({
   /** Why the player can't buy this. Told to the player; nothing is bought or charged. */
   refused: z.string().optional(),
 });
-export type OversightQuote = z.infer<typeof OversightQuote>;
+export type OversightQuote = Engine.OversightQuote;
 
 /** A scan (FB-11), as the engine charged it. */
-export const IntelPurchase = z.object({
+export const IntelPurchase: z.ZodType<Engine.IntelPurchase> = z.object({
   kind: z.literal('scan'),
   /** The scanned unit. */
   target: z.string().optional(),
@@ -120,10 +121,10 @@ export const IntelPurchase = z.object({
   /** What the player is told about this purchase. */
   note: z.string(),
 });
-export type IntelPurchase = z.infer<typeof IntelPurchase>;
+export type IntelPurchase = Engine.IntelPurchase;
 
 /** One player's standing at the end of a game, for the analyst only: never shown to players. */
-export const RankingRow = z.object({
+export const RankingRow: z.ZodType<Engine.RankingRow> = z.object({
   player: z.string(),
   /** Strength the flagship has lost, or its full starting strength if destroyed. */
   flagshipDamage: z.number(),
@@ -135,7 +136,7 @@ export const RankingRow = z.object({
   /** Matter per turn from the mines as they stand. Only in a scenario with matter. */
   matterOutput: z.number().optional(),
 });
-export type RankingRow = z.infer<typeof RankingRow>;
+export type RankingRow = Engine.RankingRow;
 
 const QbitSpend = z.object({
   accepted: z.literal(true),
@@ -197,7 +198,7 @@ export const Membership = z.discriminatedUnion('kind', [
 export type Membership = z.infer<typeof Membership>;
 
 /** What the engine's Movement phase did: every step, every engagement and the combats they form (MOVE-01 to MOVE-04, COMBAT-02). */
-export const MovementPhase = z.object({
+export const MovementPhase: z.ZodType<Engine.MovementPhase> = z.object({
   steps: z.number().int(),
   moved: z.array(z.object({ step: z.number().int(), unit: z.string(), from: Hex, to: Hex })),
   engagements: z.array(
@@ -217,7 +218,7 @@ export const MovementPhase = z.object({
   /** What the engine did with the GM's decisions that the GM should know: decisions filled in or set aside. */
   notes: z.array(z.string()),
 });
-export type MovementPhase = z.infer<typeof MovementPhase>;
+export type MovementPhase = Engine.MovementPhase;
 
 /** Everything that happens in a play-test, in order. The outputs are all derived from these. */
 export const PlaytestEvent = z.discriminatedUnion('type', [

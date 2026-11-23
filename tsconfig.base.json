@@ -33,6 +33,9 @@
       "@latency-wars/engagement": [
         "./libs/core/engagement/src/index.ts"
       ],
+      "@latency-wars/engine": [
+        "./libs/core/engine/src/index.ts"
+      ],
       "@latency-wars/economy": [
         "./libs/core/economy/src/index.ts"
       ],
@@ -41,6 +44,9 @@
       ],
       "@latency-wars/playtest-replay": [
         "./libs/playtest/replay/src/index.ts"
+      ],
+      "@latency-wars/playtest-briefing": [
+        "./libs/playtest/adapters/briefing/src/index.ts"
       ],
       "@latency-wars/playtest-run-files": [
         "./libs/playtest/adapters/run-files/src/index.ts"

@@ -27,7 +27,7 @@ import {
   useSeeds,
   startEngine,
   unaccountedUnits,
-} from './engine';
+} from './engine.spec-helper';
 import { balanceOf, statementFor } from '@latency-wars/economy';
 import type { PlayerTurn } from '@latency-wars/playtest-contracts';
 

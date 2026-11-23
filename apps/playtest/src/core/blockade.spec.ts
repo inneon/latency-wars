@@ -1,7 +1,7 @@
 import { balanceOf, statementFor } from '@latency-wars/economy';
 import type { GmResolution } from '@latency-wars/playtest-contracts';
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
-import { applyResolution, startEngine } from './engine';
+import { applyResolution, startEngine } from './engine.spec-helper';
 
 describe('the-blockade scenario', () => {
   it('gives Red two and a half times as many ships as Blue, and probes on top', async () => {
