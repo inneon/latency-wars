@@ -171,8 +171,9 @@ async function playMatterGame(scenario: Scenario): Promise<PlaytestEvent[]> {
   const player = (id: string) =>
     agent(id, (label) => {
       if (label === 'debrief') return feedback;
-      if (id === 'blue' && label.startsWith('turn 1')) return produce('blue-mine-thgil', 'probe', 'light');
-      if (id === 'red' && label.startsWith('turn 1')) return produce('red-mine-yaled', 'dreadnought', 'light');
+      // Each flagship starts 2 hexes from its yard, so a light order would land a turn late: send them instantly (ORD-06).
+      if (id === 'blue' && label.startsWith('turn 1')) return produce('blue-mine-thgil', 'probe', 'instant');
+      if (id === 'red' && label.startsWith('turn 1')) return produce('red-mine-yaled', 'dreadnought', 'instant');
       if (id === 'red' && label.startsWith('turn 2')) return produce('red-mine-yaled', 'raider', 'instant');
       return submission([], []);
     });

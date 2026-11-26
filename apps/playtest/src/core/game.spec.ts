@@ -437,7 +437,8 @@ describe('runPlaytest with matter (Ycnetal)', () => {
 
   it('judges Produce itself, builds the unit, and tells players only their balance and output', async () => {
     const { blue, red, gm, agents } = setup(ycnetal, 99, {
-      orders: { 'blue:turn 1': [{ unit: 'Blue Mine Thgil', order: 'Produce(probe)', delivery: 'light' }] },
+      // Blue's flagship starts 2 hexes from its yard, so the order goes instantly to land in turn 1 (ORD-06).
+      orders: { 'blue:turn 1': [{ unit: 'Blue Mine Thgil', order: 'Produce(probe)', delivery: 'instant' }] },
     });
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario: ycnetal, agents, maxRounds: 2, emit: (e) => events.push(e) });

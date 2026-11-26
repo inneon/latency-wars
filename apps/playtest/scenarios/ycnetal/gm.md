@@ -1,6 +1,6 @@
 ## Starting state (end of turn 0)
 
-Each side's flagship, Line, Raider and Probe are on its home planet, with its mine. Two of its nodes are at the planet's L1 and L2 points; its third is at a Trojan point of Langis (Blue at Langis L4 (0, 3), Red at Langis L5 (−3, 0)), 6 hexes from home and 3 from Langis. Treat every unit as having held its starting position (listed under "Starting units" below) since long before turn 1.
+Each side's Line, Raider and Probe are on its home planet, with its mine. Its flagship is two hexes sunward, off the shipyard: Blue's at (4, 0), Red's at (0, −4), 8 hexes apart. Orders from the flagship to the units at home take 1 turn of light, from turn 1. Two of its nodes are at the planet's L1 and L2 points; its third is at a Trojan point of Langis (Blue at Langis L4 (0, 3), Red at Langis L5 (−3, 0)), 6 hexes from home and 3 from Langis. Treat every unit as having held its starting position (listed under "Starting units" below) since long before turn 1.
 
 - No unit has an enemy within sensor range, so neither player has any contacts.
 - No unit has an active order. Every fleet's doctrine is Balanced, with its home planet's mine as its home. No shipyard is producing.
@@ -29,6 +29,7 @@ The distance table is in the shared rules, which the players have too.
 | … + Langis L3 | 682 | 42.6 |
 | … + Langis L3 + Yaled L4 / Thgil L3 | 1422 | 88.9 |
 
+- **The Cascade** (`QBIT-12`, 30 qBits a charge, 3 in a row) is the second way to win. The engine takes the charges, tells every player the counts, and ends the game when one completes: never declare a Cascade win yourself.
 - Each side's Langis node is 6 hexes from home and 3 from Langis, and the two are 6 apart. It is the most exposed part of either starting web: losing it cuts income from 4.9 to 0.25.
 
 - **Matter:** each home mine gives 3 a turn. A mine on Langis doubles that. A raider costs 4 and a Line 6, so a side holding one mine can field about one new raider every one and a half turns.

@@ -1,11 +1,11 @@
 {
   "title": "Ycnetal",
-  "description": "A three-planet system for testing matter and production. Each side starts with a home planet, its mine, nodes at its inner and outer Lagrange points, and a third node at one of Langis's Trojan points. Langis itself lies behind the star and belongs to nobody, and three Lagrange points are shared by both homes.",
+  "description": "A three-planet system for testing matter and production. Each side starts with a home planet, its mine, its flagship two hexes sunward of it, nodes at its inner and outer Lagrange points, and a third node at one of Langis's Trojan points. Langis itself lies behind the star and belongs to nobody, and three Lagrange points are shared by both homes.",
   "rules": [
     "design-doc.md",
     "docs/game-mechanics.md"
   ],
-  "maxRounds": 16,
+  "maxRounds": 20,
   "map": {
     "radius": 7,
     "impassable": [
@@ -186,6 +186,10 @@
           "turns": 3
         }
       ]
+    },
+    "cascade": {
+      "charge": 30,
+      "turns": 3
     }
   },
   "units": [
@@ -195,7 +199,7 @@
       "owner": "blue",
       "class": "flagship",
       "hex": [
-        6,
+        4,
         0
       ],
       "speed": 1,
@@ -300,7 +304,7 @@
       "class": "flagship",
       "hex": [
         0,
-        -6
+        -4
       ],
       "speed": 1,
       "sensorRange": 3,
