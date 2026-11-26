@@ -1,40 +1,21 @@
 import type { PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
-import type { PlaytestUnit, Scenario } from '../types/scenario';
+import type { Scenario } from '../types/scenario';
 import {
-  type Applied,
-  type CombatPhase,
-  type MovementResult,
-  applyOutcome,
+  advance,
+  type Answer,
   cascadeNewsFor,
-  cascadeWinners,
-  chargeCascade,
-  commandEffects,
-  deliverReportedLosses,
-  type FleetPlan,
   type EngineState,
-  type HijackQuote,
-  type IntelPurchase,
-  judgeProduction,
+  type GameState,
   knowledge,
   messagesArriving,
   outbox,
-  type OversightQuote,
-  payForEmission,
-  previewConstruction,
-  queueSpoofReceipts,
-  quoteCascade,
-  quoteHijack,
-  quoteOversight,
+  type PlayerPlan,
+  type Question,
   ranking,
-  recordOrders,
-  resolveScans,
-  runCombatPhase,
-  runMovementPhase,
   type SeedReport,
-  settleCommandContest,
-  startEngine,
-  useSeeds,
+  startGame,
+  type TurnEvent,
   webNewsFor,
 } from '@latency-wars/engine';
 import {
@@ -70,8 +51,10 @@ export interface PlaytestOptions {
 }
 
 /**
- * The game loop. It does no I/O of its own: agents are injected, and every
- * event is handed to `emit` as it happens, for the output layer to deal with.
+ * Drives a game: the engine runs the turn (TURN-03) and pauses wherever it
+ * needs an answer, and this loop gets each answer from the players or the GM.
+ * It does no I/O of its own: agents are injected, and every event is handed
+ * to `emit` as it happens, for the output layer to deal with.
  */
 export async function runPlaytest({ scenario, agents, maxRounds, emit }: PlaytestOptions): Promise<PlaytestEvent[]> {
   const events: PlaytestEvent[] = [];
@@ -87,32 +70,11 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   };
 
   const players = scenario.players.map((p) => p.id);
+  const nameOf = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
   const corrections = (agent: string, label: string) => ({
     onCorrection: (problems: string) => record({ type: 'correction', agent, label, problems }),
     onUnresolved: (problems: string) => record({ type: 'unresolved', agent, label, problems }),
   });
-
-  // The engine owns positions, visibility, when messages arrive and the qBit
-  // ledger. It applies each GM resolution, correcting rather than sending it
-  // back, and the GM hears about any corrections at the start of its next
-  // resolution.
-  let engine = startEngine(scenario);
-  const apply = (resolution: GmResolution, turn: number, movement?: MovementResult, combat?: CombatPhase, plans?: FleetPlan[]): Applied => {
-    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, movement, combat, plans);
-    if (applied.adjustments.length || applied.overrides.length) {
-      record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides.map(toGmOverride) });
-    }
-    const construction = applied.construction;
-    if (construction && (construction.outcomes.length || construction.built.length || construction.differences.length)) {
-      record({ type: 'construction', turn, phase: construction });
-    }
-    record({ type: 'state', turn, units: [...applied.engine.units], removed: [...applied.removed] });
-    const statements = applied.engine.ledger.statements.filter((s) => s.turn === turn);
-    if (statements.length) record({ type: 'qbits', turn, statements });
-    const matterStatements = applied.engine.matter?.ledger.statements.filter((s) => s.turn === turn) ?? [];
-    if (matterStatements.length) record({ type: 'matter', turn, statements: matterStatements });
-    return applied;
-  };
 
   // The log's header: enough about the game for the log to be read on its own, and the format it is written in.
   record({
@@ -130,205 +92,191 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     },
   });
 
-  let latest = await askFor(gm, 'setup', prompts.gmSetupPrompt(scenario), GmResolution, corrections('gm', 'setup'));
-  let lastTurn = 0;
-  record({ type: 'setup', resolution: latest });
-  let applied = apply(latest, 0);
-  engine = applied.engine;
+  /** The GM's latest resolution: its notes to players go in the next reports, and its outcome ends the game. */
+  let latest: GmResolution | undefined;
+  /** Each player's submission this turn, as the GM is shown it. */
+  let submissions = new Map<string, PlayerTurn>();
 
-  for (let turn = 1; turn <= maxRounds && !latest.game_over; turn++) {
-    engine = deliverReportedLosses(engine, scenario, turn);
-    // Seeded units report first, at the start of Planning (QBIT-11), so their scans are in the reports.
-    const seeds = useSeeds(engine, turn);
-    engine = seeds.engine;
-    for (const [id, list] of seeds.reports) record({ type: 'seeded', turn, player: id, reports: list });
-    const reports = composeReports(engine, scenario, latest, turn, seeds.reports);
-    for (const [id, text] of reports) record({ type: 'report', turn, player: id, text });
-
-    // Simultaneous turns (TURN-01): players plan in parallel, in private.
-    const submissions = new Map<string, PlayerTurn>();
-    await Promise.all(
-      scenario.players.map(async (p) => {
-        const submission = await askFor(
-          player(p.id),
-          `turn ${turn}`,
-          prompts.playerTurnPrompt(turn, maxRounds, reports.get(p.id) ?? ''),
-          PlayerTurn,
-          corrections(p.id, `turn ${turn}`),
-        );
-        submissions.set(p.id, submission);
-        record({ type: 'player_turn', turn, player: p.id, step: 'initial', submission });
-      }),
-    );
-
-    // qBit purchases resolve inside the Planning phase (TURN-03), before orders
-    // are final. A first submission with any purchase is a request for quotes:
-    // the engine charges for scans and shows what they saw (FB-11), prices
-    // spoofs and oversight (QBIT-08, QBIT-09), and the player then submits for real.
-    const delivered = new Map<string, string>();
-    for (const p of scenario.players) {
-      const purchases = submissions.get(p.id)?.qbit_purchases ?? [];
-      if (purchases.length === 0) continue;
-      const parts: string[] = [];
-      let intel: IntelPurchase[] = [];
-      const intelRequests = purchases.filter((q) => q.kind === 'scan');
-      if (intelRequests.length > 0) {
-        const resolved = resolveScans(engine, scenario, p.id, turn, intelRequests);
-        engine = resolved.engine;
-        intel = resolved.purchases;
-        parts.push(renderScans(resolved));
-      }
-      const hijacks = purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
-      const oversights = purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, scenario, p.id, turn, q));
-      if (hijacks.length > 0 || oversights.length > 0) parts.push(renderQuotes(hijacks, oversights));
-      if (purchases.some((q) => q.kind === 'cascade')) parts.push(renderCascadeQuote(quoteCascade(engine, scenario, p.id, turn)));
-      const text = parts.join('\n\n');
-      delivered.set(p.id, text);
-      record({ type: 'quotes', turn, player: p.id, intel, hijacks, oversights, delivered: text });
-    }
-    await Promise.all(
-      [...delivered].map(async ([id, text]) => {
-        const submission = await askFor(
-          player(id),
-          `turn ${turn} final`,
-          prompts.playerFinalPrompt(turn, text),
-          PlayerTurn,
-          corrections(id, `turn ${turn} final`),
-        );
-        if (submission.qbit_purchases.some((q) => q.kind === 'scan')) {
-          record({ type: 'warning', message: `Turn ${turn}: ${id} asked for scans again in the final submission; ignored.` });
+  /** Logs what the engine did since its last pause. */
+  const recordEngine = (e: TurnEvent) => {
+    switch (e.kind) {
+      case 'applied': {
+        const { applied, turn } = e;
+        if (applied.adjustments.length || applied.overrides.length) {
+          record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides.map(toGmOverride) });
         }
-        submissions.set(id, submission);
-        record({ type: 'player_turn', turn, player: id, step: 'final', submission });
-      }),
-    );
+        const construction = applied.construction;
+        if (construction && (construction.outcomes.length || construction.built.length || construction.differences.length)) {
+          record({ type: 'construction', turn, phase: construction });
+        }
+        record({ type: 'state', turn, units: [...applied.engine.units], removed: [...applied.removed] });
+        const statements = applied.engine.ledger.statements.filter((s) => s.turn === turn);
+        if (statements.length) record({ type: 'qbits', turn, statements });
+        const matterStatements = applied.engine.matter?.ledger.statements.filter((s) => s.turn === turn) ?? [];
+        if (matterStatements.length) record({ type: 'matter', turn, statements: matterStatements });
+        return;
+      }
+      case 'seeded':
+        return record({ type: 'seeded', turn: e.turn, player: e.player, reports: [...e.reports] });
+      case 'cascade-charged':
+        return record({ type: 'cascade', turn: e.turn, player: e.player, ...e.quote });
+      case 'commands':
+        return record({ type: 'hijacks', turn: e.turn, player: e.player, quotes: [...e.hijacks], oversights: [...e.oversights] });
+      case 'movement':
+        return record({ type: 'movement', turn: e.turn, phase: e.result.phase });
+      case 'combat':
+        return record({ type: 'combat', turn: e.turn, phase: e.phase });
+      case 'production':
+        return record({ type: 'production', turn: e.turn, notes: [...e.notes] });
+      case 'captured': {
+        const what = e.captured.map((c) => `${nameOf(c.by)} captured ${nameOf(c.owner)}'s flagship`).join(' and ');
+        const outcome =
+          e.winners.length === 1 ? `${what} (QBIT-13) in turn ${e.turn}: ${nameOf(e.winners[0] ?? '')} wins.` : `${what} (QBIT-13) in turn ${e.turn}: the game is a draw.`;
+        if (latest) latest = { ...latest, game_over: true, outcome };
+        return record({ type: 'capture', turn: e.turn, captured: [...e.captured] });
+      }
+      case 'cascade-completed': {
+        const names = e.completed.map(nameOf);
+        const outcome =
+          e.completed.length === 1
+            ? `${names[0]} completed a Cascade (QBIT-12) at the end of turn ${e.turn} and wins.`
+            : `${names.join(' and ')} completed Cascades (QBIT-12) in the same turn, ${e.turn}: the game is a draw.`;
+        if (latest) latest = { ...latest, game_over: true, outcome };
+        return record({ type: 'cascade', turn: e.turn, completed: [...e.completed] });
+      }
+      case 'flagship-lost':
+        return record({ type: 'warning', message: `Turn ${e.turn}: ${e.player}'s flagship is gone, but the GM didn't declare the game over.` });
+    }
+  };
 
-    // The Emission phase's spending (TURN-03): instant orders, oversight, then
-    // spoofs at the engine's prices. Whatever a player can't afford is refused,
-    // so the GM never sees it. Once everyone has bought, each spoof is settled
-    // against the oversight on its target (QBIT-09), and each spoof bought sends
-    // its buyer a receipt (QBIT-02).
-    const bought = new Map<string, HijackQuote[]>();
-    const oversights = new Map<string, OversightQuote[]>();
-    for (const p of scenario.players) {
-      const submission = submissions.get(p.id);
-      if (!submission) continue;
-      const quoted = submission.qbit_purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
-      const guarded = submission.qbit_purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, scenario, p.id, turn, q));
-      const paid = payForEmission(engine, scenario, p.id, turn, submission.orders, quoted, guarded);
-      engine = recordOrders(paid.engine, p.id, turn, paid.orders);
-      submissions.set(p.id, { ...submission, orders: paid.orders });
-      if (paid.hijacks.length > 0) bought.set(p.id, paid.hijacks);
-      if (paid.oversights.length > 0) oversights.set(p.id, paid.oversights);
-      // A Cascade charge is paid after every other qBit action (QBIT-12).
-      if (submission.qbit_purchases.some((q) => q.kind === 'cascade')) {
-        const charged = chargeCascade(engine, scenario, p.id, turn);
-        engine = charged.engine;
-        record({ type: 'cascade', turn, player: p.id, ...charged.quote });
+  /** Gets the answer to the engine's question from the GM or the players. */
+  const answer = async (ask: Question, state: GameState): Promise<Answer> => {
+    const { engine } = state;
+    switch (ask.kind) {
+      case 'setup': {
+        const resolution = await askFor(gm, 'setup', prompts.gmSetupPrompt(scenario), GmResolution, corrections('gm', 'setup'));
+        latest = resolution;
+        record({ type: 'setup', resolution });
+        return { kind: 'setup', outcome: toOutcome(resolution), gameOver: resolution.game_over };
+      }
+
+      case 'plan': {
+        const { turn } = ask;
+        const reports = composeReports(engine, scenario, latest, turn, ask.seeds);
+        for (const [id, text] of reports) record({ type: 'report', turn, player: id, text });
+        // Simultaneous turns (TURN-01): players plan in parallel, in private.
+        submissions = new Map();
+        await Promise.all(
+          scenario.players.map(async (p) => {
+            const submission = await askFor(
+              player(p.id),
+              `turn ${turn}`,
+              prompts.playerTurnPrompt(turn, maxRounds, reports.get(p.id) ?? ''),
+              PlayerTurn,
+              corrections(p.id, `turn ${turn}`),
+            );
+            submissions.set(p.id, submission);
+            record({ type: 'player_turn', turn, player: p.id, step: 'initial', submission });
+          }),
+        );
+        return { kind: 'plan', plans: plansOf(submissions) };
+      }
+
+      case 'confirm': {
+        const { turn } = ask;
+        const delivered = new Map<string, string>();
+        for (const [id, q] of ask.quotes) {
+          const parts: string[] = [];
+          if (q.scans) parts.push(renderScans(q.scans));
+          if (q.hijacks.length > 0 || q.oversights.length > 0) parts.push(renderQuotes(q.hijacks, q.oversights));
+          if (q.cascade) parts.push(renderCascadeQuote(q.cascade));
+          const text = parts.join('\n\n');
+          delivered.set(id, text);
+          record({ type: 'quotes', turn, player: id, intel: [...(q.scans?.purchases ?? [])], hijacks: [...q.hijacks], oversights: [...q.oversights], delivered: text });
+        }
+        const finals = new Map<string, PlayerTurn>();
+        await Promise.all(
+          [...delivered].map(async ([id, text]) => {
+            const submission = await askFor(
+              player(id),
+              `turn ${turn} final`,
+              prompts.playerFinalPrompt(turn, text),
+              PlayerTurn,
+              corrections(id, `turn ${turn} final`),
+            );
+            if (submission.qbit_purchases.some((q) => q.kind === 'scan')) {
+              record({ type: 'warning', message: `Turn ${turn}: ${id} asked for scans again in the final submission; ignored.` });
+            }
+            submissions.set(id, submission);
+            finals.set(id, submission);
+            record({ type: 'player_turn', turn, player: id, step: 'final', submission });
+          }),
+        );
+        return { kind: 'confirm', plans: plansOf(finals) };
+      }
+
+      case 'decide': {
+        const { turn } = ask;
+        // The GM sees each player's orders as sent: an instant order they couldn't pay for wasn't (QBIT-01).
+        for (const [id, orders] of ask.orders) {
+          const submission = submissions.get(id);
+          if (submission) submissions.set(id, { ...submission, orders: [...(orders as PlayerTurn['orders'])] });
+        }
+        const ledgers = [renderQbitsForGm(engine, scenario, turn), engine.matter ? renderMatterForGm(engine.matter, engine.units, players, [...ask.production]) : '']
+          .filter(Boolean)
+          .join('\n\n');
+        const label = `turn ${turn} decide`;
+        const atStart = engine.units;
+        const decided = await askFor(
+          gm,
+          label,
+          prompts.gmDecidePrompt(
+            turn,
+            scenario,
+            submissions,
+            ask.hijacks,
+            ask.oversights,
+            engine.units,
+            renderOrdersForGm(engine, scenario, turn),
+            ledgers,
+            ask.previous.adjustments,
+            ask.previous.notes,
+          ),
+          GmDecisions,
+          { ...corrections('gm', label), check: (d) => decisionProblems(atStart, d) },
+        );
+        record({ type: 'gm_decisions', turn, decisions: decided });
+        return { kind: 'decide', plans: toPlans(decided) };
+      }
+
+      case 'resolve': {
+        const { turn } = ask;
+        const label = `turn ${turn} resolve`;
+        const construction = engine.matter && renderConstructionForGm(ask.construction, engine.matter);
+        const prompt = prompts.gmResolvePrompt(turn, renderMovementForGm(ask.movement, engine.units), ask.last, ask.combat && renderCombatForGm(ask.combat), construction);
+        // A resolution that leaves units out goes back to the GM: the engine can't tell what happened to them.
+        const resolution = await askFor(gm, label, prompt, GmResolution, { ...corrections('gm', label), check: (r) => unaccountedUnits(engine, r) });
+        latest = resolution;
+        record({ type: 'gm_resolution', turn, resolution });
+        return { kind: 'resolve', outcome: toOutcome(resolution), gameOver: resolution.game_over };
       }
     }
-    const hijacks = settleCommandContest(bought, oversights);
-    for (const p of scenario.players) {
-      const quotes = hijacks.get(p.id) ?? [];
-      const guards = oversights.get(p.id) ?? [];
-      engine = queueSpoofReceipts(engine, p.id, turn, quotes);
-      if (quotes.length > 0 || guards.length > 0) record({ type: 'hijacks', turn, player: p.id, quotes, oversights: guards });
-    }
+  };
 
-    // The Decision phase's check of every Produce order that reaches a shipyard this turn (PROD-04): the engine judges and charges them.
-    const judged = judgeProduction(engine, scenario, turn);
-    engine = judged.engine;
-    const ledgers = [
-      renderQbitsForGm(engine, scenario, turn),
-      engine.matter ? renderMatterForGm(engine.matter, engine.units, players, judged.notes) : '',
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-
-    // Delivery and Decision (TURN-03): the GM works out how every fleet behaves this turn (RES-01, AUTO-03).
-    const decideLabel = `turn ${turn} decide`;
-    const atStart = engine.units;
-    const decided = await askFor(
-      gm,
-      decideLabel,
-      prompts.gmDecidePrompt(
-        turn,
-        scenario,
-        submissions,
-        hijacks,
-        oversights,
-        engine.units,
-        renderOrdersForGm(engine, scenario, turn),
-        ledgers,
-        applied.adjustments,
-        applied.notes,
-      ),
-      GmDecisions,
-      { ...corrections('gm', decideLabel), check: (d) => decisionProblems(atStart, d) },
-    );
-    record({ type: 'gm_decisions', turn, decisions: decided });
-
-    // Movement (TURN-03): the engine moves every unit and works out who fights (MOVE-01 to MOVE-04, COMBAT-02).
-    const effects = commandEffects(hijacks);
-    const plans = toPlans(decided);
-    const movement = runMovementPhase(engine.map, engine.units, plans, scenario.parameters.engageRange ?? 1, effects);
-    record({ type: 'movement', turn, phase: movement.phase });
-
-    // Combat (TURN-03): with the scenario's damage, the engine resolves each combat Movement formed (COMBAT-01 to COMBAT-03).
-    const damage = scenario.parameters.damage;
-    const combat = damage ? runCombatPhase(movement.units, movement.phase, plans, effects, damage) : undefined;
-    if (combat) record({ type: 'combat', turn, phase: combat });
-
-    // The rest of the turn (TURN-03): the GM resolves it from where Movement left everyone and what Combat did.
-    const label = `turn ${turn} resolve`;
-    const construction = engine.matter && renderConstructionForGm(previewConstruction(engine, plans, movement, combat), engine.matter);
-    const prompt = prompts.gmResolvePrompt(turn, renderMovementForGm(movement, engine.units), turn === maxRounds, combat && renderCombatForGm(combat), construction);
-    // A resolution that leaves units out goes back to the GM: the engine can't tell what happened to them.
-    const before = engine;
-    latest = await askFor(gm, label, prompt, GmResolution, { ...corrections('gm', label), check: (r) => unaccountedUnits(before, r) });
-    lastTurn = turn;
-    record({ type: 'gm_resolution', turn, resolution: latest });
-    applied = apply(latest, turn, movement, combat, plans);
-    engine = applied.engine;
-    const productionNotes = [...judged.notes, ...applied.notes];
-    if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });
-
-    // A Cascade completed this turn wins, unless a flagship fell: then the kill decides, as the scenario says (QBIT-12).
-    // A flagship captured this turn means its owner has lost, as has one whose flagship was destroyed (QBIT-13).
-    const nameOf = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
-    const captured = [...(effects.captured ?? [])].map(([flagship, by]) => ({ flagship, by, owner: engine.roster.get(flagship)?.owner ?? '' }));
-    if (captured.length > 0) {
-      const losers = new Set([...captured.map((c) => c.owner), ...players.filter((id) => !engine.units.some((u) => u.owner === id && u.class === 'flagship'))]);
-      const winners = players.filter((id) => !losers.has(id));
-      const what = captured.map((c) => `${nameOf(c.by)} captured ${nameOf(c.owner)}'s flagship`).join(' and ');
-      const outcome = winners.length === 1 ? `${what} (QBIT-13) in turn ${turn}: ${nameOf(winners[0] ?? '')} wins.` : `${what} (QBIT-13) in turn ${turn}: the game is a draw.`;
-      latest = { ...latest, game_over: true, outcome };
-      record({ type: 'capture', turn, captured });
-    }
-
-    const completed = cascadeWinners(engine, scenario, turn);
-    const everyFlagship = players.every((id) => engine.units.some((u) => u.owner === id && u.class === 'flagship'));
-    if (completed.length > 0 && everyFlagship && captured.length === 0) {
-      const names = completed.map(nameOf);
-      const outcome =
-        completed.length === 1
-          ? `${names[0]} completed a Cascade (QBIT-12) at the end of turn ${turn} and wins.`
-          : `${names.join(' and ')} completed Cascades (QBIT-12) in the same turn, ${turn}: the game is a draw.`;
-      latest = { ...latest, game_over: true, outcome };
-      record({ type: 'cascade', turn, completed });
-    }
-
-    for (const id of players) {
-      if (!latest.game_over && !engine.units.some((u) => u.owner === id && u.class === 'flagship')) {
-        record({ type: 'warning', message: `Turn ${turn}: ${id}'s flagship is gone, but the GM didn't declare the game over.` });
-      }
-    }
+  let step = startGame(scenario, maxRounds);
+  for (;;) {
+    for (const e of step.events) recordEngine(e);
+    if (!step.ask) break;
+    step = advance(step.state, await answer(step.ask, step.state));
   }
+  const { state } = step;
+  if (!latest) throw new Error('The game ended before the GM confirmed the starting state.');
 
-  if (!latest.game_over) {
+  if (state.ending?.why === 'turns') {
     record({ type: 'warning', message: `Stopped after ${maxRounds} turns without the GM declaring the game over.` });
   }
-  record({ type: 'ranking', turn: lastTurn, rows: ranking(engine, scenario) });
+  record({ type: 'ranking', turn: state.ending?.turn ?? state.turn, rows: ranking(state.engine, scenario) });
+  const final = latest;
 
   // Debrief: each player answers in their own conversation, so they remember the game they played.
   // The GM's conversation holds every turn, so its debrief goes to a new one with the game's record.
@@ -336,7 +284,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   // feedback still counts.
   const failed = (who: string, what: string) => (err: unknown) =>
     record({ type: 'warning', message: `${who}'s ${what} failed, so it is missing: ${firstLine(err)}` });
-  const gmDebrief = prompts.gmDebriefPrompt(latest, gameRecord(events));
+  const gmDebrief = prompts.gmDebriefPrompt(final, gameRecord(events));
   const askGmDebrief = () => askFor(agents.newGmDebriefer(), 'debrief', gmDebrief, GmFeedback);
   await Promise.all([
     askGmDebrief()
@@ -347,7 +295,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       })
       .then((feedback) => record({ type: 'gm_feedback', feedback }), failed('The GM', 'debrief')),
     ...scenario.players.map((p) =>
-      askFor(player(p.id), 'debrief', prompts.playerDebriefPrompt(latest), Feedback).then(
+      askFor(player(p.id), 'debrief', prompts.playerDebriefPrompt(final), Feedback).then(
         (feedback) => record({ type: 'player_feedback', player: p.id, feedback }),
         failed(p.name, 'debrief'),
       ),
@@ -369,13 +317,13 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
 function composeReports(
   engine: EngineState,
   scenario: Scenario,
-  resolution: GmResolution,
+  resolution: GmResolution | undefined,
   turn: number,
   seeds: ReadonlyMap<string, readonly SeedReport[]> = new Map(),
 ): Map<string, string> {
   return new Map(
     scenario.players.map((p) => {
-      const note = resolution.player_notes.find((n) => n.player_id === p.id)?.note ?? '';
+      const note = resolution?.player_notes.find((n) => n.player_id === p.id)?.note ?? '';
       const messages = renderMessages(messagesArriving(engine, scenario, p.id, turn));
       const picture = renderSensorPicture(knowledge(engine, scenario, p.id, turn));
       const sent = renderOutbox(outbox(engine, scenario, p.id, turn), turn);
@@ -387,6 +335,11 @@ function composeReports(
       return [p.id, [note, renderQbits(engine, p.id, turn), matter, cascade, web, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
     }),
   );
+}
+
+/** Each submission as the engine takes it: orders and qBit purchases. */
+function plansOf(submissions: ReadonlyMap<string, PlayerTurn>): Map<string, PlayerPlan> {
+  return new Map([...submissions].map(([id, s]) => [id, { orders: s.orders, purchases: s.qbit_purchases }]));
 }
 
 /** Everything the analyst needs: the outcome, the game's record, and the feedback in full. */

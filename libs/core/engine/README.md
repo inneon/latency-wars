@@ -6,6 +6,22 @@ It takes engine-shaped inputs (`SubmittedOrder`, `Purchase`, `FleetPlan`, `TurnO
 
 Import with `@latency-wars/engine`.
 
+## Running a game
+
+The engine runs the turn itself (`turn.ts`, TURN-01, TURN-03). `startGame(setup, maxTurns)` starts one, and `advance(state, answer)` answers the open question and runs on to the next. Each call returns the new state, the `TurnEvent`s since the last pause, and the next `Question`, or none once the game is over (`state.ending` says why: `declared`, `capture`, `cascade` or `turns`).
+
+It pauses only for what it can't work out:
+
+| Question | Phase | Who answers in the playtest |
+|---|---|---|
+| `setup` | Turn 0 | The GM confirms the starting state |
+| `plan` | Planning | Every player at once (TURN-01) |
+| `confirm` | Planning | Players who asked for quotes, knowing them (FB-11, QBIT-08) |
+| `decide` | Delivery and Decision | The GM: each fleet's `FleetPlan` (RES-01, AUTO-03) |
+| `resolve` | Combat onward | The GM: the `TurnOutcome`, and whether a victory condition the engine doesn't check was met |
+
+Each question kind goes when its rule is coded. The state records which question is open, and `advance` refuses an answer to any other.
+
 ## What it provides
 
 | Function | Rule | What it does |
@@ -26,6 +42,7 @@ Import with `@latency-wars/engine`.
 | `yardsThatFought(units, movementPhase)` | PROD-04, COMBAT-02 | The shipyards that fought: every mine in a combat group Movement formed, resolved or not |
 | `applyOutcome(engine, outcome, players, turn, movement?, combat?, plans?)` | MOVE-01, TURN-03, COMBAT-03, ECON-01, MAT-01, ECON-03, PROD-04, FB-02, ORD-09 | Applies the end of a turn: corrects what breaks a hard rule, holds combat's units to the Combat phase, settles the Economy phase (no production for a yard that fought, from `movement`; construction worked out from the `plans`' `Build` orders, Movement and Combat, in a game with matter), queues messages |
 | `buildersOf`, `previewConstruction` | ECON-03, FLAG-02 | The fleets with a `Build` order this turn, from the plans, Movement and Combat; and what construction would come to before the GM resolves the rest of the turn |
+| `startGame`, `advance` | TURN-01, TURN-03, QBIT-12, QBIT-13 | Runs the turn, pausing for each answer it needs, and ends the game on a capture, a completed Cascade, the answer's say-so or the last turn |
 | `ranking` | — | Where each player stands when the game stops |
 
 ## What still comes from outside
@@ -36,4 +53,4 @@ Corrections (`Applied.adjustments`), notes and refusals are still plain-English 
 
 ## Tests
 
-`nx test engine`. The specs drive a game from plain data in `fixtures.spec-helper.ts`, with no scenario file and no GM. The playtest app's specs cover the same functions through the GM adapter.
+`nx test engine`. The specs drive a game from plain data in `fixtures.spec-helper.ts`, with no scenario file and no GM. `turn.spec.ts` plays whole games through `advance`, answering every question from a script. The playtest app's specs cover the same functions through the GM adapter.

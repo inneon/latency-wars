@@ -184,9 +184,9 @@ const engineUnitsTable = (units: readonly PlaytestUnit[]) =>
 export function gmDecidePrompt(
   turn: number,
   scenario: Scenario,
-  submissions: Map<string, PlayerTurn>,
-  hijacks: Map<string, readonly HijackQuote[]>,
-  oversights: Map<string, readonly OversightQuote[]>,
+  submissions: ReadonlyMap<string, PlayerTurn>,
+  hijacks: ReadonlyMap<string, readonly HijackQuote[]>,
+  oversights: ReadonlyMap<string, readonly OversightQuote[]>,
   units: readonly PlaytestUnit[],
   orders: string,
   ledgers: string,

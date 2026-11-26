@@ -7,4 +7,5 @@ export * from './lib/outcome';
 export * from './lib/purchases';
 export * from './lib/ranking';
 export * from './lib/state';
+export * from './lib/turn';
 export * from './lib/types';
