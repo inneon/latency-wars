@@ -119,6 +119,10 @@ export const ScenarioFile = z.object({
     cascade: z.object({ charge: z.number().positive(), turns: z.number().int().positive() }).optional(),
     /** `CAPTURE_GUARD`. Without it, a flagship can't be seized (QBIT-13). */
     capture: z.object({ guard: z.number().nonnegative() }).optional(),
+    /** The damage each unit deals (COMBAT-03), as the scenario's house rules say. Without it, the GM resolves Combat. */
+    damage: z
+      .object({ perStrength: z.number().nonnegative(), rounding: z.enum(['up', 'down']), structures: z.number().nonnegative() })
+      .optional(),
   }),
   /** The true state at the end of turn 0. Every unit is assumed to have held this position before play began. */
   units: z.array(UnitFile).min(1),
@@ -177,6 +181,8 @@ export interface Scenario {
     cascade?: { charge: number; turns: number };
     /** `CAPTURE_GUARD` (QBIT-13). */
     capture?: { guard: number };
+    /** The damage each unit deals (COMBAT-03). */
+    damage?: { perStrength: number; rounding: 'up' | 'down'; structures: number };
   };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];

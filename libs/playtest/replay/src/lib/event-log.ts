@@ -220,6 +220,31 @@ export const MovementPhase: z.ZodType<Engine.MovementPhase> = z.object({
 });
 export type MovementPhase = Engine.MovementPhase;
 
+/** The engine's Combat phase: each combat's damage and where it went (COMBAT-03). */
+export const CombatPhase: z.ZodType<Engine.CombatPhase> = z.object({
+  combats: z.array(
+    z.object({
+      group: z.number().int(),
+      members: z.array(
+        z.object({ unit: z.string(), side: z.string(), start: z.number(), damage: z.number(), end: z.number().optional() }),
+      ),
+      hits: z.array(
+        z.object({
+          unit: z.string(),
+          amount: z.number(),
+          step: z.enum(['attack', 'escort', 'pool', 'seized']),
+          shielded: z.string().optional(),
+        }),
+      ),
+      lost: z.record(z.string(), z.number()),
+      unresolved: z.string().optional(),
+    }),
+  ),
+  destroyed: z.array(z.string()),
+  yardsInCombat: z.array(z.string()),
+});
+export type CombatPhase = Engine.CombatPhase;
+
 /** Everything that happens in a play-test, in order. The outputs are all derived from these. */
 export const PlaytestEvent = z.discriminatedUnion('type', [
   /** Always first: which game this is, and the format the rest of the log is written in. */
@@ -245,6 +270,8 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('gm_decisions'), turn, decisions: GmDecisions }),
   /** The engine's Movement phase, run from the GM's decisions. */
   z.object({ type: z.literal('movement'), turn, phase: MovementPhase }),
+  /** The engine's Combat phase, in scenarios that set the damage units deal. */
+  z.object({ type: z.literal('combat'), turn, phase: CombatPhase }),
   z.object({ type: z.literal('gm_resolution'), turn, resolution: GmResolution }),
   /** Exactly what a player was told for a Planning phase: the GM's messages plus the computed sensor picture. */
   z.object({ type: z.literal('report'), turn, player, text: z.string() }),

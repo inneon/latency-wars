@@ -353,6 +353,37 @@ describe('runPlaytest', () => {
     expect(raider?.hex).toEqual(movement?.type === 'movement' ? movement.phase.moved.at(-1)?.to : undefined);
   });
 
+  it('resolves Combat itself with the scenario’s damage, and holds the GM to it (COMBAT-03)', async () => {
+    // The two raiders (strength 2, speed 2) pursue each other and are Aggressive: they meet in turn 2.
+    const charge = (unit: string, target: string): FleetDecision => ({
+      unit,
+      move: 'pursue',
+      move_unit: target,
+      order: 'attack',
+      order_target: target,
+      stance: 'aggressive',
+      evading: false,
+    });
+    const both = [charge('blue-raider', 'red-raider'), charge('red-raider', 'blue-raider')];
+    const { gm, agents } = setup(scenario, 99, { given: { 1: both, 2: both } });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario, agents, maxRounds: 2, emit: (e) => events.push(e) });
+
+    const combat = events.find((e) => e.type === 'combat' && e.phase.combats.length > 0);
+    expect(combat?.type === 'combat' && combat.phase.combats[0]?.members).toEqual(
+      expect.arrayContaining([
+        { unit: 'blue-raider', side: 'blue', start: 2, damage: 1, end: 1 },
+        { unit: 'red-raider', side: 'red', start: 2, damage: 1, end: 1 },
+      ]),
+    );
+    const turn = combat?.type === 'combat' ? combat.turn : 0;
+    expect(gm.prompts.find((p) => p.label === `turn ${turn} resolve`)?.prompt).toContain('The engine resolved Combat (COMBAT-01 to COMBAT-03)');
+    // The scripted GM reports nobody hurt; the engine holds both raiders to what Combat left.
+    const state = events.find((e) => e.type === 'state' && e.turn === turn);
+    expect(state?.type === 'state' && state.units.filter((u) => u.id.endsWith('-raider')).map((u) => u.strength)).toEqual([1, 1]);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'engine', turn, adjustments: expect.arrayContaining([expect.stringContaining('Combat left it at 1 (COMBAT-03)')]) }));
+  });
+
   it("debriefs the GM in a new conversation, with the game's record instead of its turns", async () => {
     const { gmDebriefers, agents } = setup(scenario, 2);
     await runPlaytest({ scenario, agents, maxRounds: 10, emit: () => undefined });

@@ -2,6 +2,8 @@ import { formatHex, type Hex } from '@latency-wars/domain';
 import type { Membership } from '@latency-wars/engagement';
 import { balanceOf, matterIncome, qbitIncome } from '@latency-wars/economy';
 import {
+  type CombatOutcome,
+  type CombatPhase,
   deliveries,
   type EngineState,
   formatMatter,
@@ -176,4 +178,34 @@ export function renderMovementForGm(result: MovementResult, units: readonly Game
       .join('\n')}`,
   );
   return parts.join('\n\n');
+}
+
+const STEP_TEXT: Record<CombatOutcome['hits'][number]['step'], string> = {
+  attack: 'Attack order',
+  escort: 'escorting',
+  pool: 'pooled',
+  seized: 'pooled from a seized fleet',
+};
+
+/** Where one combat's damage went, in a line. */
+export function hitsText(c: CombatOutcome): string {
+  const hits = c.hits.map((h) => `\`${h.unit}\` took ${h.amount} (${STEP_TEXT[h.step]}${h.shielded ? ` for \`${h.shielded}\`` : ''})`);
+  const lost = Object.entries(c.lost).map(([player, amount]) => `${amount} lost against ${player}`);
+  return [...hits, ...lost].join('; ') || 'no damage dealt';
+}
+
+/** The Combat phase as the GM sees it before resolving the rest of the turn: authoritative where resolved. */
+export function renderCombatForGm(phase: CombatPhase): string {
+  if (!phase.combats.length) return 'Combat (COMBAT-03): no combats this turn.';
+  const combats = phase.combats.map((c) => {
+    const head = `- Combat ${c.group + 1}`;
+    if (c.unresolved) {
+      return `${head}: left to you. ${c.unresolved} Resolve it yourself, and log a ruling.\n${c.members.map((m) => `  - \`${m.unit}\` (${m.side}): strength ${m.start}, deals ${m.damage}`).join('\n')}`;
+    }
+    const rows = c.members.map((m) => `  | \`${m.unit}\` | ${m.side} | ${m.start} | ${m.damage} | ${m.end}${m.end === 0 ? ', destroyed' : ''} |`);
+    return `${head}:\n\n  | Unit | Side | Strength | Deals | Ends |\n  |---|---|---|---|---|\n${rows.join('\n')}\n\n  Where the damage went: ${hitsText(c)}.`;
+  });
+  const destroyed = phase.destroyed.length ? `Destroyed, so list them in removed_units: ${phase.destroyed.map((d) => `\`${d}\``).join(', ')}.` : 'Nobody was destroyed.';
+  const yards = phase.yardsInCombat.length ? `\n\nShipyards that fought this turn (PROD-04): ${phase.yardsInCombat.map((y) => `\`${y}\``).join(', ')}.` : '';
+  return `The engine resolved Combat (COMBAT-01 to COMBAT-03), with the scenario's damage. Report each resolved combat's units at the strength it ends at; the engine holds them to it:\n${combats.join('\n')}\n\n${destroyed}${yards}`;
 }

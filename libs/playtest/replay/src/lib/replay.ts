@@ -386,6 +386,6 @@ function progressOf(events: readonly PlaytestEvent[], scenario: ScenarioHeader, 
       ),
     );
   const resolving =
-    submitted.length === scenario.players.length || now.some((e) => e.type === 'gm_decisions' || e.type === 'movement' || e.type === 'gm_resolution');
+    submitted.length === scenario.players.length || now.some((e) => e.type === 'gm_decisions' || e.type === 'movement' || e.type === 'combat' || e.type === 'gm_resolution');
   return { stage: resolving ? 'resolving' : 'planning', turn, submitted };
 }

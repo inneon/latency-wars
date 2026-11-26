@@ -34,7 +34,8 @@
         { "hex": [0, 2], "k": 2 },
         { "hex": [0, -2], "k": 2 }
       ]
-    }
+    },
+    "damage": { "perStrength": 0.5, "rounding": "up", "structures": 0 }
   },
   "units": [
     {

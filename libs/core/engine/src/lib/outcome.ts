@@ -5,7 +5,7 @@ import { recordBroadcast, recordTurnEnd } from '@latency-wars/visibility';
 import { judgeProduceOrders, settleMatterEconomy } from './matter';
 import { deliveries, NO_ANSWER, RECEIPT } from './orders';
 import type { EngineState, QueuedMessage, WebNews } from './state';
-import type { GameSetup, GameUnit, Override, ReportedUnit, TurnOutcome } from './types';
+import type { CombatPhase, GameSetup, GameUnit, Override, ReportedUnit, TurnOutcome } from './types';
 
 /*
  * The engine has the last word on what it models. It never sends a turn back
@@ -34,6 +34,12 @@ export interface Applied {
  * `afterMovement` is where the Movement phase left every unit. Nothing moves
  * after Movement, so a unit reported anywhere else is put back. Without it,
  * positions are only checked against each unit's speed.
+ *
+ * `combat` is the Combat phase as the engine resolved it (COMBAT-03). Each
+ * unit in a resolved combat ends at the strength it left, and is destroyed if
+ * it left it at 0, whatever the outcome reports, unless an override names it.
+ * Its yards are the ones that fought (PROD-04). Without it, strengths are the
+ * outcome's.
  */
 export function applyOutcome(
   engine: EngineState,
@@ -41,11 +47,38 @@ export function applyOutcome(
   players: readonly string[],
   turn: number,
   afterMovement?: readonly GameUnit[],
+  combat?: CombatPhase,
 ): Applied {
   const adjustments: string[] = [];
   const overrides: Override[] = [];
   const previous = engine.units;
   const overrideFor = (id: string) => outcome.overrides.find((o) => o.unitId === id);
+  const accept = (override: Override) => {
+    if (!overrides.includes(override)) overrides.push(override);
+  };
+
+  // Strengths as the engine's Combat phase left them (COMBAT-03). A unit with an override keeps what the outcome says.
+  const combatEnd = new Map<string, number>();
+  for (const c of combat?.combats ?? []) {
+    if (c.unresolved) continue;
+    for (const m of c.members) if (m.end !== undefined) combatEnd.set(m.unit, m.end);
+  }
+  const destroyedInCombat = new Set(combat?.destroyed ?? []);
+  /** The strength a unit ends the turn at, and whether Combat destroyed it, given what the outcome says. */
+  const combatSays = (id: string, reported: number, reportedGone: boolean): { strength: number; destroyed: boolean } | undefined => {
+    const end = combatEnd.get(id);
+    if (end === undefined) return undefined;
+    const override = overrideFor(id);
+    if (override) {
+      accept(override);
+      return undefined;
+    }
+    const destroyed = destroyedInCombat.has(id);
+    if (destroyed && !reportedGone) adjustments.push(`${id} was reported at strength ${reported}, but Combat left it at 0 (COMBAT-03), so it was destroyed.`);
+    else if (!destroyed && reportedGone) adjustments.push(`${id} was reported destroyed, but Combat left it at strength ${end} (COMBAT-03), so it is still in the game.`);
+    else if (!destroyed && end !== reported) adjustments.push(`${id} was reported at strength ${reported}, but Combat left it at ${end} (COMBAT-03).`);
+    return { strength: end, destroyed };
+  };
 
   if (turn === 0) {
     for (const r of outcome.units) {
@@ -70,7 +103,7 @@ export function applyOutcome(
       if (moved.hex.q === to.q && moved.hex.r === to.r) return { at: to, legal: true };
       const override = overrideFor(unit.id);
       if (override) {
-        overrides.push(override);
+        accept(override);
         return { at: to, legal: true };
       }
       adjustments.push(
@@ -83,7 +116,7 @@ export function applyOutcome(
     if (!problem) return { at: to, legal: true };
     const override = overrideFor(unit.id);
     if (override) {
-      overrides.push(override);
+      accept(override);
       return { at: to, legal: true };
     }
     const at = furthestToward(engine.map, unit.hex, to, unit.speed);
@@ -125,6 +158,12 @@ export function applyOutcome(
       adjustments.push(`${r.id} is a ${before.owner} ${before.class}, not a ${r.owner} ${r.class}; that can't change.`);
     }
     const { at, legal } = reach(before, hex, 'moved to');
+    const fought = combatSays(r.id, r.strength, false);
+    if (fought) {
+      if (fought.destroyed) removed.push({ ...before, hex: at, strength: 0, status: r.status ?? before.status });
+      else units.push({ ...before, hex: at, strength: fought.strength, status: r.status ?? before.status });
+      continue;
+    }
     // Some units live at strength 0 (a probe); one that drops to it has been destroyed.
     if (r.strength < 0 || (r.strength === 0 && before.strength > 0)) {
       if (!legal) {
@@ -148,6 +187,12 @@ export function applyOutcome(
     }
     const where = { q: r.hex.q, r: r.hex.r };
     const { at, legal } = reach(before, where, 'was removed at');
+    const fought = combatSays(r.id, r.strength, true);
+    if (fought) {
+      if (fought.destroyed) removed.push({ ...before, hex: at, strength: 0, status: r.status ?? before.status });
+      else units.push({ ...before, hex: at, strength: fought.strength, status: before.status });
+      continue;
+    }
     if (!legal) {
       keepAlive(before, at, where, r.status);
       continue;
@@ -157,15 +202,29 @@ export function applyOutcome(
 
   for (const u of previous) {
     if (!handled.has(u.id) && !removedIds.has(u.id)) {
-      adjustments.push(`${u.id} was missing from both units and removed_units; the engine kept it where it was.`);
-      units.push(u);
+      const at = afterMovement?.find((m) => m.id === u.id)?.hex ?? u.hex;
+      const end = combatEnd.get(u.id);
+      if (end !== undefined && destroyedInCombat.has(u.id)) {
+        adjustments.push(`${u.id} was missing from both units and removed_units; Combat left it at 0 (COMBAT-03), so it was destroyed.`);
+        removed.push({ ...u, hex: at, strength: 0 });
+        continue;
+      }
+      adjustments.push(`${u.id} was missing from both units and removed_units; the engine kept it where ${afterMovement ? 'Movement left it' : 'it was'}.`);
+      units.push({ ...u, hex: at, strength: end ?? u.strength });
     }
   }
 
   // Economy (TURN-03): matter from the mines standing after Combat, then construction, then unit production (MAT-01, ECON-03, PROD-04).
   // The engine may drop a structure that wasn't paid for and adds the units shipyards finish.
   const settled = engine.matter
-    ? settleMatterEconomy(engine.matter, { turn, before: previous, units, builds: outcome.builds, yardsInCombat: outcome.yardsInCombat, roster: engine.roster })
+    ? settleMatterEconomy(engine.matter, {
+        turn,
+        before: previous,
+        units,
+        builds: outcome.builds,
+        yardsInCombat: combat?.yardsInCombat ?? outcome.yardsInCombat,
+        roster: engine.roster,
+      })
     : undefined;
   const standing = settled?.units ?? units;
   adjustments.push(...(settled?.adjustments ?? []));

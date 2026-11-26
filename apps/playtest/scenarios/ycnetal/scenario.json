@@ -189,6 +189,11 @@
     },
     "capture": {
       "guard": 1
+    },
+    "damage": {
+      "perStrength": 0.5,
+      "rounding": "up",
+      "structures": 0
     }
   },
   "units": [

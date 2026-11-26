@@ -35,7 +35,8 @@
         "blue": 6,
         "red": 6
       }
-    }
+    },
+    "damage": { "perStrength": 0.5, "rounding": "up", "structures": 0 }
   },
   "units": [
     {

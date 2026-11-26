@@ -229,7 +229,7 @@ export const GmResolution = z.object({
     .default([])
     .describe(
       'The ids of shipyards (mines) that took part in a fight this turn. An Economy phase in which a yard fought does not count towards production (PROD-04). ' +
-        'The engine keeps every other part of production. Empty if none.',
+        'The engine keeps every other part of production. Empty if none. In a scenario where the engine resolves Combat, it works this out itself and ignores this list.',
     ),
   messages: z
     .array(FleetMessage)

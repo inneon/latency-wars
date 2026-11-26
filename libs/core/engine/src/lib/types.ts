@@ -86,6 +86,22 @@ export interface Parameters {
   readonly cascade?: CascadeParameters;
   /** Without it, a flagship can't be seized (QBIT-13). */
   readonly capture?: CaptureParameters;
+  /** Without it, the engine doesn't resolve Combat: the GM does. */
+  readonly damage?: DamageParameters;
+}
+
+/**
+ * The damage each unit deals in Combat, which the rules leave to each
+ * scenario (COMBAT-03). With it, a unit a combat leaves at 0 is destroyed,
+ * as every scenario's house rules say.
+ */
+export interface DamageParameters {
+  /** A fleet's or flagship's damage, as a share of its strength at the start of Combat. */
+  readonly perStrength: number;
+  /** How a fractional damage is rounded. */
+  readonly rounding: 'up' | 'down';
+  /** The damage a node or mine deals. */
+  readonly structures: number;
 }
 
 /** `CAPTURE_GUARD` (QBIT-13). */
@@ -269,4 +285,41 @@ export interface MovementPhase {
   readonly seized: readonly { readonly unit: UnitId; readonly by: PlayerId }[];
   /** What the engine did with the decisions: decisions filled in or set aside. */
   readonly notes: readonly string[];
+}
+
+/** One combat as the engine resolved it (COMBAT-03). */
+export interface CombatOutcome {
+  /** Index into the Movement phase's combats. */
+  readonly group: number;
+  readonly members: readonly {
+    readonly unit: UnitId;
+    /** The side it fought on: its owner, or its seizer (QBIT-10). */
+    readonly side: PlayerId;
+    readonly start: number;
+    readonly damage: number;
+    /** Undefined when the combat is unresolved. */
+    readonly end?: number;
+  }[];
+  readonly hits: readonly CombatHit[];
+  /** Damage that found nothing left to fill, per receiving player (COMBAT-03 step 4). */
+  readonly lost: Readonly<Record<PlayerId, number>>;
+  /** Why the engine left this combat to a ruling. */
+  readonly unresolved?: string;
+}
+
+/** Where one piece of damage went (COMBAT-03). */
+export interface CombatHit {
+  readonly unit: UnitId;
+  readonly amount: number;
+  readonly step: 'attack' | 'escort' | 'pool' | 'seized';
+  readonly shielded?: UnitId;
+}
+
+/** The Combat phase, as the engine resolved it from the Movement phase's groups (COMBAT-01 to COMBAT-03). */
+export interface CombatPhase {
+  readonly combats: readonly CombatOutcome[];
+  /** Units a resolved combat left at 0: destroyed. */
+  readonly destroyed: readonly UnitId[];
+  /** Shipyards in any combat this turn (PROD-04). */
+  readonly yardsInCombat: readonly UnitId[];
 }

@@ -3,6 +3,7 @@ import type { PlaytestEvent } from '../types/events';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
 import {
   type Applied,
+  type CombatPhase,
   applyOutcome,
   cascadeNewsFor,
   cascadeWinners,
@@ -25,6 +26,7 @@ import {
   ranking,
   recordOrders,
   resolveScans,
+  runCombatPhase,
   runMovementPhase,
   type SeedReport,
   settleCommandContest,
@@ -38,6 +40,7 @@ import {
   renderMatter,
   renderMatterForGm,
   renderMessages,
+  renderCombatForGm,
   renderMovementForGm,
   renderOrdersForGm,
   renderOutbox,
@@ -90,8 +93,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   // back, and the GM hears about any corrections at the start of its next
   // resolution.
   let engine = startEngine(scenario);
-  const apply = (resolution: GmResolution, turn: number, afterMovement?: readonly PlaytestUnit[]): Applied => {
-    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, afterMovement);
+  const apply = (resolution: GmResolution, turn: number, afterMovement?: readonly PlaytestUnit[], combat?: CombatPhase): Applied => {
+    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, afterMovement, combat);
     if (applied.adjustments.length || applied.overrides.length) {
       record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides.map(toGmOverride) });
     }
@@ -262,15 +265,20 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     const movement = runMovementPhase(engine.map, engine.units, toPlans(decided), scenario.parameters.engageRange ?? 1, effects);
     record({ type: 'movement', turn, phase: movement.phase });
 
-    // Combat onward (TURN-03): the GM resolves the rest of the turn from where Movement left everyone.
+    // Combat (TURN-03): with the scenario's damage, the engine resolves each combat Movement formed (COMBAT-01 to COMBAT-03).
+    const damage = scenario.parameters.damage;
+    const combat = damage ? runCombatPhase(movement.units, movement.phase, toPlans(decided), effects, damage) : undefined;
+    if (combat) record({ type: 'combat', turn, phase: combat });
+
+    // The rest of the turn (TURN-03): the GM resolves it from where Movement left everyone and what Combat did.
     const label = `turn ${turn} resolve`;
-    const prompt = prompts.gmResolvePrompt(turn, renderMovementForGm(movement, engine.units), turn === maxRounds);
+    const prompt = prompts.gmResolvePrompt(turn, renderMovementForGm(movement, engine.units), turn === maxRounds, combat && renderCombatForGm(combat));
     // A resolution that leaves units out goes back to the GM: the engine can't tell what happened to them.
     const before = engine;
     latest = await askFor(gm, label, prompt, GmResolution, { ...corrections('gm', label), check: (r) => unaccountedUnits(before, r) });
     lastTurn = turn;
     record({ type: 'gm_resolution', turn, resolution: latest });
-    applied = apply(latest, turn, movement.units);
+    applied = apply(latest, turn, movement.units, combat);
     engine = applied.engine;
     const productionNotes = [...judged.notes, ...applied.notes];
     if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });

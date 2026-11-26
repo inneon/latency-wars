@@ -97,6 +97,8 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: GM decided every fleet's behaviour (${e.decisions.rulings.length} ruling(s))`;
     case 'movement':
       return `Turn ${e.turn}: engine ran Movement: ${e.phase.moved.length} move(s), ${e.phase.engagements.length} engagement(s), ${e.phase.combats.length} combat(s)`;
+    case 'combat':
+      return `Turn ${e.turn}: engine resolved ${e.phase.combats.filter((c) => !c.unresolved).length} combat(s), ${e.phase.destroyed.length} unit(s) destroyed`;
     case 'gm_resolution':
       return `Turn ${e.turn}: GM resolved the turn (${e.resolution.rulings.length} ruling(s))${
         e.resolution.game_over ? ` — game over: ${e.resolution.outcome}` : ''

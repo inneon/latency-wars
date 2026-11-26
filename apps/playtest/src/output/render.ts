@@ -1,4 +1,4 @@
-import { renderMatterStatement, renderMovementPhase, renderStatement } from '@latency-wars/playtest-briefing';
+import { renderCombatPhase, renderMatterStatement, renderMovementPhase, renderStatement } from '@latency-wars/playtest-briefing';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import type { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
@@ -79,6 +79,7 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       e.type === 'hijacks' ||
       e.type === 'gm_decisions' ||
       e.type === 'movement' ||
+      e.type === 'combat' ||
       e.type === 'gm_resolution' ||
       e.type === 'qbits' ||
       e.type === 'matter' ||
@@ -106,6 +107,7 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       }
       if (e.type === 'gm_decisions') out.push(`### GM decisions (Delivery and Decision)`, gmDecisions(e.decisions));
       if (e.type === 'movement') out.push(`### Movement (engine)`, renderMovementPhase(e.phase));
+      if (e.type === 'combat') out.push(`### Combat (engine)`, renderCombatPhase(e.phase));
       if (e.type === 'gm_resolution') out.push(`### GM resolution`, gmResolution(e.resolution));
       if (e.type === 'qbits') out.push(`#### qBit ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderStatement(st)}`).join('\n')}`);
       if (e.type === 'matter') out.push(`#### Matter ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderMatterStatement(st)}`).join('\n')}`);

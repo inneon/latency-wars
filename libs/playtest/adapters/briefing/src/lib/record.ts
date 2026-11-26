@@ -1,7 +1,7 @@
 import { formatHex } from '@latency-wars/domain';
 import type { MatterStatement, Refusal, Spend } from '@latency-wars/economy';
-import { formatMatter, type MovementPhase } from '@latency-wars/engine';
-import { membershipText, reasonText } from './gm';
+import { type CombatPhase, formatMatter, type MovementPhase } from '@latency-wars/engine';
+import { hitsText, membershipText, reasonText } from './gm';
 
 /*
  * The engine's records as text for the run's transcript and the GM: ledgers
@@ -37,4 +37,15 @@ export function renderMovementPhase(phase: MovementPhase): string {
     );
   });
   return lines.join('\n');
+}
+
+/** The Combat phase for the transcript: each combat's damage, where it went and who was destroyed. */
+export function renderCombatPhase(phase: CombatPhase): string {
+  const lines = phase.combats.map((c) =>
+    c.unresolved
+      ? `- Combat ${c.group + 1}: left to the GM. ${c.unresolved}`
+      : `- Combat ${c.group + 1}: ${c.members.map((m) => `\`${m.unit}\` ${m.start} → ${m.end}`).join(', ')}. ${hitsText(c)}.`,
+  );
+  if (phase.destroyed.length) lines.push(`- Destroyed: ${phase.destroyed.map((d) => `\`${d}\``).join(', ')}.`);
+  return lines.join('\n') || '- No combats.';
 }
