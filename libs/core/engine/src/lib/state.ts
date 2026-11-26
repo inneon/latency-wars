@@ -31,6 +31,12 @@ export interface WebNews {
   readonly node: string;
 }
 
+/** A Cascade charge a player paid for (QBIT-12). */
+export interface CascadeCharge {
+  readonly player: string;
+  readonly turn: number;
+}
+
 /** An order a player sent, tracked so the engine knows when it lands (ORD-04, ORD-06). */
 export interface SentOrder {
   readonly player: string;
@@ -62,6 +68,8 @@ export interface EngineState {
   readonly orders: readonly SentOrder[];
   /** Every node that has joined or left a web since turn 1 (ECON-05). */
   readonly webNews: readonly WebNews[];
+  /** Every Cascade charge paid for (QBIT-12). */
+  readonly cascade: readonly CascadeCharge[];
 }
 
 export function startEngine(setup: GameSetup): EngineState {
@@ -87,6 +95,7 @@ export function startEngine(setup: GameSetup): EngineState {
     map: setup.map,
     orders: [],
     webNews: [],
+    cascade: [],
   };
 }
 

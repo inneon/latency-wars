@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.15)
+# Latency Wars - Game Mechanics (v0.16)
 
 ## 0. About This Document
 
@@ -52,6 +52,7 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Engagement group** | All units joined by engagements, plus any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight. Each group fights one combat. |
 | **Spoof** | A qBit action that overrides the orders of an enemy fleet, and of every other fleet of that player in its hex, for one turn (`QBIT-02`). |
 | **Seeded unit** | A unit produced carrying qBits. Each Planning phase it spends one to send its owner a free scan of itself (`QBIT-11`). |
+| **Cascade** | A win bought with qBits: `CASCADE_TURNS` consecutive charges, each announced to every player at once (`QBIT-12`). |
 | **Seize** | A qBit action that takes command of one enemy fleet for one turn: it follows any order, `Attack` included, and fights on the seizer's side, but never damages its own flagship (`QBIT-10`). |
 | **Oversight** | A qBit action that protects one of a player's own fleets from spoofs for one turn (`QBIT-09`). |
 | **Strength (of a command)** | The qBits paid into a spoof or an oversight beyond its price. The stronger command wins (`QBIT-09`). |
@@ -93,6 +94,8 @@ All values are placeholders, to be tuned by playtesting.
 | `QBIT_SPOOF_COST` | Base cost of a spoof | 3 | `QBIT-08` adds distance. |
 | `QBIT_SEIZE_COST` | Base cost of a seize | 12 | `QBIT-08` adds distance. High on purpose: only a sustained income lead can seize often (`QBIT-10`). |
 | `HIJACK_MAX_AGE` | Oldest track a spoof can be aimed with | 1 turn | `QBIT-04` |
+| `CASCADE_CHARGE` | qBits one Cascade charge costs | Set by each scenario | `QBIT-12`. Not priced by distance. A scenario without it has no Cascade. |
+| `CASCADE_TURNS` | Consecutive charges that complete a Cascade | Set by each scenario | `QBIT-12` |
 
 ---
 
@@ -178,6 +181,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   - scan results (`FB-11`), including the free scans from seeded units, and the absence of one from a seeded unit that is gone (`QBIT-11`);
   - the acks for instant orders and spoofs, which say only Delivered or No answer (`ORD-09`, `QBIT-02`);
   - web news: that a player's web, theirs or another's, gained or lost a node, but not which node or where (`ECON-05`);
+  - every player's Cascade count, and whose Cascade lapsed (`QBIT-12`);
   - prices (`QBIT-08`), worked out only from what the paying player knows.
 
   Anything else the engine knows MUST NOT reach a player except at light speed.
@@ -492,7 +496,7 @@ There are two resources. qBits are information: the web in orbital zones produce
   - *Why:* scouts shouldn't compete with warships for a yard's time. It gives matter a cheap use, and seeded probes (`QBIT-11`) a steady supply.
 
 ### 11.4 Spending qBits
-- **QBIT-01** In Planning, a player MAY spend qBits on: scans (`FB-11`), instant orders (`ORD-06`), spoofs (`QBIT-02`), seizes (`QBIT-10`) and oversight (`QBIT-09`). Each is priced by `QBIT-08`. A player also spends qBits by seeding a unit as it is produced (`QBIT-11`).
+- **QBIT-01** In Planning, a player MAY spend qBits on: scans (`FB-11`), instant orders (`ORD-06`), spoofs (`QBIT-02`), seizes (`QBIT-10`) and oversight (`QBIT-09`). Each is priced by `QBIT-08`. A player also spends qBits by seeding a unit as it is produced (`QBIT-11`), and by charging a Cascade (`QBIT-12`), at a flat price.
 - **QBIT-08** Every qBit action costs its base cost plus `L(d)` (`LIGHT-14`), where `d` is the distance from the player's flagship to the unit acted on. That is one qBit for each turn of light delay skipped.
 
 | Action | Base cost |
@@ -542,6 +546,12 @@ There are two resources. qBits are information: the web in orbital zones produce
   - At the start of each Planning phase, a seeded unit with at least 1 qBit left spends 1, and its owner gets a scan of it (`FB-11`) at no other cost: everything it observed at the end of the previous turn, at age 0, its own status report included. It does this every turn while its seed lasts, whether or not it sees anything.
   - If the unit is gone, no scan comes, and its owner sees that at once (`LIGHT-18`). That is part of the price of instant reporting.
   - *Why:* entangled pairs have to be carried out physically, so a player commits qBits to a place in advance, and risks losing the whole seed to the nearest raider. It gives a current picture far from the flagship, which also keeps tracks fresh enough for spoofs and seizes (`QBIT-04`). It reports every turn, not only when it sees something, because a report sent only on a sighting would make a quiet turn free news.
+
+- **QBIT-12** **Cascade.** In a scenario that sets `CASCADE_CHARGE` and `CASCADE_TURNS`, a player MAY charge their Cascade once each Planning phase. A charge costs `CASCADE_CHARGE` qBits, paid in Emission after every other qBit action; one their balance can't cover is refused and costs nothing (`QBIT-01`).
+  - A player's **Cascade count** is the number of consecutive turns, up to and including the last, in which they charged. A turn without a charge resets it to 0.
+  - Every player learns every count at once, through the entangled channel (`LIGHT-18`): in each Planning phase, each player's count as of the turn before, and whose count has just lapsed to 0. Nothing about where anyone is.
+  - A player whose count reaches `CASCADE_TURNS` wins at the end of that turn if their flagship is still in the game. If more than one player does so in the same turn, the game is a draw. Destroying a flagship still wins as the scenario says, and a flagship destroyed in the turn its Cascade completes doesn't win.
+  - *Why:* a large web has to become a result (design doc 2.6, 8.2), and a kill alone can't always arrive in time. Decay (`ECON-04`) caps a balance at about three turns of income, so a Cascade can't be saved up: only sustained high income pays for consecutive charges. The countdown is public, so the player behind gets the turns in between to cut that income by raiding nodes, or to go for the flagship. A charging player spends on the Cascade what they would otherwise spend on oversight, so the leader is exposed while it charges.
 
 ---
 

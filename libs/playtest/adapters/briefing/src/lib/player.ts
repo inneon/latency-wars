@@ -1,6 +1,8 @@
 import { formatHex } from '@latency-wars/domain';
 import { balanceOf, matterStatementFor, type QbitRefusal, type QbitSpend, type QbitStatement, statementFor } from '@latency-wars/economy';
 import {
+  type CascadeNews,
+  type CascadeQuote,
   type EngineState,
   formatMatter,
   formatQbits,
@@ -83,6 +85,27 @@ export function renderWebNews(news: readonly WebNews[], player: string, nameOf: 
     return `- ${whose} web ${change} ${count === 1 ? 'a node' : `${count} nodes`} last turn.`;
   });
   return `## Web news (ECON-05)\n\nFelt at once through the entanglement. Where each node is arrives at light speed, as a sighting in your sensor picture.\n\n${lines.join('\n')}`;
+}
+
+/**
+ * The Cascade section of `player`'s report (QBIT-12): every player's count
+ * after last turn, and whose has lapsed. Empty when nobody has charged.
+ */
+export function renderCascadeNews(news: readonly CascadeNews[], player: string, nameOf: (player: string) => string): string {
+  if (news.length === 0) return '';
+  const lines = news.map((n) => {
+    const whose = n.player === player ? 'Your' : `${nameOf(n.player)}'s`;
+    return n.lapsed
+      ? `- ${whose} Cascade lapsed: no charge last turn, so its count is back to 0.`
+      : `- ${whose} Cascade: ${n.count} of ${n.turns} consecutive charges.${n.count === n.turns - 1 ? ' One more charge completes it.' : ''}`;
+  });
+  return `## Cascade (QBIT-12)\n\nFelt at once through the entanglement, by every player.\n\n${lines.join('\n')}`;
+}
+
+/** A Cascade charge as quoted in Planning, or as paid in Emission (QBIT-12). */
+export function renderCascadeQuote(quote: CascadeQuote): string {
+  if (quote.refused !== undefined) return `## Cascade charge (QBIT-12)\n\nRefused: ${quote.refused}`;
+  return `## Cascade charge (QBIT-12)\n\nA charge costs ${formatQbits(quote.cost ?? 0)} qBits, paid in Emission after every other qBit action. Paid this turn, your count becomes ${quote.count} of ${quote.turns}.`;
 }
 
 /** The messages that reached a player this Planning phase. */

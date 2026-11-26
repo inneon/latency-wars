@@ -6,11 +6,12 @@ import { z } from 'zod';
 /** Something a player spends qBits on in Planning (QBIT-01), other than an instant order. */
 export const QbitPurchase = z.object({
   kind: z
-    .enum(['scan', 'spoof', 'seize', 'oversee'])
+    .enum(['scan', 'spoof', 'seize', 'oversee', 'cascade'])
     .describe(
       'scan: what one of your units saw at the end of last turn, at age 0 (FB-11). spoof: override an enemy fleet, and every fleet of its owner in its hex, for this turn (QBIT-02). ' +
         'seize: take command of one enemy fleet for this turn; it follows any order you give, Attack included, and fights on your side, but never damages its own flagship (QBIT-10). ' +
-        'oversee: protect one of your fleets from spoofs and seizes this turn (QBIT-09).',
+        'oversee: protect one of your fleets from spoofs and seizes this turn (QBIT-09). ' +
+        'cascade: charge your Cascade this turn, in scenarios that have one (QBIT-12); no target.',
     ),
   target: z
     .string()

@@ -82,6 +82,16 @@ export interface Parameters {
   readonly qbits: QbitParameters;
   /** Without it, the game has no matter. */
   readonly matter?: MatterParameters;
+  /** Without it, the game has no Cascade (QBIT-12). */
+  readonly cascade?: CascadeParameters;
+}
+
+/** `CASCADE_CHARGE` and `CASCADE_TURNS` (QBIT-12). */
+export interface CascadeParameters {
+  /** qBits one charge costs, at a flat price. */
+  readonly charge: number;
+  /** Consecutive charges that complete a Cascade. */
+  readonly turns: number;
 }
 
 /** Everything the engine needs to start a game and look up its parameters. */
@@ -105,7 +115,7 @@ export interface SubmittedOrder {
 
 /** Something a player spends qBits on in Planning (QBIT-01), other than an instant order. */
 export interface Purchase {
-  readonly kind: 'scan' | 'spoof' | 'seize' | 'oversee';
+  readonly kind: 'scan' | 'spoof' | 'seize' | 'oversee' | 'cascade';
   readonly target?: string;
   /** Spoof or seize only. */
   readonly order?: string;

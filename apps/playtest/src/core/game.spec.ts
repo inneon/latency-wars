@@ -459,4 +459,22 @@ describe('runPlaytest with matter (Ycnetal)', () => {
     expect(redSaw).not.toMatch(/Produce\(|blue-probe-2|blue-mine-thgil|Blue Mine/);
     expect(events.filter((e) => e.type === 'matter').length).toBe(2);
   });
+
+  it('takes Cascade charges, tells everyone the count at once, and ends the game when one completes (QBIT-12)', async () => {
+    const cheap: Scenario = { ...ycnetal, parameters: { ...ycnetal.parameters, cascade: { charge: 2, turns: 2 } } };
+    const charge = [{ kind: 'cascade' as const }];
+    const { red, agents } = setup(cheap, 99, { purchases: { 'blue:turn 1': charge, 'blue:turn 2': charge } });
+    const events: PlaytestEvent[] = [];
+    await runPlaytest({ scenario: cheap, agents, maxRounds: 5, emit: (e) => events.push(e) });
+
+    const charges = events.filter((e) => e.type === 'cascade');
+    expect(charges).toEqual([
+      expect.objectContaining({ turn: 1, player: 'blue', cost: 2, count: 1 }),
+      expect.objectContaining({ turn: 2, player: 'blue', cost: 2, count: 2 }),
+      expect.objectContaining({ turn: 2, completed: ['blue'] }),
+    ]);
+    const redTurn2 = red.prompts.find((p) => p.label === 'turn 2')?.prompt ?? '';
+    expect(redTurn2).toContain("- Blue's Cascade: 1 of 2 consecutive charges. One more charge completes it.");
+    expect(red.prompts.some((p) => p.label === 'turn 3')).toBe(false);
+  });
 });

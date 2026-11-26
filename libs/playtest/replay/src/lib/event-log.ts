@@ -274,6 +274,20 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
     player,
     reports: z.array(z.object({ unit: z.string(), name: z.string(), left: z.number().optional(), gone: z.literal(true).optional() })),
   }),
+  /**
+   * The Cascade (QBIT-12): a player's charge as paid or refused in Emission, or, with `completed`, the players whose
+   * Cascade completed at the end of the turn and ended the game.
+   */
+  z.object({
+    type: z.literal('cascade'),
+    turn,
+    player: player.optional(),
+    cost: z.number().optional(),
+    count: z.number().optional(),
+    turns: z.number().optional(),
+    refused: z.string().optional(),
+    completed: z.array(z.string()).optional(),
+  }),
   /** A reply sent back to be fixed, with the problems found. */
   z.object({ type: z.literal('correction'), agent: z.string(), label: z.string(), problems: z.string() }),
   /** A reply accepted with its problems, because the corrections ran out. The game continues as it says. */

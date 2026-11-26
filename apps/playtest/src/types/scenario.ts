@@ -115,6 +115,8 @@ export const ScenarioFile = z.object({
     hijack: HijackParameters,
     qbits: QbitParameters,
     matter: MatterParameters.optional(),
+    /** `CASCADE_CHARGE` and `CASCADE_TURNS`. Without it, the scenario has no Cascade (QBIT-12). */
+    cascade: z.object({ charge: z.number().positive(), turns: z.number().int().positive() }).optional(),
   }),
   /** The true state at the end of turn 0. Every unit is assumed to have held this position before play began. */
   units: z.array(UnitFile).min(1),
@@ -162,7 +164,16 @@ export interface Scenario {
   /** How many turns the game lasts. A run's --rounds replaces the scenario's own. */
   maxRounds: number;
   map: { radius: number; impassable: Hex[]; features: MapFeature[] };
-  parameters: { c: number; trackDecay?: number; engageRange?: number; hijack: HijackParameters; qbits: QbitParameters; matter?: MatterParameters };
+  parameters: {
+    c: number;
+    trackDecay?: number;
+    engageRange?: number;
+    hijack: HijackParameters;
+    qbits: QbitParameters;
+    matter?: MatterParameters;
+    /** `CASCADE_CHARGE` and `CASCADE_TURNS` (QBIT-12). */
+    cascade?: { charge: number; turns: number };
+  };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];
   rules: { path: string; content: string }[];

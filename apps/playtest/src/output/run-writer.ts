@@ -115,6 +115,10 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: engine handled ${e.notes.length} production and construction event(s)`;
     case 'seeded':
       return `Turn ${e.turn}: ${e.player}'s ${e.reports.length} seeded unit(s) reported (QBIT-11)`;
+    case 'cascade':
+      return e.completed
+        ? `Turn ${e.turn}: ${e.completed.join(' and ')} completed a Cascade (QBIT-12)`
+        : `Turn ${e.turn}: ${e.player}'s Cascade charge ${e.refused ? `refused: ${e.refused}` : `paid, ${e.count} of ${e.turns}`} (QBIT-12)`;
     case 'correction':
       return `${e.agent} (${e.label}): reply sent back to be fixed`;
     case 'unresolved':

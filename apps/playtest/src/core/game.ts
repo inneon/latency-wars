@@ -4,6 +4,9 @@ import type { PlaytestUnit, Scenario } from '../types/scenario';
 import {
   type Applied,
   applyOutcome,
+  cascadeNewsFor,
+  cascadeWinners,
+  chargeCascade,
   commandEffects,
   deliverReportedLosses,
   type EngineState,
@@ -16,6 +19,7 @@ import {
   type OversightQuote,
   payForEmission,
   queueSpoofReceipts,
+  quoteCascade,
   quoteHijack,
   quoteOversight,
   ranking,
@@ -29,6 +33,8 @@ import {
   webNewsFor,
 } from '@latency-wars/engine';
 import {
+  renderCascadeNews,
+  renderCascadeQuote,
   renderMatter,
   renderMatterForGm,
   renderMessages,
@@ -164,6 +170,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       const hijacks = purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, scenario, p.id, turn, q));
       const oversights = purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, scenario, p.id, turn, q));
       if (hijacks.length > 0 || oversights.length > 0) parts.push(renderQuotes(hijacks, oversights));
+      if (purchases.some((q) => q.kind === 'cascade')) parts.push(renderCascadeQuote(quoteCascade(engine, scenario, p.id, turn)));
       const text = parts.join('\n\n');
       delivered.set(p.id, text);
       record({ type: 'quotes', turn, player: p.id, intel, hijacks, oversights, delivered: text });
@@ -202,6 +209,12 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       submissions.set(p.id, { ...submission, orders: paid.orders });
       if (paid.hijacks.length > 0) bought.set(p.id, paid.hijacks);
       if (paid.oversights.length > 0) oversights.set(p.id, paid.oversights);
+      // A Cascade charge is paid after every other qBit action (QBIT-12).
+      if (submission.qbit_purchases.some((q) => q.kind === 'cascade')) {
+        const charged = chargeCascade(engine, scenario, p.id, turn);
+        engine = charged.engine;
+        record({ type: 'cascade', turn, player: p.id, ...charged.quote });
+      }
     }
     const hijacks = settleCommandContest(bought, oversights);
     for (const p of scenario.players) {
@@ -260,6 +273,19 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     engine = applied.engine;
     const productionNotes = [...judged.notes, ...applied.notes];
     if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });
+
+    // A Cascade completed this turn wins, unless a flagship fell: then the kill decides, as the scenario says (QBIT-12).
+    const completed = cascadeWinners(engine, scenario, turn);
+    const everyFlagship = players.every((id) => engine.units.some((u) => u.owner === id && u.class === 'flagship'));
+    if (completed.length > 0 && everyFlagship) {
+      const names = completed.map((id) => scenario.players.find((p) => p.id === id)?.name ?? id);
+      const outcome =
+        completed.length === 1
+          ? `${names[0]} completed a Cascade (QBIT-12) at the end of turn ${turn} and wins.`
+          : `${names.join(' and ')} completed Cascades (QBIT-12) in the same turn, ${turn}: the game is a draw.`;
+      latest = { ...latest, game_over: true, outcome };
+      record({ type: 'cascade', turn, completed });
+    }
 
     for (const id of players) {
       if (!latest.game_over && !engine.units.some((u) => u.owner === id && u.class === 'flagship')) {
@@ -326,7 +352,8 @@ function composeReports(
       const seeded = renderSeedReports(seeds.get(p.id) ?? []);
       const nameOf = (id: string) => scenario.players.find((q) => q.id === id)?.name ?? id;
       const web = renderWebNews(webNewsFor(engine, turn), p.id, nameOf);
-      return [p.id, [note, renderQbits(engine, p.id, turn), matter, web, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
+      const cascade = renderCascadeNews(cascadeNewsFor(engine, scenario, turn), p.id, nameOf);
+      return [p.id, [note, renderQbits(engine, p.id, turn), matter, cascade, web, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }
@@ -360,6 +387,7 @@ function gameRecord(events: PlaytestEvent[]): string {
   const hijackNotes: string[] = [];
   const rankingNotes: string[] = [];
   const productionNotes: string[] = [];
+  const cascadeNotes: string[] = [];
   for (const e of events) {
     if (e.type === 'production') for (const n of e.notes) productionNotes.push(`- Turn ${e.turn}: ${n}`);
     if (e.type === 'engine') {
@@ -374,6 +402,13 @@ function gameRecord(events: PlaytestEvent[]): string {
       for (const q of e.quotes) {
         if (!q.refused) hijackNotes.push(`- Turn ${e.turn}, ${e.player}: ${q.kind} ${q.target} → ${q.order} for ${q.cost} qBits${q.fails ? ` (failed: ${q.fails})` : ''}`);
       }
+    }
+    if (e.type === 'cascade') {
+      cascadeNotes.push(
+        e.completed
+          ? `- Turn ${e.turn}: ${e.completed.join(' and ')} completed a Cascade; the game ended.`
+          : `- Turn ${e.turn}, ${e.player}: charge ${e.refused ? `refused (${e.refused})` : `paid, ${e.cost} qBits, count ${e.count} of ${e.turns}`}`,
+      );
     }
     if (e.type === 'ranking') {
       for (const r of e.rows) {
@@ -410,6 +445,10 @@ ${engineNotes.join('\n') || '(none)'}
 <spoofs note="Spoofs and seizes bought, at the engine's prices (QBIT-08).">
 ${hijackNotes.join('\n') || '(none)'}
 </spoofs>
+
+<cascade note="Cascade charges paid or refused, and any Cascade that completed (QBIT-12). Every player saw every count at once.">
+${cascadeNotes.join('\n') || '(none)'}
+</cascade>
 
 <production note="What the engine decided about shipyards and construction (PROD-04, ECON-03): Produce orders accepted or rejected, units finished, productions lost.">
 ${productionNotes.join('\n') || '(none)'}

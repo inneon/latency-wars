@@ -1,3 +1,4 @@
+export * from './lib/cascade';
 export * from './lib/matter';
 export * from './lib/movement-phase';
 export * from './lib/orders';
