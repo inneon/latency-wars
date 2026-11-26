@@ -187,9 +187,8 @@
         }
       ]
     },
-    "cascade": {
-      "charge": 30,
-      "turns": 3
+    "capture": {
+      "guard": 1
     }
   },
   "units": [

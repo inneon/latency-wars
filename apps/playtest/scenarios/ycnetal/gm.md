@@ -29,7 +29,7 @@ The distance table is in the shared rules, which the players have too.
 | … + Langis L3 | 682 | 42.6 |
 | … + Langis L3 + Yaled L4 / Thgil L3 | 1422 | 88.9 |
 
-- **The Cascade** (`QBIT-12`, 30 qBits a charge, 3 in a row) is the second way to win. The engine takes the charges, tells every player the counts, and ends the game when one completes: never declare a Cascade win yourself.
+- **Capture** (`QBIT-13`, `CAPTURE_GUARD` = 1) is the second way to win: a seize that lands on a flagship. The engine prices and settles it, makes the captured flagship hold, and ends the game at the end of the turn: never declare a capture win yourself. There is no Cascade countdown (`QBIT-12`) in this scenario.
 - Each side's Langis node is 6 hexes from home and 3 from Langis, and the two are 6 apart. It is the most exposed part of either starting web: losing it cuts income from 4.9 to 0.25.
 
 - **Matter:** each home mine gives 3 a turn. A mine on Langis doubles that. A raider costs 4 and a Line 6, so a side holding one mine can field about one new raider every one and a half turns.

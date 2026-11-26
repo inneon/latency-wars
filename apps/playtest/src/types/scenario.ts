@@ -117,6 +117,8 @@ export const ScenarioFile = z.object({
     matter: MatterParameters.optional(),
     /** `CASCADE_CHARGE` and `CASCADE_TURNS`. Without it, the scenario has no Cascade (QBIT-12). */
     cascade: z.object({ charge: z.number().positive(), turns: z.number().int().positive() }).optional(),
+    /** `CAPTURE_GUARD`. Without it, a flagship can't be seized (QBIT-13). */
+    capture: z.object({ guard: z.number().nonnegative() }).optional(),
   }),
   /** The true state at the end of turn 0. Every unit is assumed to have held this position before play began. */
   units: z.array(UnitFile).min(1),
@@ -173,6 +175,8 @@ export interface Scenario {
     matter?: MatterParameters;
     /** `CASCADE_CHARGE` and `CASCADE_TURNS` (QBIT-12). */
     cascade?: { charge: number; turns: number };
+    /** `CAPTURE_GUARD` (QBIT-13). */
+    capture?: { guard: number };
   };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];

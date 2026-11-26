@@ -288,6 +288,12 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
     refused: z.string().optional(),
     completed: z.array(z.string()).optional(),
   }),
+  /** Flagships captured by a seize this turn (QBIT-13). Their owners lost, and the engine ended the game. */
+  z.object({
+    type: z.literal('capture'),
+    turn,
+    captured: z.array(z.object({ flagship: z.string(), owner: player, by: player })),
+  }),
   /** A reply sent back to be fixed, with the problems found. */
   z.object({ type: z.literal('correction'), agent: z.string(), label: z.string(), problems: z.string() }),
   /** A reply accepted with its problems, because the corrections ran out. The game continues as it says. */

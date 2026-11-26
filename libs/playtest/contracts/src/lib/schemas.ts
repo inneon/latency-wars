@@ -16,11 +16,11 @@ export const QbitPurchase = z.object({
   target: z
     .string()
     .optional()
-    .describe('The unit id: one of yours (fleet, node or flagship) for a scan, the enemy fleet for a spoof or seize, one of your fleets for oversight.'),
+    .describe('The unit id: one of yours (fleet, node or flagship) for a scan, the enemy fleet for a spoof or seize (or the enemy flagship, for a seize where the scenario allows a capture, QBIT-13), one of your fleets (or your flagship, where captures are allowed) for oversight.'),
   order: z
     .string()
     .optional()
-    .describe('Spoof or seize only: the order the fleet carries out this turn. A spoof: MoveTo, Hold or ReturnHome (QBIT-02). A seize: any order except an Attack on its own flagship (QBIT-10).'),
+    .describe('Spoof or seize only: the order the fleet carries out this turn. A spoof: MoveTo, Hold or ReturnHome (QBIT-02). A seize: any order except an Attack on its own flagship (QBIT-10); none for a seize on a flagship (QBIT-13).'),
   strength: z
     .number()
     .int()

@@ -162,6 +162,8 @@ interface TurnEvents {
   overrides: EngineOverride[];
   /** The players whose Cascade completed at the end of the turn (QBIT-12). */
   cascades: string[];
+  /** Flagships captured by a seize this turn (QBIT-13). */
+  captures: { flagship: string; owner: string; by: string }[];
   reports: Map<string, string>;
   submissions: Map<string, PlayerTurn>;
   scans: Map<string, IntelPurchase[]>;
@@ -176,6 +178,7 @@ const emptyTurn = (): TurnEvents => ({
   corrections: [],
   overrides: [],
   cascades: [],
+  captures: [],
   reports: new Map(),
   submissions: new Map(),
   scans: new Map(),
@@ -245,6 +248,9 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
         break;
       case 'cascade':
         if (e.completed) at(e.turn).cascades.push(...e.completed);
+        break;
+      case 'capture':
+        at(e.turn).captures.push(...e.captured);
         break;
       case 'warning':
         warnings.push(e.message);
@@ -325,8 +331,13 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
       production: t.production,
       overrides: t.overrides,
       // The engine, not the GM, ends a game with a Cascade, after the GM's resolution is logged (QBIT-12).
-      gameOver: (t.resolution?.game_over ?? false) || t.cascades.length > 0,
-      outcome: t.cascades.length > 0 ? cascadeOutcome(t.cascades, turn, scenario) : (t.resolution?.outcome ?? ''),
+      gameOver: (t.resolution?.game_over ?? false) || t.cascades.length > 0 || t.captures.length > 0,
+      outcome:
+        t.captures.length > 0
+          ? captureOutcome(t.captures, turn, scenario)
+          : t.cascades.length > 0
+            ? cascadeOutcome(t.cascades, turn, scenario)
+            : (t.resolution?.outcome ?? ''),
     });
   }
 
@@ -344,6 +355,14 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
 }
 
 /** Who won with a Cascade, in the runner's own words: one player completing it wins, two or more in the same turn draw. */
+/** Who won by capturing a flagship (QBIT-13), in the runner's own words. Every flagship captured is a loss for its owner. */
+function captureOutcome(captured: readonly { flagship: string; owner: string; by: string }[], turn: number, scenario: ScenarioHeader): string {
+  const nameOf = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
+  const what = captured.map((c) => `${nameOf(c.by)} captured ${nameOf(c.owner)}'s flagship`).join(' and ');
+  const winners = scenario.players.map((p) => p.id).filter((id) => !captured.some((c) => c.owner === id));
+  return winners.length === 1 ? `${what} (QBIT-13) in turn ${turn}: ${nameOf(winners[0] ?? '')} wins.` : `${what} (QBIT-13) in turn ${turn}: the game is a draw.`;
+}
+
 function cascadeOutcome(completed: readonly string[], turn: number, scenario: ScenarioHeader): string {
   const names = completed.map((id) => scenario.players.find((p) => p.id === id)?.name ?? id);
   return names.length === 1

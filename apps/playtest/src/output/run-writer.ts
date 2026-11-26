@@ -115,6 +115,8 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: engine handled ${e.notes.length} production and construction event(s)`;
     case 'seeded':
       return `Turn ${e.turn}: ${e.player}'s ${e.reports.length} seeded unit(s) reported (QBIT-11)`;
+    case 'capture':
+      return `Turn ${e.turn}: ${e.captured.map((c) => `${c.by} captured ${c.flagship}`).join(', ')} (QBIT-13)`;
     case 'cascade':
       return e.completed
         ? `Turn ${e.turn}: ${e.completed.join(' and ')} completed a Cascade (QBIT-12)`

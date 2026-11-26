@@ -191,6 +191,19 @@ describe('buildReplay', () => {
     expect(drawn.outcome).toBe('Blue and Red completed Cascades (QBIT-12) in the same turn, 2: the game is a draw.');
   });
 
+  it('ends the game on the turn a flagship is captured (QBIT-13)', () => {
+    const events: PlaytestEvent[] = [
+      header(start),
+      state(0, start),
+      resolved(1),
+      state(1, start),
+      { type: 'capture', turn: 1, captured: [{ flagship: 'red-flagship', owner: 'red', by: 'blue' }] },
+    ];
+    const replay = buildReplay('run', events);
+    expect(replay.frames[1]).toMatchObject({ gameOver: true, outcome: "Blue captured Red's flagship (QBIT-13) in turn 1: Blue wins." });
+    expect(replay.outcome).toBe("Blue captured Red's flagship (QBIT-13) in turn 1: Blue wins.");
+  });
+
   describe('progress', () => {
     const turnOf = (player: string, step: 'initial' | 'final', purchases: number): PlaytestEvent => ({
       type: 'player_turn',

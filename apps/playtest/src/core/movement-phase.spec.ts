@@ -137,6 +137,13 @@ describe('runMovementPhase', () => {
     expect(result.units.find((u) => u.id === 'red-line-1')?.owner).toBe('red');
   });
 
+  it('holds a captured flagship whatever its order, on its owner\'s side (QBIT-13)', () => {
+    const decisions = gm(decide('red-flagship', { move: 'move_to', move_hex: hex(-2, -6) }));
+    const result = runMovementPhase(map, [redFlagship], decisions, 1, { spoofed: new Set(), seized: new Map(), captured: new Map([['red-flagship', 'blue']]) });
+    expect(result.units.find((u) => u.id === 'red-flagship')).toMatchObject({ hex: redFlagship.hex, owner: 'red' });
+    expect(result.phase.notes).toEqual(['red-flagship is captured by blue (QBIT-13): it holds this turn.']);
+  });
+
   it('holds a fleet the GM gave no decision, and says so', () => {
     const result = runMovementPhase(map, [raider], gm(), 1);
     expect(result.phase.notes).toEqual(['blue-raider had no decision, so it held, with no order.']);

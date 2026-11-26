@@ -24,6 +24,7 @@ import {
   scanObservations,
   renderSeedReports,
   renderWebNews,
+  commandEffects,
   settleCommandContest,
   useSeeds,
   webNewsFor,
@@ -420,6 +421,44 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     expect(quote(scanned(contact(), 2), 2, { kind: 'seize', target: 'red-line', order: 'Hold' }).refused).toContain("doesn't use seizes");
     const engine = scanned(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
     expect(quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-flagship', order: 'Hold' }).refused).toContain("can't be seized");
+  });
+
+  describe('capturing a flagship (QBIT-13)', () => {
+    const withCapture = (guard = 2): Scenario => ({ ...withSeize(), parameters: { ...withSeize().parameters, capture: { guard } } });
+    // Blue Line dashes next to Red's flagship, so Blue has a fresh track on it.
+    const near = () => scanned(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
+
+    it('prices a seize on a flagship with no order, guarded by its owner\'s last production, which the buyer never sees', () => {
+      const engine = near();
+      const q = quoteHijack(engine, withCapture(), 'blue', 2, { kind: 'seize', target: 'red-flagship', strength: 3 });
+      const production = statementFor(engine.ledger, 'red', 1)?.production ?? NaN;
+      expect(q).toMatchObject({ kind: 'seize', capture: true, reaches: ['red-flagship'] });
+      expect(q.refused).toBeUndefined();
+      expect(q.guard).toBeCloseTo(2 * production);
+      expect(renderQuotes([q])).not.toContain('guard');
+      expect(quoteHijack(engine, withCapture(), 'blue', 2, { kind: 'spoof', target: 'red-flagship', order: 'Hold' }).refused).toContain("can't be spoofed");
+    });
+
+    it('lands only when stronger than the guard plus any oversight bought for the flagship', () => {
+      const engine = near();
+      const attempt = (strength: number) => quoteHijack(engine, withCapture(1), 'blue', 2, { kind: 'seize', target: 'red-flagship', strength });
+      const guard = attempt(0).guard ?? NaN;
+      const settle = (strength: number, oversight?: number) =>
+        settleCommandContest(new Map([['blue', [attempt(strength)]]]), new Map(oversight ? [['red', [{ target: 'red-flagship', strength: oversight }]]] : []))
+          .get('blue')?.[0];
+      expect(settle(Math.floor(guard))?.fails).toContain('blocked');
+      expect(settle(Math.floor(guard) + 1)?.fails).toBeUndefined();
+      expect(settle(Math.floor(guard) + 1, 2)?.fails).toContain('blocked');
+      const landed = settle(Math.floor(guard) + 1);
+      expect(commandEffects(new Map([['blue', landed ? [landed] : []]]))).toMatchObject({ seized: new Map(), captured: new Map([['red-flagship', 'blue']]) });
+      expect(renderHijacksForGm(landed ? [landed] : [])).toContain('captures that flagship (QBIT-13)');
+    });
+
+    it('lets a player oversee their own flagship only where captures are allowed', () => {
+      const engine = near();
+      expect(quoteOversight(engine, withCapture(), 'red', 2, { kind: 'oversee', target: 'red-flagship', strength: 2 }).refused).toBeUndefined();
+      expect(quoteOversight(engine, withSeize(), 'red', 2, { kind: 'oversee', target: 'red-flagship', strength: 2 }).refused).toContain('needs no oversight');
+    });
   });
 
   it('refuses a seize that would attack its own flagship, fallback included, at no cost (QBIT-10)', () => {

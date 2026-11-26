@@ -84,6 +84,14 @@ export interface Parameters {
   readonly matter?: MatterParameters;
   /** Without it, the game has no Cascade (QBIT-12). */
   readonly cascade?: CascadeParameters;
+  /** Without it, a flagship can't be seized (QBIT-13). */
+  readonly capture?: CaptureParameters;
+}
+
+/** `CAPTURE_GUARD` (QBIT-13). */
+export interface CaptureParameters {
+  /** A flagship's free oversight, as a multiple of its owner's qBit production in the last Economy phase. */
+  readonly guard: number;
 }
 
 /** `CASCADE_CHARGE` and `CASCADE_TURNS` (QBIT-12). */
@@ -208,6 +216,10 @@ export interface HijackQuote {
   readonly atFlagship?: boolean;
   /** The fleets it reaches whose oversight blocked it, with that oversight's strength (QBIT-09). */
   readonly blocked?: readonly { readonly unit: UnitId; readonly oversight: number }[];
+  /** A seize on a flagship: if it lands, its owner's command collapses and they lose (QBIT-13). */
+  readonly capture?: true;
+  /** A captured flagship's free oversight on the true state: `CAPTURE_GUARD` × its owner's last production (QBIT-13). */
+  readonly guard?: number;
 }
 
 /** Oversight of one of the buyer's own fleets for the turn (QBIT-09). */

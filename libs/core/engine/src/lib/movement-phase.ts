@@ -15,6 +15,8 @@ export interface CommandEffects {
   readonly spoofed: ReadonlySet<string>;
   /** Seized fleet → the player who seized it. */
   readonly seized: ReadonlyMap<string, string>;
+  /** Captured flagship → the player who captured it (QBIT-13). It holds; it doesn't change sides. */
+  readonly captured?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface CommandEffects {
  * (QBIT-02).
  */
 export function commandEffects(hijacks: ReadonlyMap<string, readonly HijackQuote[]>): CommandEffects {
-  const winner = new Map<string, { player: string; kind: HijackQuote['kind']; strength: number }>();
+  const winner = new Map<string, { player: string; kind: HijackQuote['kind']; strength: number; capture: boolean }>();
   for (const [player, quotes] of hijacks) {
     for (const q of quotes) {
       if (q.refused || q.fails) continue;
@@ -33,17 +35,19 @@ export function commandEffects(hijacks: ReadonlyMap<string, readonly HijackQuote
       for (const unit of q.reaches ?? [q.target]) {
         if (blocked.has(unit)) continue;
         const current = winner.get(unit);
-        if (!current || strength > current.strength) winner.set(unit, { player, kind: q.kind, strength });
+        if (!current || strength > current.strength) winner.set(unit, { player, kind: q.kind, strength, capture: q.capture === true });
       }
     }
   }
   const spoofed = new Set<string>();
   const seized = new Map<string, string>();
+  const captured = new Map<string, string>();
   for (const [unit, w] of winner) {
-    if (w.kind === 'seize') seized.set(unit, w.player);
+    if (w.capture) captured.set(unit, w.player);
+    else if (w.kind === 'seize') seized.set(unit, w.player);
     else spoofed.add(unit);
   }
-  return { spoofed, seized };
+  return { spoofed, seized, captured };
 }
 
 const NO_EFFECTS: CommandEffects = { spoofed: new Set(), seized: new Map() };
@@ -86,6 +90,13 @@ export function runMovementPhase(
     if (!plan) notes.push(`${u.id} had no decision, so it held, with no order.`);
     let order: ActiveOrder | undefined = plan?.order;
     let intent: MoveIntent = plan?.intent ?? { kind: 'hold' };
+    // A captured flagship holds, whatever its order (QBIT-13).
+    const captor = effects.captured?.get(u.id);
+    if (captor) {
+      notes.push(`${u.id} is captured by ${captor} (QBIT-13): it holds this turn.`);
+      order = undefined;
+      intent = { kind: 'hold' };
+    }
     // Its owner's Escort orders that name a seized fleet don't count this turn (QBIT-10).
     const ownersSeized = (id: string) => effects.seized.has(id) && realOwner.get(id) === realOwner.get(u.id);
     if (order?.kind === 'escort' && ownersSeized(order.charge)) {

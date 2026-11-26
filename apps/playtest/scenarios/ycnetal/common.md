@@ -85,7 +85,7 @@ Hex distance, with the steps by the shortest legal path in brackets where the st
 
 `C` = 3. `V_STD` = 1, `V_FAST` = 2, `V_FLAG` = 1. `SENSOR_FLEET` = 2, `SENSOR_NODE` = 2, `SENSOR_FLAG` = 3.
 
-`QBIT_DIVISOR` = 16. `MINE_OUTPUT` = 3, `NODE_COST` = 4, `MINE_COST` = 8, `QBIT_SEIZE_COST` = 12. `CASCADE_CHARGE` = 30, `CASCADE_TURNS` = 3. Each player starts with 8 qBits and 8 matter. All other parameters use the placeholder values in the mechanics doc.
+`QBIT_DIVISOR` = 16. `MINE_OUTPUT` = 3, `NODE_COST` = 4, `MINE_COST` = 8, `QBIT_SEIZE_COST` = 12. `CAPTURE_GUARD` = 1. Each player starts with 8 qBits and 8 matter. All other parameters use the placeholder values in the mechanics doc.
 
 ## Units shipyards can produce
 
@@ -113,6 +113,6 @@ Everything else, including matter, building, shipyards and qBits, is as the mech
 The game lasts 20 turns.
 
 - Destroy the enemy flagship to win. A player whose flagship is destroyed loses immediately.
-- Or complete a **Cascade** (`QBIT-12`): charge it, for 30 qBits, in 3 consecutive turns, and you win at the end of the third if your flagship survives it. Every player sees every Cascade count at once, so a charge gives the other side two turns to answer: cut your income by raiding nodes, or reach your flagship. Decay caps a balance at about three turns of income, so it takes an income of roughly 22 qBits a turn or more, starting from a full balance and spending little else while charging.
-- If both flagships are destroyed in the same turn, or both Cascades complete in the same turn, the game is a draw.
-- If neither flagship has been destroyed and no Cascade has completed by the end of turn 20, the game is a draw. There are no tie-breaks.
+- Or **capture** the enemy flagship (`QBIT-13`): land a seize on it. It needs a track on the flagship no more than 1 turn old, like any seize, and it has to beat the flagship's free oversight, equal to its owner's qBit production last turn, plus any oversight its owner buys for it. A player whose flagship is captured loses at the end of that turn. Decay caps a balance at about three turns of income, so in practice a capture takes a clear lead in income over the defender, and a fresh sighting of their flagship.
+- If both players lose in the same turn (flagships destroyed or captured), the game is a draw.
+- If no flagship has been destroyed or captured by the end of turn 20, the game is a draw. There are no tie-breaks.

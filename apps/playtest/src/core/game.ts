@@ -258,7 +258,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     record({ type: 'gm_decisions', turn, decisions: decided });
 
     // Movement (TURN-03): the engine moves every unit and works out who fights (MOVE-01 to MOVE-04, COMBAT-02).
-    const movement = runMovementPhase(engine.map, engine.units, toPlans(decided), scenario.parameters.engageRange ?? 1, commandEffects(hijacks));
+    const effects = commandEffects(hijacks);
+    const movement = runMovementPhase(engine.map, engine.units, toPlans(decided), scenario.parameters.engageRange ?? 1, effects);
     record({ type: 'movement', turn, phase: movement.phase });
 
     // Combat onward (TURN-03): the GM resolves the rest of the turn from where Movement left everyone.
@@ -275,10 +276,22 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });
 
     // A Cascade completed this turn wins, unless a flagship fell: then the kill decides, as the scenario says (QBIT-12).
+    // A flagship captured this turn means its owner has lost, as has one whose flagship was destroyed (QBIT-13).
+    const nameOf = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
+    const captured = [...(effects.captured ?? [])].map(([flagship, by]) => ({ flagship, by, owner: engine.roster.get(flagship)?.owner ?? '' }));
+    if (captured.length > 0) {
+      const losers = new Set([...captured.map((c) => c.owner), ...players.filter((id) => !engine.units.some((u) => u.owner === id && u.class === 'flagship'))]);
+      const winners = players.filter((id) => !losers.has(id));
+      const what = captured.map((c) => `${nameOf(c.by)} captured ${nameOf(c.owner)}'s flagship`).join(' and ');
+      const outcome = winners.length === 1 ? `${what} (QBIT-13) in turn ${turn}: ${nameOf(winners[0] ?? '')} wins.` : `${what} (QBIT-13) in turn ${turn}: the game is a draw.`;
+      latest = { ...latest, game_over: true, outcome };
+      record({ type: 'capture', turn, captured });
+    }
+
     const completed = cascadeWinners(engine, scenario, turn);
     const everyFlagship = players.every((id) => engine.units.some((u) => u.owner === id && u.class === 'flagship'));
-    if (completed.length > 0 && everyFlagship) {
-      const names = completed.map((id) => scenario.players.find((p) => p.id === id)?.name ?? id);
+    if (completed.length > 0 && everyFlagship && captured.length === 0) {
+      const names = completed.map(nameOf);
       const outcome =
         completed.length === 1
           ? `${names[0]} completed a Cascade (QBIT-12) at the end of turn ${turn} and wins.`
@@ -403,6 +416,9 @@ function gameRecord(events: PlaytestEvent[]): string {
         if (!q.refused) hijackNotes.push(`- Turn ${e.turn}, ${e.player}: ${q.kind} ${q.target} → ${q.order} for ${q.cost} qBits${q.fails ? ` (failed: ${q.fails})` : ''}`);
       }
     }
+    if (e.type === 'capture') {
+      for (const c of e.captured) cascadeNotes.push(`- Turn ${e.turn}: ${c.by} captured ${c.flagship} (QBIT-13); the game ended.`);
+    }
     if (e.type === 'cascade') {
       cascadeNotes.push(
         e.completed
@@ -446,7 +462,7 @@ ${engineNotes.join('\n') || '(none)'}
 ${hijackNotes.join('\n') || '(none)'}
 </spoofs>
 
-<cascade note="Cascade charges paid or refused, and any Cascade that completed (QBIT-12). Every player saw every count at once.">
+<cascade note="Cascade charges paid or refused, any Cascade that completed (QBIT-12), and any flagship captured by a seize (QBIT-13). Every player saw every Cascade count at once.">
 ${cascadeNotes.join('\n') || '(none)'}
 </cascade>
 

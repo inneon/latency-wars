@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.16)
+# Latency Wars - Game Mechanics (v0.17)
 
 ## 0. About This Document
 
@@ -53,6 +53,7 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Spoof** | A qBit action that overrides the orders of an enemy fleet, and of every other fleet of that player in its hex, for one turn (`QBIT-02`). |
 | **Seeded unit** | A unit produced carrying qBits. Each Planning phase it spends one to send its owner a free scan of itself (`QBIT-11`). |
 | **Cascade** | A win bought with qBits: `CASCADE_TURNS` consecutive charges, each announced to every player at once (`QBIT-12`). |
+| **Capture** | A seize that lands on a flagship. Its owner's command collapses, and they lose (`QBIT-13`). |
 | **Seize** | A qBit action that takes command of one enemy fleet for one turn: it follows any order, `Attack` included, and fights on the seizer's side, but never damages its own flagship (`QBIT-10`). |
 | **Oversight** | A qBit action that protects one of a player's own fleets from spoofs for one turn (`QBIT-09`). |
 | **Strength (of a command)** | The qBits paid into a spoof or an oversight beyond its price. The stronger command wins (`QBIT-09`). |
@@ -96,6 +97,7 @@ All values are placeholders, to be tuned by playtesting.
 | `HIJACK_MAX_AGE` | Oldest track a spoof can be aimed with | 1 turn | `QBIT-04` |
 | `CASCADE_CHARGE` | qBits one Cascade charge costs | Set by each scenario | `QBIT-12`. Not priced by distance. A scenario without it has no Cascade. |
 | `CASCADE_TURNS` | Consecutive charges that complete a Cascade | Set by each scenario | `QBIT-12` |
+| `CAPTURE_GUARD` | A flagship's free oversight against capture, as a multiple of its owner's qBit production in the last Economy phase | Set by each scenario | `QBIT-13`. A scenario without it doesn't allow captures. |
 
 ---
 
@@ -273,7 +275,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ### 6.3 The flagship
 - **FLAG-01** The flagship is never willing to fight (`MOVE-04`) and can't be given an `Attack` order. Once engaged, it fights back like any unit (`COMBAT-01`). Fleets MAY be ordered to `Attack` an enemy flagship's track.
   - *Why:* zero command lag makes the flagship the best-commanded unit on the map. If it could also start fights, "lead from the front" would dominate. It should be valuable to keep near the front, not a warship.
-- **FLAG-02** The flagship can't build (`ECON-03`), and can't be spoofed or seized (`QBIT-04`).
+- **FLAG-02** The flagship can't build (`ECON-03`), and can't be spoofed (`QBIT-04`). It can be seized only where the scenario allows captures, and a seize that lands on it is a capture (`QBIT-13`).
 - **FLAG-03** If a spoof or seize lands this turn on a fleet escorting the flagship (`RES-08`) from the flagship's own hex, the flagship doesn't move that turn, unless its order is `AtAllCosts`. Its order resumes the next turn.
   - *Why:* the flagship sees its escorts turn away as it happens (`LIGHT-03`), so it doesn't march on alone. The spoof still opens a gap, but the attacker has to exploit it.
 
@@ -519,7 +521,7 @@ There are two resources. qBits are information: the web in orbital zones produce
   - *Why:* it is easier to make chaos than to bring order. Stacking fleets concentrates the risk of a spoof instead of spreading it.
 - **QBIT-04** A spoof or a seize needs:
   - a track on the target no older than `HIJACK_MAX_AGE`, because you need to know where to aim;
-  - a target that isn't a flagship.
+  - a target that isn't a flagship, except a seize where the scenario allows captures (`QBIT-13`).
 
   No hex is safe: a fleet in its own flagship's hex can be spoofed like any other. Its owner can protect it with oversight, which is cheapest there (`QBIT-09`). A stack is no safer: one spoof reaches every fleet in it (`QBIT-02`), and each needs its own oversight.
 
@@ -527,7 +529,7 @@ There are two resources. qBits are information: the web in orbital zones produce
 - **QBIT-06** The status report for that turn of each fleet a spoof or seize landed on records that it was spoofed or seized, and what it did. A fleet whose oversight blocked one records the blocked attempt. The owner learns either only when that report arrives, at light speed.
   - *Why:* the victim only finds out after the fact, through delayed reports.
 - **QBIT-09** **Oversight and the command contest.**
-  - In Planning, a player MAY pay for **oversight** of any of their fleets for the turn, at most once per fleet. It has a **strength** of at least 1, chosen by the player, and costs `L(d)` from their flagship plus that strength (`QBIT-08`).
+  - In Planning, a player MAY pay for **oversight** of any of their fleets for the turn, at most once per fleet, and of their flagship where the scenario allows captures (`QBIT-13`). It has a **strength** of at least 1, chosen by the player, and costs `L(d)` from their flagship plus that strength (`QBIT-08`).
   - A spoof's or seize's **strength** is whatever its buyer pays beyond its `QBIT-08` price, which MAY be 0.
   - A spoof is settled separately on each fleet it reaches (`QBIT-02`), and a seize on its one target (`QBIT-10`), in the same way. On a fleet with oversight it lands only if its strength is greater than the oversight's. Otherwise it is **blocked** on that fleet: it has no effect there. On a fleet without oversight it lands as usual. Its qBits are spent whatever happens.
   - Both players commit to oversight and spoofs in secret, at the same time. Neither learns what the other paid, except through receipts (`QBIT-02`) and status reports (`QBIT-06`).
@@ -552,6 +554,11 @@ There are two resources. qBits are information: the web in orbital zones produce
   - Every player learns every count at once, through the entangled channel (`LIGHT-18`): in each Planning phase, each player's count as of the turn before, and whose count has just lapsed to 0. Nothing about where anyone is.
   - A player whose count reaches `CASCADE_TURNS` wins at the end of that turn if their flagship is still in the game. If more than one player does so in the same turn, the game is a draw. Destroying a flagship still wins as the scenario says, and a flagship destroyed in the turn its Cascade completes doesn't win.
   - *Why:* a large web has to become a result (design doc 2.6, 8.2), and a kill alone can't always arrive in time. Decay (`ECON-04`) caps a balance at about three turns of income, so a Cascade can't be saved up: only sustained high income pays for consecutive charges. The countdown is public, so the player behind gets the turns in between to cut that income by raiding nodes, or to go for the flagship. A charging player spends on the Cascade what they would otherwise spend on oversight, so the leader is exposed while it charges.
+- **QBIT-13** **Capture (command collapse).** In a scenario that sets `CAPTURE_GUARD`, a seize MAY target the enemy flagship. It needs what any seize needs (`QBIT-04`), and no order.
+  - The flagship always has free oversight of `CAPTURE_GUARD` × its owner's qBit production in the last Economy phase (`ECON-01`), on top of any oversight its owner buys for it (`QBIT-09`). The seizer isn't told either. The seize is settled against both like any other (`QBIT-09`).
+  - If it lands, the flagship is **captured**: it holds that turn, whatever its order, but stays its owner's and fights as usual if engaged. Its owner loses at the end of that turn.
+  - A player whose flagship is captured or destroyed in a turn loses. If every player loses in the same turn, the game is a draw.
+  - *Why:* this is the Cascade of design doc 8.2 falling out of the qBit actions, instead of being a rule of its own. The guard scales with the defender's income, so it takes a real lead over them, not a fixed figure, to beat it: decay (`ECON-04`) caps a balance at about three turns of income, and the defender can add their own balance as oversight. Every node raided lowers the guard (design doc 5.4). It needs a fresh track on the flagship, so the leader has to find it: the hunt (design doc 2.1) stays the way to win, and a flagship that moves or kills the scouts near it is harder to capture.
 
 ---
 

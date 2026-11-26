@@ -1,5 +1,5 @@
 import { type Hex, hexDistance } from '@latency-wars/domain';
-import { spend } from '@latency-wars/economy';
+import { spend, statementFor } from '@latency-wars/economy';
 import { lightTravelTurns, type Observation, recordInstantArrival } from '@latency-wars/visibility';
 import { findOwnUnit } from './orders';
 import { type EngineState, formatQbits, knowledge } from './state';
@@ -177,8 +177,8 @@ export function settleCommandContest(
         if (q.refused || q.fails) return q;
         const strength = q.strength ?? 0;
         const reaches = q.reaches ?? [q.target];
-        // Command presence: 1 free oversight in the fleet's own flagship's hex (QBIT-09).
-        const presence = q.atFlagship ? 1 : 0;
+        // Command presence: 1 free oversight in the fleet's own flagship's hex (QBIT-09); a flagship's own guard (QBIT-13).
+        const presence = (q.atFlagship ? 1 : 0) + (q.guard ?? 0);
         const blocked = reaches.flatMap((unit) => {
           const oversight = (guard.get(unit) ?? 0) + presence;
           return oversight > 0 && strength <= oversight ? [{ unit, oversight }] : [];
@@ -219,7 +219,8 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   const base = kind === 'seize' ? hijack.seizeCost : hijack.spoofCost;
   if (base === undefined) return refuse("This scenario doesn't use seizes (QBIT-10).");
   if (!target) return refuse('No target given.');
-  if (!order) return refuse(`No order given for the ${done} fleet.`);
+  // A seize on a flagship needs no order (QBIT-13), so a seize's order is checked once its target is known.
+  if (!order && kind === 'spoof') return refuse(`No order given for the ${done} fleet.`);
   // A seized fleet takes any order (QBIT-10); a spoofed one only a non-combat order (QBIT-02).
   if (kind === 'spoof' && !SPOOF_ORDERS.test(order)) return refuse('A spoof can only order MoveTo, Hold or ReturnHome (QBIT-02).');
 
@@ -227,7 +228,11 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   if (known.own.some((e) => e.unit.id === target)) return refuse(`${target} is your own unit.`);
   const track = known.contacts.find((c) => c.unit.id === target);
   if (!track) return refuse(`You have no track on ${target}.`);
-  if (track.unit.class === 'flagship') return refuse(`${target} is a flagship, which can't be ${done} (QBIT-04).`);
+  const capture = track.unit.class === 'flagship';
+  if (capture && (kind === 'spoof' || !setup.parameters.capture)) {
+    return refuse(`${target} is a flagship, which can't be ${done}${kind === 'seize' ? ' in this scenario' : ''} (QBIT-04, QBIT-13).`);
+  }
+  if (!order && !capture) return refuse(`No order given for the ${done} fleet.`);
   if (track.unit.class === 'node' || track.unit.class === 'mine') return refuse(`${target} is a ${track.unit.class}, not a fleet.`);
   if (track.removed) return refuse(`Your last sight of ${target} was it leaving the game.`);
   if (track.age > hijack.maxTrackAge) {
@@ -235,7 +240,7 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   }
   // A seized fleet never attacks its own flagship (QBIT-10).
   const ownersFlagship = engine.units.find((u) => u.owner === track.unit.owner && u.class === 'flagship');
-  if (kind === 'seize' && ownersFlagship && attacks(order, ownersFlagship.id)) {
+  if (kind === 'seize' && !capture && ownersFlagship && attacks(order, ownersFlagship.id)) {
     return refuse(`A seized fleet can't attack its own flagship, ${ownersFlagship.id} (QBIT-10).`);
   }
   const strength = Math.max(0, Math.floor(purchase.strength ?? 0));
@@ -243,7 +248,13 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   const cost = price.cost + strength;
   const breakdown = `${price.breakdown} + strength ${strength}`;
   const truth = engine.units.find((u) => u.id === target);
-  if (!truth) return { kind, target, order, strength, cost, breakdown, fails: `${target} is no longer on the map.`, reaches: [] };
+  if (!truth) return { kind, target, order, strength, cost, breakdown, fails: `${target} is no longer on the map.`, reaches: [], ...(capture ? { capture } : {}) };
+  if (capture) {
+    // A flagship's own guard: its owner's last production, times CAPTURE_GUARD (QBIT-13). The buyer isn't told it.
+    const production = statementFor(engine.ledger, truth.owner, turn - 1)?.production ?? 0;
+    const guard = (setup.parameters.capture?.guard ?? 0) * production;
+    return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target], capture, guard };
+  }
   // A spoof reaches every fleet of the target's owner in its hex, the target first (QBIT-02); a seize only its target (QBIT-10).
   const others =
     kind === 'seize'
@@ -269,7 +280,8 @@ export function quoteOversight(engine: EngineState, setup: GameSetup, player: st
   const target = unit?.id ?? ref;
   const refuse = (refused: string): OversightQuote => ({ target, strength, refused });
   if (!unit) return refuse(ref ? `${ref} isn't one of your units.` : 'No unit given.');
-  if (unit.class !== 'fleet') return refuse(`${unit.id} is a ${unit.class}, which can't be spoofed, so it needs no oversight (QBIT-04).`);
+  const capturable = unit.class === 'flagship' && setup.parameters.capture !== undefined;
+  if (unit.class !== 'fleet' && !capturable) return refuse(`${unit.id} is a ${unit.class}, which can't be spoofed, so it needs no oversight (QBIT-04).`);
   if (strength < 1) return refuse('Oversight needs a strength of at least 1 (QBIT-09).');
   const last = knowledge(engine, setup, player, turn).own.find((e) => e.unit.id === unit.id);
   if (!last) return refuse(`You haven't had a status report from ${unit.id} yet (ORD-10).`);
