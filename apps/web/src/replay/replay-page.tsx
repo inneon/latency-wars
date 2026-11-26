@@ -1,10 +1,10 @@
 import { type Hex, hexEquals } from '@latency-wars/domain';
 import { Coverage, HexMap, Links, Losses, type MapUnit, Moves, ownerColours, sensorCoverage, Units } from '@latency-wars/map-view';
 import type { Frame, PlayerTurnView, PlaytestUnit, Replay, RunSummary } from '@latency-wars/playtest-replay';
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { fetchReplay, fetchRuns, runStarted } from './replay-client';
+import { runStarted, useReplay, useRuns } from './replay-client';
 import './replay.css';
 
 const md = (text: string) => <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>;
@@ -14,15 +14,64 @@ const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(
 
 type Layer = 'moves' | 'links' | 'coordinates' | `sensors:${string}`;
 
+/** A run's log hasn't changed for this long, and the game isn't over: the run has probably stopped. */
+const STALLED_MS = 20 * 60_000;
+
 /** What the page remembers in its address, so a reload or a shared link opens the same turn of the same run. */
-function readAddress(): { run?: string; turn?: number } {
+function readAddress(): { run?: string; turn?: number; watch: boolean } {
   const params = new URLSearchParams(window.location.search);
   const turn = Number(params.get('turn'));
-  return { run: params.get('run') ?? undefined, turn: params.has('turn') && Number.isInteger(turn) ? turn : undefined };
+  return { run: params.get('run') ?? undefined, turn: params.has('turn') && Number.isInteger(turn) ? turn : undefined, watch: params.has('watch') };
 }
-function writeAddress(run: string, turn: number): void {
-  const params = new URLSearchParams({ run, turn: String(turn) });
-  window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
+const addressOf = (run: string, turn: number, watch: boolean) => `?${watch ? 'watch&' : ''}${new URLSearchParams({ run, turn: String(turn) })}`;
+function writeAddress(run: string, turn: number, watch: boolean): void {
+  window.history.replaceState(null, '', `${window.location.pathname}${addressOf(run, turn, watch)}`);
+}
+
+/** "Blue", "Blue and Red", "Blue, Red and Green". */
+const listed = (names: readonly string[]) => (names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
+/** Where a game in progress stands, and whether its run seems to have stopped. Nothing once the game is over and written up. */
+function LiveStatus({ replay }: { replay: Replay & { updatedAt?: number } }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const { progress, scenario } = replay;
+  if (progress.stage === 'over') return null;
+
+  const name = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
+  const waiting = scenario.players.map((p) => p.id).filter((p) => !progress.submitted.includes(p));
+  const turn = `Turn ${progress.turn}`;
+  const text = {
+    setup: 'The GM is setting up the game.',
+    planning: progress.submitted.length
+      ? `${turn}: ${listed(progress.submitted.map(name))} ${progress.submitted.length === 1 ? 'has' : 'have'} sent orders; waiting for ${listed(waiting.map(name))}.`
+      : `${turn}: waiting for orders from ${listed(waiting.map(name))}.`,
+    resolving: `${turn}: all orders are in, and the GM and engine are resolving the turn.`,
+    debrief: 'The game is over. The players and GM are giving feedback.',
+  }[progress.stage];
+  const quiet = replay.updatedAt === undefined ? 0 : now - replay.updatedAt;
+  const stalled = quiet > STALLED_MS;
+
+  return (
+    <p className="replay-live" data-stalled={stalled || undefined}>
+      <span className="replay-live-dot" aria-hidden="true" />
+      {text}
+      {stalled && ` Nothing has been logged for ${Math.round(quiet / 60_000)} minutes, so the run may have stopped.`}
+    </p>
+  );
+}
+
+/** A button that puts the whole page in full screen, where the browser allows it. */
+function FullScreenButton() {
+  if (!document.fullscreenEnabled) return null;
+  return (
+    <button type="button" onClick={() => void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())}>
+      Full screen
+    </button>
+  );
 }
 
 const shapeOf = (u: PlaytestUnit): MapUnit['shape'] => (u.class === 'fleet' ? (u.strength === 0 ? 'scout' : 'fleet') : u.class);
@@ -302,21 +351,39 @@ function TurnPanel({ replay, frame, selected }: { replay: Replay; frame: Frame; 
   );
 }
 
-function Viewer({ replay, initialTurn }: { replay: Replay; initialTurn: number | undefined }) {
+function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?: number }; initialTurn: number | undefined; watch: boolean }) {
   const { scenario, frames } = replay;
   const players = useMemo(() => scenario.players.map((p) => p.id), [scenario]);
   const colours = useMemo(() => ownerColours(players), [players]);
-  const startAt = Math.max(0, frames.findIndex((f) => f.turn === initialTurn));
-  const [index, setIndex] = useState(startAt);
+  // A finished game opens at the start, to be read through; one still going opens at its latest turn, to be followed.
+  const startAt = initialTurn !== undefined ? Math.max(0, frames.findIndex((f) => f.turn === initialTurn)) : watch || !replay.finished ? frames.length - 1 : 0;
+  const [index, setIndex] = useState(Math.max(0, startAt));
   const [selected, setSelected] = useState<Hex>();
   const [layers, setLayers] = useState<ReadonlySet<Layer>>(new Set<Layer>(['moves', 'links']));
+  const latest = frames.length - 1;
+
+  // Follow the game: a viewer on the latest turn moves on to each new one as it is settled. One who has stepped back stays
+  // where they are, and is told a newer turn is in.
+  const shown = useRef({ index, frames: frames.length });
+  shown.current.index = index;
+  const [missed, setMissed] = useState(false);
+  useEffect(() => {
+    const before = shown.current.frames;
+    shown.current.frames = frames.length;
+    if (frames.length <= before) return;
+    if (shown.current.index >= before - 1) setIndex(frames.length - 1);
+    else setMissed(true);
+  }, [frames.length]);
+  useEffect(() => {
+    if (index >= latest) setMissed(false);
+  }, [index, latest]);
 
   const choose = useCallback((i: number) => setIndex(Math.min(frames.length - 1, Math.max(0, i))), [frames.length]);
   const frame = frames[Math.min(index, frames.length - 1)];
 
   useEffect(() => {
-    if (frame) writeAddress(replay.id, frame.turn);
-  }, [replay.id, frame]);
+    if (frame) writeAddress(replay.id, frame.turn, watch);
+  }, [replay.id, frame, watch]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -354,7 +421,70 @@ function Viewer({ replay, initialTurn }: { replay: Replay; initialTurn: number |
     };
   }, [frame, layers, players, scenario.map.radius]);
 
-  if (!frame || !drawn) return <p className="replay-quiet">This run has no settled turns yet.</p>;
+  if (!frame || !drawn) {
+    return (
+      <>
+        <p className="replay-quiet">{scenario.title} has no settled turns yet.</p>
+        <LiveStatus replay={replay} />
+      </>
+    );
+  }
+
+  const turnName = (turn: number) => (turn === 0 ? 'Start' : `Turn ${turn}`);
+  const newer = missed && (
+    <p className="replay-newer">
+      {turnName(frames[latest]?.turn ?? 0)} is in.{' '}
+      <button type="button" onClick={() => setIndex(latest)}>
+        Show it
+      </button>
+    </p>
+  );
+  const map = (extra: ReactNode) => (
+    <HexMap
+      radius={scenario.map.radius}
+      impassable={scenario.map.impassable}
+      features={scenario.map.features}
+      colours={colours}
+      coordinates={layers.has('coordinates')}
+      selected={watch ? undefined : selected}
+      onSelect={watch ? undefined : setSelected}
+      label={`${scenario.title}, ${frame.turn === 0 ? 'the starting positions' : `the end of turn ${frame.turn}`}`}
+    >
+      <Coverage areas={drawn.areas} />
+      {layers.has('links') && <Links links={drawn.links} />}
+      {layers.has('moves') && <Moves moves={frame.moves} />}
+      <Losses losses={frame.removed} />
+      <Units units={drawn.units} />
+      {extra}
+    </HexMap>
+  );
+
+  if (watch) {
+    return (
+      <div className="replay-watch">
+        <div className="replay-watch-map">{map(null)}</div>
+        <div className="replay-watch-caption">
+          <h1>{scenario.title}</h1>
+          <p className="replay-watch-turn">
+            {turnName(frame.turn)} <span>of {scenario.maxRounds}</span>
+          </p>
+          {frame.gameOver && <p className="replay-outcome">{frame.outcome || 'The game is over.'}</p>}
+          <LiveStatus replay={replay} />
+          {newer}
+        </div>
+        <nav className="replay-watch-controls" aria-label="Watch mode">
+          <button type="button" onClick={() => choose(index - 1)} disabled={index === 0} aria-label="Previous turn">
+            ‹
+          </button>
+          <button type="button" onClick={() => choose(index + 1)} disabled={index === latest} aria-label="Next turn">
+            ›
+          </button>
+          <FullScreenButton />
+          <a href={`${window.location.pathname}${addressOf(replay.id, frame.turn, false)}`}>Leave watch mode</a>
+        </nav>
+      </div>
+    );
+  }
 
   const name = (id: string) => scenario.players.find((p) => p.id === id)?.name ?? id;
   const toggle = (layer: Layer, label: string) => (
@@ -378,9 +508,8 @@ function Viewer({ replay, initialTurn }: { replay: Replay; initialTurn: number |
     <>
       <header className="replay-head">
         <h1>{scenario.title}</h1>
-        <p>
-          {replay.outcome ?? (replay.finished ? 'Ended at the turn limit with no verdict.' : 'Still being played, or stopped before the end.')}
-        </p>
+        {replay.outcome || replay.finished ? <p>{replay.outcome ?? 'Ended at the turn limit with no verdict.'}</p> : null}
+        <LiveStatus replay={replay} />
         {replay.warnings.length > 0 && (
           <details>
             <summary>
@@ -396,25 +525,11 @@ function Viewer({ replay, initialTurn }: { replay: Replay; initialTurn: number |
       </header>
 
       <Timeline frames={frames} index={index} onChoose={choose} />
+      {newer}
 
       <div className="replay-body">
         <div className="replay-map">
-          <HexMap
-            radius={scenario.map.radius}
-            impassable={scenario.map.impassable}
-            features={scenario.map.features}
-            colours={colours}
-            coordinates={layers.has('coordinates')}
-            selected={selected}
-            onSelect={setSelected}
-            label={`${scenario.title}, ${frame.turn === 0 ? 'the starting positions' : `the end of turn ${frame.turn}`}`}
-          >
-            <Coverage areas={drawn.areas} />
-            {layers.has('links') && <Links links={drawn.links} />}
-            {layers.has('moves') && <Moves moves={frame.moves} />}
-            <Losses losses={frame.removed} />
-            <Units units={drawn.units} />
-          </HexMap>
+          {map(null)}
           <fieldset className="replay-layers">
             <legend>Show</legend>
             {toggle('moves', "This turn's moves")}
@@ -436,55 +551,57 @@ function Viewer({ replay, initialTurn }: { replay: Replay; initialTurn: number |
 
 export default function ReplayPage() {
   const [address] = useState(readAddress);
-  const [runs, setRuns] = useState<RunSummary[]>();
-  const [run, setRun] = useState<string | undefined>(address.run);
-  const [replay, setReplay] = useState<Replay>();
-  const [error, setError] = useState<string>();
-
+  const [chosen, setChosen] = useState<string | undefined>(address.run);
+  const runs = useRuns();
+  const newest = runs.data?.find((r) => r.readable)?.id;
+  // Watch mode moves on to each new game as it starts; otherwise the page stays on the run chosen, or opened with.
+  const [watched, setWatched] = useState<string | undefined>(address.run);
   useEffect(() => {
-    let cancelled = false;
-    fetchRuns().then(
-      (list) => {
-        if (cancelled) return;
-        setRuns(list);
-        setRun((current) => current ?? list.find((r) => r.readable)?.id);
-      },
-      (e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+    if (address.watch && newest && (!watched || newest > watched)) setWatched(newest);
+  }, [address.watch, newest, watched]);
   useEffect(() => {
-    if (!run) return;
-    let cancelled = false;
-    setReplay(undefined);
-    setError(undefined);
-    fetchReplay(run).then(
-      (r) => !cancelled && setReplay(r),
-      (e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [run]);
+    if (!address.watch && !chosen && newest) setChosen(newest);
+  }, [address.watch, chosen, newest]);
+  const run = address.watch ? (watched ?? newest) : (chosen ?? newest);
+  const replay = useReplay(run);
+  const error = replay.error ?? runs.error;
+  const shown = replay.data?.id === run ? replay.data : undefined;
 
-  return (
-    <main className="replay">
-      {runs && <RunPicker runs={runs} run={run} onChoose={setRun} />}
+  const viewer = shown && <Viewer key={shown.id} replay={shown} watch={address.watch} initialTurn={shown.id === address.run ? address.turn : undefined} />;
+  const messages = (
+    <>
       {error && (
         <p className="replay-error" role="alert">
           {error}
         </p>
       )}
-      {runs && !run && !error && (
+      {runs.data && !run && !error && (
         <p className="replay-empty">
           There are no runs to replay yet. Play one with <code>pnpm playtest --scenario the-blockade</code> and it will appear here.
         </p>
       )}
-      {!runs && !error && <p className="replay-quiet">Loading the runs…</p>}
-      {replay && <Viewer key={replay.id} replay={replay} initialTurn={replay.id === address.run ? address.turn : undefined} />}
+      {!error && (!runs.data || (run && !shown)) && <p className="replay-quiet">Loading…</p>}
+    </>
+  );
+
+  if (address.watch) {
+    return (
+      <main className="replay replay-watching">
+        {messages}
+        {viewer}
+      </main>
+    );
+  }
+  return (
+    <main className="replay">
+      {runs.data && (
+        <div className="replay-top">
+          <RunPicker runs={runs.data} run={run} onChoose={setChosen} />
+          <a href={`${window.location.pathname}?watch`}>Watch the latest game</a>
+        </div>
+      )}
+      {messages}
+      {viewer}
     </main>
   );
 }

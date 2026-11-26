@@ -1,5 +1,5 @@
-import type { PlaytestEvent } from './event-log';
-import { blueFlagship, header, redFlagship, resolved, state, unit } from './fixtures.spec-helper';
+import { LOG_VERSION, type PlaytestEvent } from './event-log';
+import { blueFlagship, header, redFlagship, resolved, scenarioHeader, state, unit } from './fixtures.spec-helper';
 import { buildReplay } from './replay';
 
 const blueRaider = unit('blue-raider', 'blue', -2, 0, { speed: 2 });
@@ -166,5 +166,76 @@ describe('buildReplay', () => {
 
   it('needs the log to start with its scenario', () => {
     expect(() => buildReplay('run', [state(0, start)])).toThrow(RangeError);
+  });
+
+  it('ends the game on the turn a Cascade completes, though the GM never declared it over (QBIT-12)', () => {
+    const charge = (turn: number, player: string): PlaytestEvent => ({ type: 'cascade', turn, player, cost: 30, count: turn, turns: 2 });
+    const events: PlaytestEvent[] = [
+      header(start),
+      state(0, start),
+      charge(1, 'blue'),
+      resolved(1),
+      state(1, start),
+      charge(2, 'blue'),
+      resolved(2),
+      state(2, start),
+      { type: 'cascade', turn: 2, completed: ['blue'] },
+    ];
+    const replay = buildReplay('run', events);
+    expect(replay.frames[1]).toMatchObject({ gameOver: false, outcome: '' });
+    expect(replay.frames[2]).toMatchObject({ gameOver: true, outcome: 'Blue completed a Cascade (QBIT-12) at the end of turn 2 and wins.' });
+    expect(replay.outcome).toBe('Blue completed a Cascade (QBIT-12) at the end of turn 2 and wins.');
+    expect(replay.progress).toEqual({ stage: 'debrief', submitted: [] });
+
+    const drawn = buildReplay('run', [...events.slice(0, -1), { type: 'cascade', turn: 2, completed: ['blue', 'red'] }]);
+    expect(drawn.outcome).toBe('Blue and Red completed Cascades (QBIT-12) in the same turn, 2: the game is a draw.');
+  });
+
+  describe('progress', () => {
+    const turnOf = (player: string, step: 'initial' | 'final', purchases: number): PlaytestEvent => ({
+      type: 'player_turn',
+      turn: 2,
+      player,
+      step,
+      submission: {
+        situation_assessment: '',
+        qbit_purchases: Array.from({ length: purchases }, () => ({ kind: 'scan' as const, target: `${player}-flagship` })),
+        orders: [],
+        questions_for_gm: [],
+        rules_confusions: [],
+      },
+    });
+    const played: PlaytestEvent[] = [header(start), state(0, start), resolved(1), state(1, start)];
+    const progress = (events: PlaytestEvent[]) => buildReplay('run', events).progress;
+
+    it('is setting up until the starting state is settled', () => {
+      expect(progress([header(start)])).toEqual({ stage: 'setup', submitted: [] });
+    });
+
+    it("is planning the next turn, saying whose orders are in, and a request for quotes isn't orders", () => {
+      expect(progress(played)).toEqual({ stage: 'planning', turn: 2, submitted: [] });
+      expect(progress([...played, turnOf('red', 'initial', 0), turnOf('blue', 'initial', 1)])).toEqual({ stage: 'planning', turn: 2, submitted: ['red'] });
+    });
+
+    it("is resolving once every player's orders are in, or the GM has started", () => {
+      expect(progress([...played, turnOf('red', 'initial', 0), turnOf('blue', 'initial', 1), turnOf('blue', 'final', 1)])).toEqual({
+        stage: 'resolving',
+        turn: 2,
+        submitted: ['blue', 'red'],
+      });
+      expect(progress([...played, resolved(2)])).toMatchObject({ stage: 'resolving', turn: 2 });
+    });
+
+    it('is in the debrief once the game is over, and over once the analyst has written the report', () => {
+      expect(progress([header(start), state(0, start), resolved(1, true), state(1, start)])).toEqual({ stage: 'debrief', submitted: [] });
+      const ranked: PlaytestEvent = { type: 'ranking', turn: 1, rows: [] };
+      expect(progress([...played, ranked])).toEqual({ stage: 'debrief', submitted: [] });
+      expect(progress([...played, ranked, { type: 'synthesis', report: 'R' }])).toEqual({ stage: 'over', submitted: [] });
+    });
+
+    it('is in the debrief after the last turn, even before the ranking is written', () => {
+      const maxed: PlaytestEvent = { type: 'scenario', logVersion: LOG_VERSION, scenario: { ...scenarioHeader(start), maxRounds: 1 } };
+      expect(progress([maxed, state(0, start), resolved(1), state(1, start)])).toEqual({ stage: 'debrief', submitted: [] });
+    });
   });
 });

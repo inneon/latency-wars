@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Frame, PlaytestUnit, Replay, RunSummary } from '@latency-wars/playtest-replay';
 import ReplayPage from './replay-page';
-import { runStarted } from './replay-client';
+import { POLL_MS, runStarted } from './replay-client';
 
 const unit = (id: string, owner: string, q: number, r: number, extra: Partial<PlaytestUnit> = {}): PlaytestUnit => ({
   id,
@@ -89,6 +89,7 @@ const replay: Replay = {
   finished: true,
   outcome: 'Blue wins.',
   warnings: [],
+  progress: { stage: 'over', submitted: [] },
 };
 
 const runs: RunSummary[] = [
@@ -96,7 +97,8 @@ const runs: RunSummary[] = [
   { id: '2026-10-12T14-55-56-the-hunt', readable: false, reason: 'Written before the event log carried a format version.' },
 ];
 
-const answer = (body: unknown, status = 200) => Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body) } as Response);
+const answer = (body: unknown, status = 200) =>
+  Promise.resolve({ ok: status < 400, status, headers: new Headers(), json: () => Promise.resolve(body) } as Response);
 const api = (list: RunSummary[], run: unknown = replay, status = 200) =>
   vi.fn((url: string) => (url.endsWith('/runs') ? answer(list) : answer(run, status)));
 
@@ -110,7 +112,7 @@ describe('ReplayPage', () => {
     render(<ReplayPage />);
 
     expect(await screen.findByRole('heading', { name: 'The Test' })).toBeTruthy();
-    expect(fetch).toHaveBeenCalledWith(`/api/playtest/runs/${replay.id}`);
+    expect(fetch).toHaveBeenCalledWith(`/api/playtest/runs/${replay.id}`, expect.anything());
     expect(screen.getByRole('heading', { name: 'Start' })).toBeTruthy();
     expect(screen.getByRole('group', { name: 'The Test, the starting positions' })).toBeTruthy();
     expect(screen.getByRole('option', { name: '17 Nov 12:38: The Test, 1 turn' })).toBeTruthy();
@@ -190,6 +192,149 @@ describe('ReplayPage', () => {
     vi.stubGlobal('fetch', api(runs, { message: 'Written in log format 9; this code reads format 1.' }, 422));
     render(<ReplayPage />);
     expect((await screen.findByRole('alert')).textContent).toBe('Written in log format 9; this code reads format 1.');
+  });
+});
+
+describe('ReplayPage, while a game is being played', () => {
+  const live = (frames: number, extra: Partial<Replay> = {}): Replay => ({
+    ...replay,
+    frames: replay.frames.slice(0, 1).concat(
+      Array.from({ length: frames - 1 }, (_, i) => ({ ...(replay.frames[1] as Frame), turn: i + 1, gameOver: false, outcome: '', corrections: [], removed: [] })),
+    ),
+    finished: false,
+    outcome: undefined,
+    progress: { stage: 'planning', turn: frames, submitted: ['red'] },
+    ...extra,
+  });
+  const liveRuns = (id = replay.id): RunSummary[] => [{ id, readable: true, scenario: 'the-test', title: 'The Test', turns: 1, finished: false }];
+
+  /** An API whose answers can change between polls, and which answers 304 when the page already has the latest. */
+  const changing = () => {
+    const now = { runs: liveRuns(), run: live(2) as unknown, tags: { runs: 1, run: 1 } };
+    const fetch = vi.fn((url: string, init?: RequestInit) => {
+      const which = url.endsWith('/runs') ? 'runs' : 'run';
+      const tag = `"${which}-${now.tags[which]}"`;
+      if ((init?.headers as Record<string, string> | undefined)?.['If-None-Match'] === tag) {
+        return Promise.resolve({ ok: false, status: 304, headers: new Headers(), json: () => Promise.reject(new Error('no body')) } as Response);
+      }
+      const body = which === 'runs' ? now.runs : now.run;
+      return Promise.resolve({ ok: true, status: 200, headers: new Headers({ ETag: tag }), json: () => Promise.resolve(body) } as Response);
+    });
+    const update = (change: { runs?: RunSummary[]; run?: Replay }) => {
+      if (change.runs) {
+        now.runs = change.runs;
+        now.tags.runs++;
+      }
+      if (change.run) {
+        now.run = change.run;
+        now.tags.run++;
+      }
+    };
+    return { fetch, update };
+  };
+  const poll = () => act(() => vi.advanceTimersByTimeAsync(POLL_MS));
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    window.history.replaceState(null, '', '/replay');
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('opens at the latest turn, says where the game stands, and moves on to each new turn as it is settled', async () => {
+    const api = changing();
+    vi.stubGlobal('fetch', api.fetch);
+    render(<ReplayPage />);
+    expect(await screen.findByRole('heading', { name: 'Turn 1' })).toBeTruthy();
+    expect(screen.getByText('Turn 2: Red has sent orders; waiting for Blue.')).toBeTruthy();
+
+    // Nothing has changed: the API says so, and the page stays as it is.
+    await poll();
+    expect(api.fetch.mock.calls.some(([, init]) => (init?.headers as Record<string, string> | undefined)?.['If-None-Match'])).toBe(true);
+    expect(screen.getByRole('heading', { name: 'Turn 1' })).toBeTruthy();
+
+    api.update({ run: live(2, { progress: { stage: 'resolving', turn: 2, submitted: ['blue', 'red'] } }) });
+    await poll();
+    expect(screen.getByText('Turn 2: all orders are in, and the GM and engine are resolving the turn.')).toBeTruthy();
+
+    api.update({ run: live(3) });
+    await poll();
+    expect(screen.getByRole('heading', { name: 'Turn 2' })).toBeTruthy();
+    expect(window.location.search).toBe(`?run=${replay.id}&turn=2`);
+  });
+
+  it('stays on an earlier turn the viewer stepped back to, and offers the new one', async () => {
+    const api = changing();
+    vi.stubGlobal('fetch', api.fetch);
+    render(<ReplayPage />);
+    await screen.findByRole('heading', { name: 'Turn 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'Previous turn' }));
+
+    api.update({ run: live(3) });
+    await poll();
+    expect(screen.getByRole('heading', { name: 'Start' })).toBeTruthy();
+    expect(screen.getByText(/Turn 2 is in\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show it' }));
+    expect(screen.getByRole('heading', { name: 'Turn 2' })).toBeTruthy();
+    expect(screen.queryByText(/is in\./)).toBeNull();
+  });
+
+  it('lists a new run when it starts, without leaving the one being looked at', async () => {
+    const api = changing();
+    vi.stubGlobal('fetch', api.fetch);
+    render(<ReplayPage />);
+    await screen.findByRole('heading', { name: 'Turn 1' });
+
+    api.update({ runs: [...liveRuns('2026-11-18T09-00-00-the-test'), ...liveRuns()] });
+    await poll();
+    expect(screen.getByRole('option', { name: /18 Nov 09:00/ })).toBeTruthy();
+    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe(replay.id);
+  });
+
+  it('says when a run seems to have stopped', async () => {
+    vi.stubGlobal('fetch', api(liveRuns(), { ...live(2), updatedAt: Date.now() - 45 * 60_000 }));
+    render(<ReplayPage />);
+    expect(await screen.findByText(/Nothing has been logged for 45 minutes, so the run may have stopped\./)).toBeTruthy();
+  });
+
+  it('keeps showing the game when the API stops answering, and says so', async () => {
+    const api = changing();
+    vi.stubGlobal('fetch', api.fetch);
+    render(<ReplayPage />);
+    await screen.findByRole('heading', { name: 'Turn 1' });
+    api.fetch.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')));
+    await poll();
+    expect(screen.getByRole('alert').textContent).toContain('The API is not answering');
+    expect(screen.getByRole('heading', { name: 'Turn 1' })).toBeTruthy();
+  });
+
+  describe('watch mode', () => {
+    it('fills the window with the latest game, follows it, and moves on to the next game when one starts', async () => {
+      window.history.replaceState(null, '', '/replay?watch');
+      const api = changing();
+      vi.stubGlobal('fetch', api.fetch);
+      render(<ReplayPage />);
+
+      expect(await screen.findByText('Turn 1')).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'The Test' })).toBeTruthy();
+      expect(screen.queryByRole('combobox')).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Blue' })).toBeNull();
+      await waitFor(() => expect(window.location.search).toBe(`?watch&run=${replay.id}&turn=1`));
+      expect(screen.getByRole('link', { name: 'Leave watch mode' }).getAttribute('href')).toBe(`/replay?run=${replay.id}&turn=1`);
+
+      api.update({ run: live(3) });
+      await poll();
+      expect(screen.getByText('Turn 2')).toBeTruthy();
+
+      const next = '2026-11-18T09-00-00-the-test';
+      api.update({ runs: [...liveRuns(next), ...liveRuns()], run: { ...live(1), id: next } });
+      await poll();
+      await poll();
+      expect(screen.getByText('Start')).toBeTruthy();
+      expect(window.location.search).toBe(`?watch&run=${next}&turn=0`);
+    });
   });
 });
 

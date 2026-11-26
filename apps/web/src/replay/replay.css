@@ -75,3 +75,41 @@
 .replay-panel pre { background: var(--replay-wash); padding: 0.5rem; overflow-x: auto; }
 /* Reports and write-ups are Markdown with headings of their own: keep them below the panel's. */
 .replay-panel details :is(h1, h2, h3, h4) { font-size: 0.9rem; margin: 0.6rem 0 0.2rem; }
+
+/* Live games */
+.replay-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.5rem 1.5rem; }
+.replay-live { display: flex; align-items: baseline; gap: 0.45rem; margin: 0.3rem 0 0; max-width: 70ch; }
+.replay-live-dot { flex: none; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: #3fbf7f; transform: translateY(-0.05rem); }
+.replay-live[data-stalled] .replay-live-dot { background: #d99a00; }
+@media (prefers-reduced-motion: no-preference) {
+  .replay-live:not([data-stalled]) .replay-live-dot { animation: replay-pulse 2s ease-in-out infinite; }
+}
+@keyframes replay-pulse { 50% { opacity: 0.35; } }
+.replay-newer { margin: -0.4rem 0 0.8rem; }
+.replay-newer button, .replay-watch-controls button, .replay-watch-controls a {
+  font: inherit;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--replay-line);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.replay-newer button:focus-visible, .replay-watch-controls :is(button, a):focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+/* Watch mode: the map fills the window, with the game's state laid over it. */
+.replay.replay-watching { max-width: none; height: 100vh; padding: 0; overflow: hidden; background: var(--lw-map-space, #131a2c); color: #e6e9f2; }
+.replay-watching > .replay-error, .replay-watching > .replay-quiet, .replay-watching > .replay-empty { position: absolute; top: 1rem; left: 1.25rem; z-index: 1; }
+.replay-watch { position: relative; height: 100%; }
+.replay-watch-map { position: absolute; inset: 0; }
+.replay-watch-map .lw-map { width: 100%; height: 100%; }
+.replay-watch-caption { position: absolute; top: 1rem; left: 1.25rem; max-width: 24rem; pointer-events: none; text-shadow: 0 1px 3px #131a2c; }
+.replay-watch-caption .replay-newer { pointer-events: auto; margin: 0.4rem 0 0; }
+.replay-watch-turn { font-size: 2.4rem; font-weight: 700; line-height: 1.1; margin: 0.2rem 0; font-variant-numeric: tabular-nums; }
+.replay-watch-turn span { font-size: 1rem; font-weight: 400; opacity: 0.7; }
+.replay-watch-controls { position: absolute; right: 1.25rem; bottom: 1rem; display: flex; gap: 0.4rem; align-items: center; --replay-line: rgb(230 233 242 / 0.35); }
+.replay-watch-controls button:disabled { opacity: 0.35; cursor: default; }
+@media (max-width: 40rem) {
+  .replay-watch-turn { font-size: 1.6rem; }
+}

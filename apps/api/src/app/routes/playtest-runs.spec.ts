@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
@@ -39,8 +39,9 @@ const log: PlaytestEvent[] = [
 
 describe('play-test runs', () => {
   const server = Fastify();
+  let runsDir: string;
   beforeAll(async () => {
-    const runsDir = mkdtempSync(path.join(tmpdir(), 'runs-'));
+    runsDir = mkdtempSync(path.join(tmpdir(), 'runs-'));
     for (const [id, text] of [
       ['2026-11-02T10-00-00-the-test', log.map((e) => JSON.stringify(e)).join('\n')],
       ['2026-10-01T10-00-00-the-test', '{"type":"setup"}'],
@@ -56,7 +57,7 @@ describe('play-test runs', () => {
     const res = await server.inject({ method: 'GET', url: RUNS_PATH });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual([
-      { id: '2026-11-02T10-00-00-the-test', readable: true, scenario: 'the-test', title: 'The Test', turns: 0, finished: false },
+      { id: '2026-11-02T10-00-00-the-test', readable: true, scenario: 'the-test', title: 'The Test', turns: 0, finished: false, updatedAt: expect.any(Number) },
       { id: '2026-10-01T10-00-00-the-test', readable: false, reason: expect.stringContaining('format version') },
     ]);
   });
@@ -75,5 +76,38 @@ describe('play-test runs', () => {
     expect(none.statusCode).toBe(404);
     const escape = await server.inject({ method: 'GET', url: `${RUNS_PATH}/..%2F..%2Fetc` });
     expect(escape.statusCode).toBe(404);
+  });
+
+  it('answers 304 to a poll that already has the latest list or run, and the full answer once a log changes', async () => {
+    const id = '2026-11-02T10-00-00-the-test';
+    const first = await server.inject({ method: 'GET', url: RUNS_PATH });
+    const run = await server.inject({ method: 'GET', url: runPath(id) });
+    const listTag = first.headers['etag'] as string;
+    const runTag = run.headers['etag'] as string;
+    expect(listTag).toMatch(/^".+"$/);
+    expect(runTag).toMatch(/^".+"$/);
+    expect(first.headers['cache-control']).toBe('no-cache');
+
+    const again = await server.inject({ method: 'GET', url: RUNS_PATH, headers: { 'if-none-match': listTag } });
+    expect(again.statusCode).toBe(304);
+    expect(again.body).toBe('');
+    expect((await server.inject({ method: 'GET', url: runPath(id), headers: { 'if-none-match': runTag } })).statusCode).toBe(304);
+
+    // The runner settles turn 1.
+    appendFileSync(path.join(runsDir, id, 'events.jsonl'), '\n' + JSON.stringify({ type: 'state', turn: 1, units, removed: [] }));
+    const moved = await server.inject({ method: 'GET', url: runPath(id), headers: { 'if-none-match': runTag } });
+    expect(moved.statusCode).toBe(200);
+    expect(moved.json().frames).toHaveLength(2);
+    const relisted = await server.inject({ method: 'GET', url: RUNS_PATH, headers: { 'if-none-match': listTag } });
+    expect(relisted.statusCode).toBe(200);
+    expect(relisted.json()[0]).toMatchObject({ id, turns: 1 });
+
+    // A new run starts.
+    const listedTag = relisted.headers['etag'] as string;
+    mkdirSync(path.join(runsDir, '2026-11-03T10-00-00-the-test'));
+    writeFileSync(path.join(runsDir, '2026-11-03T10-00-00-the-test', 'events.jsonl'), log.map((e) => JSON.stringify(e)).join('\n'));
+    const started = await server.inject({ method: 'GET', url: RUNS_PATH, headers: { 'if-none-match': listedTag } });
+    expect(started.statusCode).toBe(200);
+    expect(started.json()[0]).toMatchObject({ id: '2026-11-03T10-00-00-the-test', readable: true });
   });
 });

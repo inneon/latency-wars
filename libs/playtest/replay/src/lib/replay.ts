@@ -121,6 +121,23 @@ export interface Frame {
   outcome: string;
 }
 
+/**
+ * Where a game stands between settled turns: what the log says is happening now.
+ *
+ * - `setup`: the GM is placing the starting units.
+ * - `planning`: the players are writing this turn's orders; `submitted` says who has sent theirs.
+ * - `resolving`: every player's orders are in, and the GM and engine are working out the turn.
+ * - `debrief`: the game is over, and the players, GM and analyst are giving feedback.
+ * - `over`: the analyst's report is written. Nothing more will be logged.
+ */
+export interface Progress {
+  stage: 'setup' | 'planning' | 'resolving' | 'debrief' | 'over';
+  /** The turn being played, while one is. */
+  turn?: number;
+  /** The players whose orders for `turn` are in. */
+  submitted: string[];
+}
+
 export interface Replay {
   /** The run's id: its folder name. */
   id: string;
@@ -132,6 +149,7 @@ export interface Replay {
   outcome?: string;
   ranking?: RankingRow[];
   warnings: string[];
+  progress: Progress;
 }
 
 interface TurnEvents {
@@ -142,6 +160,8 @@ interface TurnEvents {
   production: string[];
   corrections: string[];
   overrides: EngineOverride[];
+  /** The players whose Cascade completed at the end of the turn (QBIT-12). */
+  cascades: string[];
   reports: Map<string, string>;
   submissions: Map<string, PlayerTurn>;
   scans: Map<string, IntelPurchase[]>;
@@ -155,6 +175,7 @@ const emptyTurn = (): TurnEvents => ({
   production: [],
   corrections: [],
   overrides: [],
+  cascades: [],
   reports: new Map(),
   submissions: new Map(),
   scans: new Map(),
@@ -221,6 +242,9 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
         break;
       case 'ranking':
         ranking = e.rows;
+        break;
+      case 'cascade':
+        if (e.completed) at(e.turn).cascades.push(...e.completed);
         break;
       case 'warning':
         warnings.push(e.message);
@@ -300,8 +324,9 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
       corrections: t.corrections,
       production: t.production,
       overrides: t.overrides,
-      gameOver: t.resolution?.game_over ?? false,
-      outcome: t.resolution?.outcome ?? '',
+      // The engine, not the GM, ends a game with a Cascade, after the GM's resolution is logged (QBIT-12).
+      gameOver: (t.resolution?.game_over ?? false) || t.cascades.length > 0,
+      outcome: t.cascades.length > 0 ? cascadeOutcome(t.cascades, turn, scenario) : (t.resolution?.outcome ?? ''),
     });
   }
 
@@ -314,5 +339,34 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
     outcome: last?.gameOver ? last.outcome : undefined,
     ranking,
     warnings,
+    progress: progressOf(events, scenario, last, ranking !== undefined),
   };
+}
+
+/** Who won with a Cascade, in the runner's own words: one player completing it wins, two or more in the same turn draw. */
+function cascadeOutcome(completed: readonly string[], turn: number, scenario: ScenarioHeader): string {
+  const names = completed.map((id) => scenario.players.find((p) => p.id === id)?.name ?? id);
+  return names.length === 1
+    ? `${names[0]} completed a Cascade (QBIT-12) at the end of turn ${turn} and wins.`
+    : `${names.join(' and ')} completed Cascades (QBIT-12) in the same turn, ${turn}: the game is a draw.`;
+}
+
+function progressOf(events: readonly PlaytestEvent[], scenario: ScenarioHeader, last: Frame | undefined, ranked: boolean): Progress {
+  if (events.some((e) => e.type === 'synthesis')) return { stage: 'over', submitted: [] };
+  if (ranked || last?.gameOver || (last && last.turn >= scenario.maxRounds)) return { stage: 'debrief', submitted: [] };
+  if (!last) return { stage: 'setup', submitted: [] };
+
+  const turn = last.turn + 1;
+  const now = events.filter((e) => 'turn' in e && e.turn === turn);
+  // A first submission that buys anything only asks for quotes (PlayerTurn); the orders are in once a final one follows.
+  const submitted = scenario.players
+    .map((p) => p.id)
+    .filter((player) =>
+      now.some(
+        (e) => e.type === 'player_turn' && e.player === player && (e.step === 'final' || e.submission.qbit_purchases.length === 0),
+      ),
+    );
+  const resolving =
+    submitted.length === scenario.players.length || now.some((e) => e.type === 'gm_decisions' || e.type === 'movement' || e.type === 'gm_resolution');
+  return { stage: resolving ? 'resolving' : 'planning', turn, submitted };
 }

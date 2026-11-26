@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runFiles } from './run-files';
@@ -27,6 +27,16 @@ describe('runFiles', () => {
     expect(await runFiles(dir).read('2026-11-02T10-00-00-the-hunt-2')).toBeUndefined();
     expect(await runFiles(dir).read('nope')).toBeUndefined();
     expect(await runFiles(dir).read('notes.txt')).toBeUndefined();
+  });
+
+  it("says how big a run's log is and when it last changed, without reading it", async () => {
+    const store = runFiles(dir);
+    const before = await store.stat('2026-11-01T10-00-00-the-hunt');
+    expect(before).toEqual({ modified: expect.any(Number), size: 3 });
+    appendFileSync(path.join(dir, '2026-11-01T10-00-00-the-hunt', 'events.jsonl'), ' MORE');
+    expect((await store.stat('2026-11-01T10-00-00-the-hunt'))?.size).toBe(8);
+    expect(await store.stat('2026-11-02T10-00-00-the-hunt-2')).toBeUndefined();
+    expect(await store.stat('../2026-11-01T10-00-00-the-hunt')).toBeUndefined();
   });
 
   it('never reads outside its folder', async () => {

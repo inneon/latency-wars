@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { RunStore } from '@latency-wars/playtest-replay';
 
@@ -31,6 +31,16 @@ export function runFiles(dir: string): RunStore {
       if (!RUN_ID.test(id)) return undefined;
       try {
         return await readFile(path.join(root, id, 'events.jsonl'), 'utf8');
+      } catch (error) {
+        if (missing(error)) return undefined;
+        throw error;
+      }
+    },
+    async stat(id) {
+      if (!RUN_ID.test(id)) return undefined;
+      try {
+        const file = await stat(path.join(root, id, 'events.jsonl'));
+        return file.isFile() ? { modified: file.mtimeMs, size: file.size } : undefined;
       } catch (error) {
         if (missing(error)) return undefined;
         throw error;
