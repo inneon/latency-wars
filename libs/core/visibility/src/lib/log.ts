@@ -87,6 +87,33 @@ export function recordTurnEnd<U extends Unit>(
 }
 
 /**
+ * Record that every player in `players` observes `units`, and `removed` as
+ * removed, at the end of `turn`, whatever their sensors: news that reaches
+ * everyone at light speed from where it happened, such as a node joining or
+ * leaving a web (ECON-05). Call it after `recordTurnEnd` for `turn`. A player
+ * who already observed one of these units that turn isn't given it twice.
+ */
+export function recordBroadcast<U extends Unit>(
+  log: VisibilityLog<U>,
+  turn: number,
+  players: readonly PlayerId[],
+  units: readonly U[],
+  removed: readonly U[] = [],
+): VisibilityLog<U> {
+  if (log.lastTurn !== turn) {
+    throw new RangeError(`recordBroadcast: log ends at turn ${log.lastTurn}; need the end of turn ${turn}`);
+  }
+  const key = (observer: PlayerId, unit: U) => `${observer}\u0000${unit.id}`;
+  const seen = new Set(log.observations.filter((o) => o.turn === turn).map((o) => key(o.observer, o.unit)));
+  const added: Observation<U>[] = [];
+  for (const observer of players) {
+    for (const unit of units) if (!seen.has(key(observer, unit))) added.push({ turn, observer, unit });
+    for (const unit of removed) if (!seen.has(key(observer, unit))) added.push({ turn, observer, unit, removed: true });
+  }
+  return added.length ? { ...log, observations: [...log.observations, ...added] } : log;
+}
+
+/**
  * Record the same state as the end of every turn from `firstTurn` to
  * `lastTurn` inclusive. For a scenario whose units have held position since
  * before play begins, record the starting state for enough preceding turns

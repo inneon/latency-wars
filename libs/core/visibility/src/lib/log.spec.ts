@@ -1,7 +1,8 @@
 import { hex } from '@latency-wars/domain';
 import { moved, theHunt, theHuntUnits, unit } from './fixtures.spec-helper';
 import { orderDeliveryTurn } from './light';
-import { emptyLog, flagshipPath, recordHeldTurns, recordInstantArrival, recordTurnEnd, unitPath, unitPresentAt } from './log';
+import { knowledgeState } from './knowledge';
+import { emptyLog, flagshipPath, recordBroadcast, recordHeldTurns, recordInstantArrival, recordTurnEnd, unitPath, unitPresentAt } from './log';
 
 describe('recordTurnEnd', () => {
   it('derives each unit’s start-of-turn position from the previous turn end', () => {
@@ -152,3 +153,43 @@ describe('recordInstantArrival', () => {
     expect(() => recordInstantArrival(log, 'blue', 4, [tooNew])).toThrow(/cannot arrive/);
   });
 });
+
+describe('recordBroadcast', () => {
+  const start = recordTurnEnd(emptyLog(), 0, theHuntUnits);
+  const newNode = unit('Red Node New', 'red', 'node', hex(0, 5), { strength: 2 });
+  const survivors = theHuntUnits.filter((u) => u.id !== 'Blue Node North');
+  const turn1 = recordTurnEnd(start, 1, [...survivors, newNode], [theHunt.blueNorth]);
+
+  it('gives every player an observation of each unit, whatever their sensors, and of each removed one as removed', () => {
+    const log = recordBroadcast(turn1, 1, ['blue', 'red'], [newNode], [theHunt.blueNorth]);
+    const of = (id: string) => log.observations.filter((o) => o.turn === 1 && o.unit.id === id);
+    expect(of('Red Node New').map((o) => o.observer).sort()).toEqual(['blue', 'red']);
+    expect(of('Red Node New').every((o) => !o.byFlagship)).toBe(true);
+    expect(of('Blue Node North').map((o) => [o.observer, o.removed])).toEqual(expect.arrayContaining([['red', true]]));
+    expect(of('Blue Node North')).toHaveLength(2);
+  });
+
+  it("doesn't repeat what a player's own sensors already recorded that turn", () => {
+    const before = turn1.observations.length;
+    const log = recordBroadcast(turn1, 1, ['blue', 'red'], [newNode], []);
+    // Red's new node observes itself; only Blue needs the news.
+    expect(log.observations.length - before).toBe(1);
+    expect(log.observations.at(-1)?.observer).toBe('blue');
+  });
+
+  it('arrives at light speed from where it happened', () => {
+    // Out of range of every Blue sensor, 5 hexes from Blue's flagship at (−5, 2): 2 turns of light.
+    const far = unit('Red Node Far', 'red', 'node', hex(-7, 7), { strength: 2 });
+    const units = [...theHuntUnits, far];
+    let log = recordBroadcast(recordTurnEnd(start, 1, units), 1, ['blue', 'red'], [far]);
+    log = recordHeldTurns(log, 2, 3, units);
+    const blueSees = (turn: number) => knowledgeState(log, 'blue', turn, { c: 3 }).contacts.some((c) => c.unit.id === 'Red Node Far');
+    expect(blueSees(3)).toBe(false);
+    expect(blueSees(4)).toBe(true);
+  });
+
+  it('must follow recordTurnEnd for the same turn', () => {
+    expect(() => recordBroadcast(start, 1, ['blue'], [newNode])).toThrow(/need the end of turn 1/);
+  });
+});
+

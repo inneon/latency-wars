@@ -9,7 +9,7 @@ export const QbitPurchase = z.object({
     .enum(['scan', 'spoof', 'seize', 'oversee'])
     .describe(
       'scan: what one of your units saw at the end of last turn, at age 0 (FB-11). spoof: override an enemy fleet, and every fleet of its owner in its hex, for this turn (QBIT-02). ' +
-        'seize: take command of one enemy fleet for this turn; it follows any order you give, Attack included, and fights on your side (QBIT-10). ' +
+        'seize: take command of one enemy fleet for this turn; it follows any order you give, Attack included, and fights on your side, but never damages its own flagship (QBIT-10). ' +
         'oversee: protect one of your fleets from spoofs and seizes this turn (QBIT-09).',
     ),
   target: z
@@ -19,7 +19,7 @@ export const QbitPurchase = z.object({
   order: z
     .string()
     .optional()
-    .describe('Spoof or seize only: the order the fleet carries out this turn. A spoof: MoveTo, Hold or ReturnHome (QBIT-02). A seize: any order (QBIT-10).'),
+    .describe('Spoof or seize only: the order the fleet carries out this turn. A spoof: MoveTo, Hold or ReturnHome (QBIT-02). A seize: any order except an Attack on its own flagship (QBIT-10).'),
   strength: z
     .number()
     .int()

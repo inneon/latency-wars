@@ -23,8 +23,10 @@ import {
   resolveScans,
   scanObservations,
   renderSeedReports,
+  renderWebNews,
   settleCommandContest,
   useSeeds,
+  webNewsFor,
   startEngine,
   unaccountedUnits,
 } from './engine.spec-helper';
@@ -177,6 +179,28 @@ describe('applyResolution: units', () => {
     const { engine, adjustments } = play(resolution([...states(), { id: 'red-node-b', owner: 'red', class: 'node', q: 0, r: -2, strength: 2 }]));
     expect(adjustments[0]).toEqual([]);
     expect(unit(engine, 'red-node-b')).toMatchObject({ speed: 0, sensorRange: 2 });
+  });
+
+  it('tells every player at once whose web gained or lost a node, and where by light (ECON-05)', () => {
+    const north = states().find((u) => u.id === 'blue-node-north');
+    if (!north) throw new Error('the Hunt has blue-node-north');
+    const built = { id: 'red-node-b', owner: 'red', class: 'node' as const, q: 0, r: -2, strength: 2 };
+    const { engine } = play(
+      resolution([...states(), built]),
+      resolution([...states().filter((u) => u.id !== 'blue-node-north'), built], { removed: [{ ...north, strength: 0 }] }),
+    );
+    expect(webNewsFor(engine, 2)).toEqual([{ turn: 1, owner: 'red', change: 'gained', node: 'red-node-b' }]);
+    expect(webNewsFor(engine, 3)).toEqual([{ turn: 2, owner: 'blue', change: 'lost', node: 'blue-node-north' }]);
+    const seen = (observer: string, id: string, turn: number) => engine.log.observations.find((o) => o.observer === observer && o.unit.id === id && o.turn === turn);
+    expect(seen('blue', 'red-node-b', 1)).toBeDefined();
+    expect(seen('red', 'blue-node-north', 2)).toMatchObject({ removed: true });
+    const names = (id: string) => (id === 'red' ? 'Red' : 'Blue');
+    const toBlue = renderWebNews(webNewsFor(engine, 2), 'blue', names);
+    expect(toBlue).toContain("- Red's web gained a node last turn.");
+    expect(toBlue).not.toContain('red-node-b');
+    expect(toBlue).not.toContain('(0');
+    expect(renderWebNews(webNewsFor(engine, 3), 'blue', names)).toContain('- Your web lost a node last turn.');
+    expect(renderWebNews([], 'blue', names)).toBe('');
   });
 
   it('keeps a unit the GM forgot to list where it was', () => {
@@ -398,6 +422,18 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     expect(quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-flagship', order: 'Hold' }).refused).toContain("can't be seized");
   });
 
+  it('refuses a seize that would attack its own flagship, fallback included, at no cost (QBIT-10)', () => {
+    const engine = scanned(play(resolution(states({ 'blue-line': [-1, 1], 'red-line': [1, -1], 'red-raider': [1, -1] }))).engine, 2);
+    const seize = (order: string) => quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-line', order });
+    for (const order of ['Attack(red-flagship)', 'attack( red-flagship ); commitment AtAllCosts', 'MoveTo((1,-2)); fallback Attack(red-flagship)']) {
+      const q = seize(order);
+      expect(q.refused).toContain("can't attack its own flagship");
+      expect(q.cost).toBeUndefined();
+    }
+    expect(seize('Attack(red-raider)').refused).toBeUndefined();
+    expect(seize('Attack(red-flagship-escort)').refused).toBeUndefined();
+  });
+
   it('renders quotes for the player without what the true state shows', () => {
     const text = renderQuotes([
       { kind: 'spoof', target: 'red-line', order: 'Hold', cost: 5, breakdown: 'base 3 + distance 2', fails: 'secret' },
@@ -482,13 +518,14 @@ describe('oversight and the command contest (QBIT-09)', () => {
   });
 
   it('settles a seize against oversight like a spoof, command presence included, and tells the GM whose side it fights on (QBIT-10)', () => {
-    const seize = { kind: 'seize' as const, target: 'red-line', order: 'Attack(red-flagship)', strength: 1, cost: 13, breakdown: '', reaches: ['red-line'], atFlagship: true };
+    const seize = { kind: 'seize' as const, target: 'red-line', order: 'Attack(red-raider)', strength: 1, cost: 13, breakdown: '', reaches: ['red-line'], atFlagship: true };
     const settle = (strength: number) => settleCommandContest(new Map([['blue', [{ ...seize, strength }]]]), new Map()).get('blue')?.[0];
     expect(settle(1)?.fails).toContain('seize strength 1 against red-line at 1');
     expect(settle(2)?.fails).toBeUndefined();
     const text = renderHijacksForGm([{ ...seize, strength: 2 }]);
     expect(text).toContain("Spoofs and seizes bought");
     expect(text).toContain("as the seizer's unit");
+    expect(text).toContain("never reaches its owner's flagship");
     expect(text).toContain('(FLAG-03)');
   });
 

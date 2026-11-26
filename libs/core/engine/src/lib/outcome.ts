@@ -1,10 +1,10 @@
 import { formatHex, type Hex } from '@latency-wars/domain';
 import { settleEconomy } from '@latency-wars/economy';
 import { furthestToward, illegalMove } from '@latency-wars/movement';
-import { recordTurnEnd } from '@latency-wars/visibility';
+import { recordBroadcast, recordTurnEnd } from '@latency-wars/visibility';
 import { judgeProduceOrders, settleMatterEconomy } from './matter';
 import { deliveries, NO_ANSWER, RECEIPT } from './orders';
-import type { EngineState, QueuedMessage } from './state';
+import type { EngineState, QueuedMessage, WebNews } from './state';
 import type { GameSetup, GameUnit, Override, ReportedUnit, TurnOutcome } from './types';
 
 /*
@@ -175,9 +175,18 @@ export function applyOutcome(
   // Economy (TURN-03): the nodes still standing after Combat produce. A node
   // that's new this turn was built in this Economy phase, after production.
   const producing = standing.filter((u) => u.class === 'node' && previous.some((p) => p.id === u.id));
+  // Web news (ECON-05): every player learns at once that a web gained or lost a node, and where at light speed.
+  const wasThere = (u: GameUnit) => previous.some((p) => p.id === u.id);
+  const joined = standing.filter((u) => u.class === 'node' && !wasThere(u));
+  const left = removed.filter((u) => u.class === 'node' && wasThere(u));
+  const news: WebNews[] = [
+    ...joined.map((u) => ({ turn, owner: u.owner, change: 'gained' as const, node: u.id })),
+    ...left.map((u) => ({ turn, owner: u.owner, change: 'lost' as const, node: u.id })),
+  ];
   const recorded: EngineState = {
     ...engine,
-    log: recordTurnEnd(engine.log, turn, standing, removed),
+    log: recordBroadcast(recordTurnEnd(engine.log, turn, standing, removed), turn, players, joined, left),
+    webNews: [...engine.webNews, ...news],
     units: standing,
     roster,
     ledger: settleEconomy(engine.ledger, turn, producing, engine.economy),

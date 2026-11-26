@@ -20,6 +20,17 @@ export interface QueuedMessage {
   readonly reportsDestroyed: readonly GameUnit[];
 }
 
+/** A node joining or leaving a web (ECON-05): what every player learns at once. Where travels at light speed, as an observation. */
+export interface WebNews {
+  /** The turn whose Economy or Combat phase it happened in. Every player learns of it in the next Planning phase. */
+  readonly turn: number;
+  /** Whose web it was. */
+  readonly owner: string;
+  readonly change: 'gained' | 'lost';
+  /** The node. Only the engine sees it: players learn whose web, not which node. */
+  readonly node: string;
+}
+
 /** An order a player sent, tracked so the engine knows when it lands (ORD-04, ORD-06). */
 export interface SentOrder {
   readonly player: string;
@@ -49,6 +60,8 @@ export interface EngineState {
   readonly map: GameMap;
   /** Every order sent, light or instant. */
   readonly orders: readonly SentOrder[];
+  /** Every node that has joined or left a web since turn 1 (ECON-05). */
+  readonly webNews: readonly WebNews[];
 }
 
 export function startEngine(setup: GameSetup): EngineState {
@@ -73,6 +86,7 @@ export function startEngine(setup: GameSetup): EngineState {
     matter: startMatter(setup),
     map: setup.map,
     orders: [],
+    webNews: [],
   };
 }
 
@@ -94,6 +108,11 @@ export function qbitParams(setup: GameSetup): QbitParams<GameUnit> {
 /** What `player` may know in the Planning phase of `turn` (LIGHT-05). */
 export function knowledge(engine: EngineState, setup: GameSetup, player: string, turn: number): KnowledgeState<GameUnit> {
   return knowledgeState(engine.log, player, turn, setup.parameters);
+}
+
+/** The web news every player learns in the Planning phase of `turn` (ECON-05): the nodes that joined or left a web in the turn before. */
+export function webNewsFor(engine: EngineState, turn: number): readonly WebNews[] {
+  return engine.webNews.filter((n) => n.turn === turn - 1);
 }
 
 /** A qBit amount for people to read. Balances are kept unrounded; this is display only. */

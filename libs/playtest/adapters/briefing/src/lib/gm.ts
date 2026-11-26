@@ -99,7 +99,7 @@ export function renderHijacksForGm(quotes: readonly HijackQuote[], oversights: r
         : '';
       const effect =
         q.kind === 'seize'
-          ? 'it carries out this order this turn as the seizer\'s unit: hostile to its owner\'s units, willing as the seizer\'s (MOVE-04), and fighting on the seizer\'s side (COMBAT-02, COMBAT-03). It returns to its owner at the end of Combat, keeping any damage, and its own order resumes next turn (QBIT-10).'
+          ? 'it carries out this order this turn as the seizer\'s unit: hostile to its owner\'s units, willing as the seizer\'s (MOVE-04), and fighting on the seizer\'s side (COMBAT-02, COMBAT-03), but its damage never reaches its owner\'s flagship. It returns to its owner at the end of Combat, keeping any damage, and its own order resumes next turn (QBIT-10).'
           : `${landed.length > 1 ? 'each carries' : 'it carries'} out this order this turn (QBIT-02).`;
       const fate = q.fails
         ? ` It does not land: ${q.fails} It was paid for anyway, and the buyer is told "No answer" (QBIT-02, QBIT-10).`

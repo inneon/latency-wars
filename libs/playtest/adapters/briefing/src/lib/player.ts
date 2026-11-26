@@ -12,6 +12,7 @@ import {
   type OversightQuote,
   type QueuedMessage,
   type SeedReport,
+  type WebNews,
 } from '@latency-wars/engine';
 import type { KnowledgeEntry, KnowledgeState, Observation } from '@latency-wars/visibility';
 
@@ -65,6 +66,23 @@ export function renderSeedReports(reports: readonly SeedReport[]): string {
       : `- **${r.name}** (\`${r.unit}\`): reported at age 0; its sightings are in your sensor picture. ${r.left === 0 ? 'Its seed is now used up: no more instant reports.' : `${r.left} seeded qBit(s) left.`}`,
   );
   return `## Seeded units (QBIT-11)\n\n${lines.join('\n')}`;
+}
+
+/**
+ * The web news section of `player`'s report (ECON-05): whose web gained or
+ * lost nodes last turn, and how many. Never which node or where: that
+ * arrives at light speed, in the sensor picture. `nameOf` names a player.
+ */
+export function renderWebNews(news: readonly WebNews[], player: string, nameOf: (player: string) => string): string {
+  if (news.length === 0) return '';
+  const counts = new Map<string, number>();
+  for (const n of news) counts.set(`${n.owner}\u0000${n.change}`, (counts.get(`${n.owner}\u0000${n.change}`) ?? 0) + 1);
+  const lines = [...counts].map(([key, count]) => {
+    const [owner = '', change = ''] = key.split('\u0000');
+    const whose = owner === player ? 'Your' : `${nameOf(owner)}'s`;
+    return `- ${whose} web ${change} ${count === 1 ? 'a node' : `${count} nodes`} last turn.`;
+  });
+  return `## Web news (ECON-05)\n\nFelt at once through the entanglement. Where each node is arrives at light speed, as a sighting in your sensor picture.\n\n${lines.join('\n')}`;
 }
 
 /** The messages that reached a player this Planning phase. */

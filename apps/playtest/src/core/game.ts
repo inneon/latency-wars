@@ -26,6 +26,7 @@ import {
   settleCommandContest,
   startEngine,
   useSeeds,
+  webNewsFor,
 } from '@latency-wars/engine';
 import {
   renderMatter,
@@ -40,6 +41,7 @@ import {
   renderScans,
   renderSeedReports,
   renderSensorPicture,
+  renderWebNews,
 } from '@latency-wars/playtest-briefing';
 import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { LOG_VERSION } from '@latency-wars/playtest-replay';
@@ -322,7 +324,9 @@ function composeReports(
       const sent = renderOutbox(outbox(engine, scenario, p.id, turn), turn);
       const matter = engine.matter ? renderMatter(engine.matter, p.id, turn) : '';
       const seeded = renderSeedReports(seeds.get(p.id) ?? []);
-      return [p.id, [note, renderQbits(engine, p.id, turn), matter, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
+      const nameOf = (id: string) => scenario.players.find((q) => q.id === id)?.name ?? id;
+      const web = renderWebNews(webNewsFor(engine, turn), p.id, nameOf);
+      return [p.id, [note, renderQbits(engine, p.id, turn), matter, web, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }

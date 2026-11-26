@@ -194,6 +194,12 @@ export function settleCommandContest(
 
 const SPOOF_ORDERS = /^\s*(MoveTo|Hold|ReturnHome)\b/i;
 
+/** Whether an order's text, its fallback included, has an `Attack` on `unitId`. */
+function attacks(order: string, unitId: string): boolean {
+  const id = unitId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\bAttack\\s*\\(\\s*${id}\\s*[,)]`, 'i').test(order);
+}
+
 /**
  * Prices a spoof or a seize for `player` in the Planning phase of `turn` from
  * what they know: their flagship and their track on the target (QBIT-08),
@@ -226,6 +232,11 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   if (track.removed) return refuse(`Your last sight of ${target} was it leaving the game.`);
   if (track.age > hijack.maxTrackAge) {
     return refuse(`Your track on ${target} is ${track.age} turns old; a ${kind} needs one no older than ${hijack.maxTrackAge} (QBIT-04).`);
+  }
+  // A seized fleet never attacks its own flagship (QBIT-10).
+  const ownersFlagship = engine.units.find((u) => u.owner === track.unit.owner && u.class === 'flagship');
+  if (kind === 'seize' && ownersFlagship && attacks(order, ownersFlagship.id)) {
+    return refuse(`A seized fleet can't attack its own flagship, ${ownersFlagship.id} (QBIT-10).`);
   }
   const strength = Math.max(0, Math.floor(purchase.strength ?? 0));
   const price = qbitPrice(engine, setup, player, base, track.unit.hex);

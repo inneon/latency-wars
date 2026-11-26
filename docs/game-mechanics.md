@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.14)
+# Latency Wars - Game Mechanics (v0.15)
 
 ## 0. About This Document
 
@@ -52,7 +52,7 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Engagement group** | All units joined by engagements, plus any unit in the same hex as one of them that is willing to fight an enemy in the group, or that an enemy in the group is willing to fight. Each group fights one combat. |
 | **Spoof** | A qBit action that overrides the orders of an enemy fleet, and of every other fleet of that player in its hex, for one turn (`QBIT-02`). |
 | **Seeded unit** | A unit produced carrying qBits. Each Planning phase it spends one to send its owner a free scan of itself (`QBIT-11`). |
-| **Seize** | A qBit action that takes command of one enemy fleet for one turn: it follows any order, `Attack` included, and fights on the seizer's side (`QBIT-10`). |
+| **Seize** | A qBit action that takes command of one enemy fleet for one turn: it follows any order, `Attack` included, and fights on the seizer's side, but never damages its own flagship (`QBIT-10`). |
 | **Oversight** | A qBit action that protects one of a player's own fleets from spoofs for one turn (`QBIT-09`). |
 | **Strength (of a command)** | The qBits paid into a spoof or an oversight beyond its price. The stronger command wins (`QBIT-09`). |
 | **Matter** | The physical resource. Mines produce it; building nodes, mines and units costs it (`MAT-01`). |
@@ -177,13 +177,14 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   - the player's own matter balance and total output, as totals (never per mine) (`MAT-01`);
   - scan results (`FB-11`), including the free scans from seeded units, and the absence of one from a seeded unit that is gone (`QBIT-11`);
   - the acks for instant orders and spoofs, which say only Delivered or No answer (`ORD-09`, `QBIT-02`);
+  - web news: that a player's web, theirs or another's, gained or lost a node, but not which node or where (`ECON-05`);
   - prices (`QBIT-08`), worked out only from what the paying player knows.
 
   Anything else the engine knows MUST NOT reach a player except at light speed.
   - *Why:* the web is entangled, so its output is felt at once. A drop in production tells a player that something in their web has died, but not what or where. Everything else waits for light, so the delay model holds.
 
 ### 5.1 Observation
-- **LIGHT-01** A player's units act as sensors. At the end of each turn (phase 8), each unit records observations of every object within its sensor range.
+- **LIGHT-01** A player's units act as sensors. At the end of each turn (phase 8), each unit records observations of every object within its sensor range. Web news adds an observation of a node that joined or left a web, whatever the range (`ECON-05`).
 - **LIGHT-02** Every unit also observes itself. This is its status report: position, strength, active order, doctrine, and the progress of any construction or production.
   - A status report describes only the unit itself, including what happened to it, such as a spoof (`QBIT-06`). It MUST NOT carry what the unit's sensors observe of other objects. Each of those is an observation of the hex observed, visible by that hex's distance (`LIGHT-03`).
   - *Why:* a report travels from the unit, not from what it saw. If it carried its sightings, they would skip the distance from the object to the unit, and could reach the player sooner than `LIGHT-03` allows.
@@ -443,7 +444,7 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
 - **COMBAT-03** Where damage goes. The steps apply in order, each to the strengths the steps before it left. Wherever damage **fills** units, it goes to one unit at a time, up to that unit's remaining strength, and the rest **spills** to the next.
   1. Units with an `Attack` order on a target in the group deal their damage to that target. If the target isn't in the group, their damage goes under step 3.
   2. Fleets in the group with an `Escort` order on that target take that damage in its place first. It fills them highest remaining strength first, ties by unit ID, and what they don't take goes to the target.
-  3. All other damage, and damage beyond what a target and its escorts can take, is pooled for each receiving player and fills that player's units in the group: units other than the flagship first, highest remaining strength first, ties by unit ID. The flagship comes last: it takes damage once every other unit of its owner in the group is at 0.
+  3. All other damage, and damage beyond what a target and its escorts can take, is pooled for each receiving player and fills that player's units in the group: units other than the flagship first, highest remaining strength first, ties by unit ID. The flagship comes last: it takes damage once every other unit of its owner in the group is at 0. Damage a seized fleet deals never fills its owner's flagship (`QBIT-10`).
   4. Damage left once all of a player's units in the group are at 0 is lost.
   - *Why:* incidental damage never singles out the king, but a deliberate `Attack` on the flagship does, and only an escort stops it. Killing an escorted flagship takes a track, which takes information. Filling one unit at a time kills ships and ends fights, and an `Attack` order only decides who is hit first, so concentrated fire is never wasted. A unit already at 0, such as a probe, shields nothing.
 - **COMBAT-04** In the Observation phase, every surviving sensor in range observes the units destroyed that turn, as destroyed, whether in Combat or during Movement. Sensors in the same engagement group always do.
@@ -468,6 +469,11 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
   - Only fleets build, not the flagship (`FLAG-02`). A scenario MAY bar other unit classes from building.
 - **ECON-04** At the start of the Economy phase, before this turn's production is added, each player loses `QBIT_DECAY` of their unspent qBits.
   - *Why:* qBits have a half-life. Saving up is still possible, but each extra turn of saving pays off less, so nobody can stockpile for a sudden burst. Spare qBits are better spent now than kept.
+- **ECON-05** **Web news.** When a node joins a player's web (it is completed, `ECON-03`) or leaves it (it is destroyed), every player, its owner included, learns of it twice:
+  - **that** it happened, at once, through the entangled channel (`LIGHT-18`): in the next Planning phase, whose web gained or lost a node. Nothing else: not which node, where it is, or what it is worth.
+  - **where** it happened, at light speed: every player observes the node at the end of that turn, in its hex, whether or not a sensor of theirs is in range (`LIGHT-01`). The observation arrives like any other (`LIGHT-03`): a completed node as a contact, a destroyed one as destroyed (`COMBAT-04`).
+  - Mines make no news: matter isn't entangled (`MAT-01`).
+  - *Why:* a node joining or leaving a web disturbs the entanglement everywhere at once, but where it happened has to travel. Each side can see the other growing, so a lead can be seen and answered, and the opening turns get news to react to. A node built far away buys a longer silence about where it is.
 
 ### 11.3 Matter and unit production — **Proposed**
 There are two resources. qBits are information: the web in orbital zones produces them (section 11.2). Matter is physical: mines on planets produce it, and it pays for structures and units.
@@ -526,10 +532,11 @@ There are two resources. qBits are information: the web in orbital zones produce
   - *Why:* every protection is a price, not a wall, so a richer player can break through defences and a poorer one has to choose what to protect. A fortress costs its owner every turn, while an attacker chooses when to pay. One spoof reaches a whole hex while oversight protects one fleet, so keeping a whole stack under command costs more the bigger it is. Holding a hex is a different sum: it takes enough fleets the spoof can't move to win the fight that follows. Oversight is cheapest close to the flagship, and command presence makes the cheapest spoof fail there, so staying close still helps.
 - **QBIT-10** **Seize:** take command of one enemy fleet, its **target**, for one turn. A seize needs what a spoof needs (`QBIT-04`), is delivered in Emission, and is settled against the target's oversight like a spoof (`QBIT-09`), command presence included. It reaches only its target, never the other fleets in its hex.
   - If it lands, the target carries out any order the seizer chooses (`ORD-01`), `Attack` included, for that turn, overriding its own order and doctrine. For that turn it is the seizer's unit: it is hostile to its owner's units, `MOVE-04` judges its willingness as the seizer's, and it fights on the seizer's side (`COMBAT-02`, `COMBAT-03`).
+  - It never damages its owner's flagship. A seize whose order would have the target attack that flagship is refused, and costs nothing (`QBIT-01`). In Combat, the damage it deals is pooled apart from the rest under `COMBAT-03` step 3: it fills its owner's other units in the group and never the flagship, and what they can't take is lost.
   - It returns to its owner at the end of the turn's Combat phase. Its own active order resumes the next turn. Damage it took stays.
   - Its owner's `Escort` and `Defend` orders that name it don't count for that turn.
   - The seizer gets a receipt like a spoof's (`QBIT-02`): **Delivered** or **No answer**. The seized fleet's status report records what happened (`QBIT-06`).
-  - *Why:* it turns a qBit lead into force at the point that matters. Its price keeps it rare: with decay (`ECON-04`) only a sustained income lead can afford it often. Unlike the seize retired in v0.5 (`QBIT-03`), it can reach a fleet in its owner's flagship's hex, so an escort can be turned against the flagship it guards, and a big stack at home is a risk as well as a shield. Oversight answers it, at the defender's price.
+  - *Why:* it turns a qBit lead into force at the point that matters. Its price keeps it rare: with decay (`ECON-04`) only a sustained income lead can afford it often. Unlike the seize retired in v0.5 (`QBIT-03`), it can reach a fleet in its owner's flagship's hex, so an escort can be taken out of the guard or turned on the other escorts, and a big stack at home is a risk as well as a shield. Oversight answers it, at the defender's price. It never strikes its own flagship: in the v0.14 playtests that decided 3 games of 4, once with no ship of the seizer's within 4 hexes, so a kill skipped the hunt that light delay is about. Killing a flagship still takes the attacker's own ships.
 - **QBIT-11** **Seeding.** A `Produce` order MAY seed the new unit with qBits: `Produce(class, seed n)`, for any whole number `n` of at least 1, if the scenario's unit list lets that class be seeded. There is no limit on `n`. The qBits are paid with the matter, when the yard accepts the order (`PROD-04`). A unit can be seeded only when it is produced.
   - The seed belongs to the unit. It isn't part of its owner's balance, doesn't decay (`ECON-04`), can't be spent on anything else, and is lost with the unit, or with its yard while it is being produced.
   - At the start of each Planning phase, a seeded unit with at least 1 qBit left spends 1, and its owner gets a scan of it (`FB-11`) at no other cost: everything it observed at the end of the previous turn, at age 0, its own status report included. It does this every turn while its seed lasts, whether or not it sees anything.
