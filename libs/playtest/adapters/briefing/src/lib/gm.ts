@@ -4,6 +4,7 @@ import { balanceOf, matterIncome, qbitIncome } from '@latency-wars/economy';
 import {
   type CombatOutcome,
   type CombatPhase,
+  type ConstructionPreview,
   deliveries,
   type EngineState,
   formatMatter,
@@ -13,6 +14,7 @@ import {
   type HijackQuote,
   inTransit,
   type MatterState,
+  outcomeText,
   type MovementResult,
   type OversightQuote,
   type SentOrder,
@@ -69,7 +71,7 @@ export function renderMatterForGm(matter: MatterState, units: readonly GameUnit[
   });
   const yards = units.filter((u) => u.class === 'mine').map((u) => `- \`${u.id}\` (${u.owner}): ${yardStatusOf(matter, u.id).replace(/^Shipyard: /, '')}`);
   return [
-    `The matter ledger for this turn, kept by the engine (authoritative). Produce orders delivered this turn have been judged and, if accepted, paid for. The engine adds each mine's output in the Economy phase (MAT-01) from the mines still standing after Combat, charges a builder's cost on its first progress (ECON-03), advances each yard's production unless the yard was in one of the turn's combats, which it works out itself, and adds finished units itself (PROD-04). Don't keep balances or production yourself, and don't list units a yard makes.`,
+    `The matter ledger for this turn, kept by the engine (authoritative). Produce orders delivered this turn have been judged and, if accepted, paid for. The engine adds each mine's output in the Economy phase (MAT-01) from the mines still standing after Combat, charges a builder's cost on its first progress and works out each build's progress (ECON-03), advances each yard's production unless the yard was in one of the turn's combats, which it works out itself, and adds finished units itself (PROD-04). Don't keep balances or production yourself, and don't list units a yard makes.`,
     '',
     '| Player | Balance after purchases | Spent this turn | Output per turn (current mines) |',
     '|---|---|---|---|',
@@ -80,6 +82,28 @@ export function renderMatterForGm(matter: MatterState, units: readonly GameUnit[
     `Produce orders (the engine judged these; PROD-04):\n${judgement.length ? judgement.map((n) => `- ${n}`).join('\n') : '- None delivered.'}`,
     '',
     `Unit classes shipyards can produce: ${config.units.map((u) => `${u.class} (cost ${u.cost}, ${u.turns} turn(s)${u.sideSlot ? ', side slot' : ''}${u.seedable ? ', can be seeded' : ''})`).join(', ') || 'none'}. Costs: node ${config.nodeCost}, mine ${config.mineCost}. The engine also runs seeded units' free scans each Planning phase (QBIT-11); you have nothing to do for them.`,
+  ].join('\n');
+}
+
+/**
+ * What construction comes to this turn as far as the engine knows before the GM resolves the rest of it: each builder's
+ * outcome (ECON-03) and the structures it would complete. The engine's own result is the one applied, so the GM reports
+ * its own account alongside and any disagreement is a ruling.
+ */
+export function renderConstructionForGm(preview: ConstructionPreview | undefined, matter: MatterState): string | undefined {
+  if (!preview || (preview.outcomes.length === 0 && preview.built.length === 0)) return undefined;
+  const siteName = (hex: Hex) => matter.sites.find((s) => s.hex.q === hex.q && s.hex.r === hex.r)?.name ?? formatHex(hex);
+  const lines = preview.outcomes.map(
+    (o) =>
+      `- \`${o.builder}\` (${o.owner}), ${o.structure ?? 'no structure'} at ${siteName(o.site)}: ${o.kind}, ${outcomeText(o)}; ${o.phases} of ${matter.buildTurns} Economy phase(s) counted.`,
+  );
+  const built = preview.built.map((b) => `- \`${b.id}\`, a ${b.structure} at ${siteName(b.hex)}, built by \`${b.builder}\`.`);
+  return [
+    `Construction (ECON-03), worked out by the engine from the Decision, Movement and Combat phases, so far as it knows them. The engine's own result is the one applied: it charges the matter, adds a completed structure and keeps each builder's progress. It can't see a combat it left to you, so if one changes who is on a site, in combat or destroyed, say so in a ruling. Report each builder's progress in \`builds\` and add a completed structure to \`units\` as before, from your own reading of the rules. Where you differ from the engine, the engine's result stands, and the difference is logged.`,
+    '',
+    `Builders:\n${lines.join('\n') || '- None.'}`,
+    '',
+    `Structures the engine would complete:\n${built.join('\n') || '- None.'}`,
   ].join('\n');
 }
 

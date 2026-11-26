@@ -1,6 +1,6 @@
 import { formatHex } from '@latency-wars/domain';
 import type { MatterStatement, Refusal, Spend } from '@latency-wars/economy';
-import { type CombatPhase, formatMatter, type MovementPhase } from '@latency-wars/engine';
+import { type CombatPhase, type ConstructionPhase, formatMatter, type MovementPhase, outcomeText } from '@latency-wars/engine';
 import { hitsText, membershipText, reasonText } from './gm';
 
 /*
@@ -37,6 +37,18 @@ export function renderMovementPhase(phase: MovementPhase): string {
     );
   });
   return lines.join('\n');
+}
+
+/** Construction for the transcript (ECON-03): each builder's outcome, the structures added, and where the GM's report differed. */
+export function renderConstructionPhase(phase: ConstructionPhase): string {
+  const lines = [
+    ...phase.outcomes.map(
+      (o) => `- \`${o.builder}\` (${o.owner}), ${o.structure ?? 'no structure'} at ${formatHex(o.site)}: ${o.kind} (${o.reason}), ${outcomeText(o)}; ${o.phases} phase(s) counted.`,
+    ),
+    ...phase.built.map((b) => `- Built: \`${b.id}\`, a ${b.structure} at ${formatHex(b.hex)}, by \`${b.builder}\`.`),
+    ...phase.differences.map((d) => `- Differs from the GM, \`${d.subject}\`: it reported ${d.gm}; the engine worked out ${d.engine}.`),
+  ];
+  return lines.join('\n') || '- No builders.';
 }
 
 /** The Combat phase for the transcript: each combat's damage, where it went and who was destroyed. */

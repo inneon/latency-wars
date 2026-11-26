@@ -168,13 +168,21 @@ export const FleetDecision = z.object({
   move_hex: HexRef.optional().describe('move_to only: where it heads.'),
   move_unit: z.string().optional().describe('pursue: the target. escort: the charge.'),
   order: z
-    .enum(['none', 'attack', 'defend', 'escort', 'other'])
+    .enum(['none', 'attack', 'defend', 'escort', 'build', 'other'])
     .describe(
       'Its active order after Delivery and Decision, as MOVE-04 reads it: a fallback counts only once it has taken effect (ORD-01). ' +
-        'other: any objective but Attack, Defend and Escort. none: no order, so its stance decides.',
+        'build: a Build order, with the site in order_hex; the engine works out its construction (ECON-03). ' +
+        'other: any objective but Attack, Defend, Escort and Build. none: no order, so its stance decides.',
     ),
   order_target: z.string().optional().describe('attack: the unit attacked. escort: the charge.'),
-  order_hex: HexRef.optional().describe('defend: the defended hex, or the defended node\'s hex.'),
+  order_hex: HexRef.optional().describe('defend: the defended hex, or the defended node\'s hex. build: the hex of the site.'),
+  build_replaced: z
+    .boolean()
+    .optional()
+    .describe(
+      'build only: true if a different order took the place of its Build order this turn, so the build in progress is lost. ' +
+        'A newly delivered Build for the same site and structure continues the build and is not a replacement. Leave out otherwise.',
+    ),
   stance: z.enum(['aggressive', 'balanced', 'evasive']).describe('Its doctrine\'s stance (AUTO-01).'),
   evading: z.boolean().describe('True if it evades this turn (AUTO-03 priority 2).'),
   unwilling: z

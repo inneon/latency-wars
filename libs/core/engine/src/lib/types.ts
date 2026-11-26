@@ -1,3 +1,4 @@
+import type { BuildOutcome, Site, Structure } from '@latency-wars/construction';
 import type { Hex, PlayerId, Unit, UnitId } from '@latency-wars/domain';
 import type { ActiveOrder, Bystander, Engagement, Membership, Stance } from '@latency-wars/engagement';
 import type { GameMap, MoveIntent, UnitMoved } from '@latency-wars/movement';
@@ -76,6 +77,8 @@ export interface Parameters {
   readonly c: number;
   /** `TRACK_DECAY` */
   readonly trackDecay?: number;
+  /** `BUILD_TURNS` (ECON-03). */
+  readonly buildTurns: number;
   /** `ENGAGE_RANGE` */
   readonly engageRange?: number;
   readonly hijack: HijackParameters;
@@ -123,7 +126,8 @@ export interface GameSetup {
   readonly players: readonly { readonly id: PlayerId; readonly name: string }[];
   /** The true state at the end of turn 0. */
   readonly units: readonly GameUnit[];
-  readonly map: GameMap;
+  /** The map. Its `features` are the sites where a fleet can build: orbital zones and planets (SPACE-02, ECON-03, MAT-02). */
+  readonly map: GameMap & { readonly features: readonly Site[] };
   readonly parameters: Parameters;
 }
 
@@ -157,6 +161,8 @@ export interface FleetPlan {
   readonly evading: boolean;
   /** A scenario house rule says it never fights. */
   readonly unwilling?: boolean;
+  /** The site its active `Build` order names, and whether ORD-07 replaced that order this turn. Absent when it has no `Build` order. */
+  readonly build?: { readonly site: Hex; readonly replaced: boolean };
 }
 
 /** One unit's state at the end of a turn, as reported. */
@@ -183,7 +189,7 @@ export interface ReportedMessage {
   readonly reportsDestroyed?: readonly UnitId[];
 }
 
-/** What a builder's `Build` order did in this turn's Economy phase (ECON-03). */
+/** What the GM says a builder's `Build` order did in this turn's Economy phase (ECON-03). The engine works out its own, `ConstructionPhase`. */
 export interface BuildProgress {
   readonly builder: UnitId;
   readonly structure: 'node' | 'mine';
@@ -209,6 +215,32 @@ export interface TurnOutcome {
 }
 
 // ---- Outputs ----
+
+/** Where the GM's account of construction and the engine's differ, for the designer (ECON-03). */
+export interface ConstructionDifference {
+  /** The builder, or the structure the GM added. */
+  readonly subject: UnitId;
+  /** What the GM reported: `progressed`, `reset`, `added a node`, or `nothing`. */
+  readonly gm: string;
+  /** What the engine worked out: an outcome and its reason code, or `completed`. */
+  readonly engine: string;
+}
+
+/** A structure the engine added when a build completed (ECON-03). */
+export interface BuiltStructure {
+  readonly id: UnitId;
+  readonly builder: UnitId;
+  readonly owner: PlayerId;
+  readonly structure: Structure;
+  readonly hex: Hex;
+}
+
+/** Construction in one turn's Economy phase (ECON-03): the engine's result, which is the one applied, and where the GM's report differed. */
+export interface ConstructionPhase {
+  readonly outcomes: readonly BuildOutcome[];
+  readonly built: readonly BuiltStructure[];
+  readonly differences: readonly ConstructionDifference[];
+}
 
 /** A spoof or a seize, priced from what its buyer knows (QBIT-08) and checked against the true state (QBIT-04). */
 export interface HijackQuote {

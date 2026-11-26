@@ -1,22 +1,49 @@
-import { formatHex } from '@latency-wars/domain';
+import {
+  type Builder,
+  type BuilderState,
+  type BuildOutcome,
+  type ConstructionResult,
+  type OutcomeReason,
+  resolveConstruction,
+  type Site,
+  type StandingStructure,
+  type Structure,
+  structureId,
+} from '@latency-wars/construction';
+import { formatHex, hexEquals } from '@latency-wars/domain';
 import {
   balanceOf,
   canAfford,
   closeMatterTurn,
   type MatterLedger,
+  matterIncome,
   openMatterLedger,
   produceMatter,
   type QbitLedger,
   spend as spendQbits,
   spendMatter,
 } from '@latency-wars/economy';
-import type { QueuedMessage, SentOrder } from './state';
-import type { BuildProgress, GameSetup, GameUnit, MatterParameters, ProducibleUnit } from './types';
+import type { MovementResult } from './movement-phase';
+import type { EngineState, QueuedMessage, SentOrder } from './state';
+import type {
+  BuildProgress,
+  BuiltStructure,
+  CombatPhase,
+  ConstructionDifference,
+  ConstructionPhase,
+  FleetPlan,
+  GameSetup,
+  GameUnit,
+  MatterParameters,
+  ProducibleUnit,
+} from './types';
 
 /*
  * The matter half of the engine: matter, shipyards and construction (MAT-01,
- * ECON-03, PROD-03, PROD-04). Whether a builder's phase counted (ECON-03) and
- * whether a yard fought (PROD-04) come in with the turn's outcome.
+ * ECON-03, PROD-03, PROD-04). Whether a yard fought (PROD-04) comes in with
+ * the turn's outcome. Who builds, and what a build comes to, the engine works
+ * out itself, with `@latency-wars/construction`, from the Decision, Movement
+ * and Combat phases (ECON-03).
  */
 
 /** What a shipyard is making, in one of its slots. */
@@ -27,6 +54,12 @@ export interface Production {
   readonly turnsLeft: number;
   /** qBits the unit will carry (QBIT-11), already paid for. Absent when unseeded. */
   readonly seed?: number;
+}
+
+/** What a structure starts with. */
+interface StructureStats {
+  readonly strength: number;
+  readonly sensorRange: number;
 }
 
 /** `producing` keys a yard's side slot (PROD-05) as its id plus this; its main slot is its id alone. */
@@ -41,8 +74,14 @@ export interface MatterState {
   readonly producing: ReadonlyMap<string, Production>;
   /** The qBits each seeded unit still carries, by unit id (QBIT-11). */
   readonly seeded: ReadonlyMap<string, number>;
-  /** Builds already paid for, by builder id: what it is building. A build that resets must be paid again (ECON-03). */
-  readonly paid: ReadonlyMap<string, 'node' | 'mine'>;
+  /** Every builder's progress, as the construction lib keeps it: what it is building, how far, and whether it is paid for (ECON-03). */
+  readonly builders: readonly BuilderState[];
+  /** The sites a fleet can build on (ECON-03, MAT-02). */
+  readonly sites: readonly Site[];
+  /** `BUILD_TURNS` */
+  readonly buildTurns: number;
+  /** What a new structure starts with: the first structure of its class in the scenario (else the other class), since nothing in the rules sets these. */
+  readonly templates: ReadonlyMap<Structure, StructureStats>;
   /** Orders already judged, so none is charged twice. */
   readonly judged: ReadonlySet<SentOrder>;
   /** Player names, for naming the units yards make. */
@@ -60,11 +99,26 @@ export function startMatter(setup: GameSetup): MatterState | undefined {
     config,
     producing: new Map(),
     seeded: new Map(),
-    paid: new Map(),
+    builders: [],
+    sites: setup.map.features,
+    buildTurns: setup.parameters.buildTurns,
+    templates: structureTemplates(setup.units),
     judged: new Set(),
     playerNames: new Map(setup.players.map((p) => [p.id, p.name])),
     outbox: [],
   };
+}
+
+/** The stats a new node or mine starts with: the first of its class in `units`, or failing that the other class's. */
+function structureTemplates(units: readonly GameUnit[]): Map<Structure, StructureStats> {
+  const first = (structure: Structure) => units.find((u) => u.class === structure);
+  const stats = (u: GameUnit | undefined) => (u ? { strength: u.strength, sensorRange: u.sensorRange } : undefined);
+  const templates = new Map<Structure, StructureStats>();
+  for (const [structure, other] of [['node', 'mine'], ['mine', 'node']] as const) {
+    const found = stats(first(structure)) ?? stats(first(other));
+    if (found) templates.set(structure, found);
+  }
+  return templates;
 }
 
 /** What a player's own status report says about a shipyard (LIGHT-02), after whatever the GM wrote. */
@@ -195,8 +249,11 @@ export interface EconomyInput {
   readonly turn: number;
   /** The units at the start of the turn. */
   readonly before: readonly GameUnit[];
-  /** The units at the end of the turn, after Combat, as the engine has settled them. A structure not in `before` was built this turn. */
+  /** The units at the end of the turn, after Combat, as the engine has settled them. A structure not in `before` is the GM's account of a build completing. */
   readonly units: readonly GameUnit[];
+  /** Every fleet with a `Build` order this turn, as Decision, Movement and Combat left it (`buildersOf`). */
+  readonly builders: readonly Builder[];
+  /** What the GM reported of construction (ECON-03). Only compared with the engine's own result, which is the one applied. */
   readonly builds: readonly BuildProgress[];
   /** Shipyards that fought this turn (PROD-04), as the engine works them out (`yardsThatFought`). */
   readonly yardsInCombat: readonly string[];
@@ -214,11 +271,11 @@ export interface Settled {
   readonly notes: string[];
   /** Yards' acks and completions, from yards that survived the turn. */
   readonly messages: QueuedMessage[];
+  /** What construction came to, and where the GM's report differed (ECON-03). */
+  readonly construction: ConstructionPhase;
 }
 
-const costOf = (config: MatterParameters, structure: 'node' | 'mine') => (structure === 'node' ? config.nodeCost : config.mineCost);
-const isStructure = (u: GameUnit): u is GameUnit & { class: 'node' | 'mine' } => u.class === 'node' || u.class === 'mine';
-const sameHex = (a: GameUnit, b: GameUnit) => a.hex.q === b.hex.q && a.hex.r === b.hex.r;
+const isStructure = (u: GameUnit): u is GameUnit & { class: Structure } => u.class === 'node' || u.class === 'mine';
 
 /**
  * The matter side of `turn`'s Economy phase, in TURN-03's order: production
@@ -227,16 +284,17 @@ const sameHex = (a: GameUnit, b: GameUnit) => a.hex.q === b.hex.q && a.hex.r ===
  * turn, so each player has a statement.
  *
  * What the engine does with what the GM reported:
- * - A builder's first progress on a build pays for it. If the balance doesn't
- *   cover it the builder makes no progress, which the GM must apply to its own
- *   tally; a structure the GM completed anyway isn't built.
- * - A structure added with no paid builder is charged at once, or isn't built.
+ * - Construction is the engine's own (ECON-03): the construction lib decides
+ *   each builder's phase from `builders`, the engine charges what it says and
+ *   adds the structures it completes. What the GM reported in `builds`, and any
+ *   structure it added, is only compared with that, and any difference is told
+ *   to the GM and recorded.
  * - A fleet the GM added is dropped: with matter, only shipyards make units.
  * - Each yard that didn't fight counts a phase of its production; one that
  *   finishes makes its unit; one that was destroyed loses it.
  */
 export function settleMatterEconomy(matter: MatterState, input: EconomyInput): Settled {
-  const { turn, before, builds, yardsInCombat, roster } = input;
+  const { turn, before, yardsInCombat, roster } = input;
   const { playerNames } = matter;
   const { config } = matter;
   const adjustments: string[] = [];
@@ -244,7 +302,10 @@ export function settleMatterEconomy(matter: MatterState, input: EconomyInput): S
   let ledger = matter.ledger;
   const beforeIds = new Set(before.map((u) => u.id));
 
+  // A new structure is the GM's account of a build completing. The engine adds its own (ECON-03), so the GM's is set aside.
+  const gmBuilt = input.units.filter((u) => isStructure(u) && !beforeIds.has(u.id));
   let units = input.units.filter((u) => {
+    if (gmBuilt.includes(u)) return false;
     if (beforeIds.has(u.id) || u.class !== 'fleet') return true;
     adjustments.push(`${u.id} was listed as a new fleet, but units come only from shipyards (PROD-04), and the engine adds them. It has been dropped.`);
     return false;
@@ -268,53 +329,34 @@ export function settleMatterEconomy(matter: MatterState, input: EconomyInput): S
   // Matter production comes first (TURN-03): from the mines that stood after Combat, not one built this phase (ECON-03).
   ledger = produceMatter(ledger, turn, units.filter((u) => u.class === 'mine' && beforeIds.has(u.id)), { mineOutput: config.mineOutput });
 
-  // Construction. A builder destroyed this turn takes its paid-for progress with it; the matter stays spent (ECON-03).
-  const paid = new Map([...matter.paid].filter(([builder]) => standing(builder)));
-  const unpaid = new Set<string>();
-  for (const b of builds) {
-    if (b.progress === 'reset') {
-      paid.delete(b.builder);
-      continue;
-    }
-    const builder = standing(b.builder);
-    if (!builder || builder.class !== 'fleet') {
-      adjustments.push(`${b.builder} was reported building a ${b.structure}, but it isn't a fleet in the game; ignored.`);
-      continue;
-    }
-    if (paid.get(b.builder) === b.structure) continue;
-    const cost = costOf(config, b.structure);
-    const spent = spendMatter(ledger, builder.owner, turn, `${b.structure} at ${formatHex(builder.hex)}`, cost);
+  // Construction (ECON-03): the lib decides, the engine charges and adds what it completes.
+  const constructed = constructStructures(matter, {
+    builders: input.builders,
+    structures: units.filter(isStructure).map((u) => ({ hex: u.hex, structure: u.class })),
+    balances: ledger.balances,
+    taken: [...roster.keys(), ...units.map((u) => u.id)],
+  });
+  const { result } = constructed;
+  for (const c of result.charges) {
+    const spent = spendMatter(ledger, c.owner, turn, `${c.structure} at ${formatHex(c.site)}`, c.cost);
+    if (!spent.outcome.accepted) throw new RangeError(`${c.builder}'s ${c.structure} was charged ${c.cost}, but ${c.owner}'s balance didn't cover it`);
     ledger = spent.ledger;
-    if (spent.outcome.accepted) {
-      paid.set(b.builder, b.structure);
-    } else {
-      unpaid.add(b.builder);
-      adjustments.push(
-        `${b.builder} made no progress on its ${b.structure} this Economy phase: ${builder.owner}'s matter (${formatMatter(spent.outcome.balance)}) can't cover its cost, ${formatMatter(cost)} (ECON-03). It keeps the progress it had, so don't count this phase.`,
-      );
-    }
   }
-  for (const structure of units.filter((u) => isStructure(u) && !beforeIds.has(u.id))) {
-    const builder = units.find((u) => u.class === 'fleet' && u.owner === structure.owner && sameHex(u, structure) && paid.get(u.id) === structure.class);
-    if (builder) {
-      paid.delete(builder.id);
-      continue;
-    }
-    const blocked = units.some((u) => unpaid.has(u.id) && sameHex(u, structure));
-    const cost = costOf(config, structure.class as 'node' | 'mine');
-    const spent = blocked ? undefined : spendMatter(ledger, structure.owner, turn, `${structure.class} at ${formatHex(structure.hex)}`, cost);
-    if (spent) ledger = spent.ledger;
-    if (spent?.outcome.accepted) {
-      adjustments.push(
-        `${structure.id} was built without a progress report from its builder in builds, so the engine charged its cost, ${formatMatter(cost)}, now (ECON-03). Report every builder's progress.`,
-      );
-    } else {
-      adjustments.push(
-        `${structure.id} wasn't built: ${structure.owner} couldn't pay its cost, ${formatMatter(cost)}, in time (ECON-03). It has been removed, and its builder keeps its progress.`,
-      );
-      units = units.filter((u) => u.id !== structure.id);
-    }
+  for (const b of constructed.built) {
+    const builder = units.find((u) => u.id === b.builder);
+    const made = newStructure(b, builder, matter, playerNames.get(b.owner) ?? b.owner);
+    units = [...units, made.unit];
+    if (made.fromBuilder) notes.push(`${b.id}: no ${b.structure} had ever been in the game, so it took its sensor range from its builder, and strength 0 (ECON-03).`);
+    notes.push(`${b.builder} completed a ${b.structure} at ${b.site.name}: ${b.id} joined at ${formatHex(b.site.hex)} (ECON-03).`);
   }
+  const differences = constructionDifferences(input.builds, result, gmBuilt, constructed.built);
+  adjustments.push(
+    ...differences.map((d) => `${d.subject}: you reported ${d.gm}, but the engine worked out ${d.engine} (ECON-03). Its result stands, so use it in your own record.`),
+  );
+  for (const o of result.outcomes) {
+    if (o.kind !== 'progressed' && o.kind !== 'completed' && o.lost > 0) notes.push(`${o.builder} lost ${o.lost} Economy phase(s) of progress on its ${o.structure ?? 'build'}: ${outcomeText(o)} (ECON-03).`);
+  }
+  units = units.map((u) => (u.class === 'fleet' ? withBuildStatus(u, result, matter) : u));
 
   // Unit production last (TURN-03): a finished yard makes its unit, at the yard's hex, with no order and default doctrine (PROD-04).
   const messages: QueuedMessage[] = [];
@@ -341,11 +383,12 @@ export function settleMatterEconomy(matter: MatterState, input: EconomyInput): S
   messages.unshift(...matter.outbox.filter((m) => alive.has(m.fromUnit)));
 
   return {
-    matter: { ...matter, ledger: closeMatterTurn(ledger, turn), producing, seeded, paid, outbox: [] },
+    matter: { ...matter, ledger: closeMatterTurn(ledger, turn), producing, seeded, builders: result.states, outbox: [] },
     units,
     adjustments,
     notes,
     messages,
+    construction: { outcomes: result.outcomes, built: constructed.built.map(({ site: _site, ...b }) => b), differences },
   };
 }
 
@@ -376,4 +419,191 @@ export function formatMatter(amount: number): string {
 /** What a yard's status report says it is making (LIGHT-02), e.g. `Shipyard: idle`. */
 export function yardStatusOf(matter: MatterState, yardId: string): string {
   return yardStatus(matter.producing.get(slotKey(yardId, false)), matter.producing.get(slotKey(yardId, true)));
+}
+
+// ---- Construction (ECON-03) ----
+
+/** A structure the engine is adding, with its site. */
+interface Constructed extends BuiltStructure {
+  readonly site: Site;
+}
+
+/**
+ * Runs the construction lib for one Economy phase and names what it completes
+ * (ECON-03). `balances` are each player's matter once this turn's has been
+ * produced; `taken` is every unit ID ever used.
+ */
+function constructStructures(
+  matter: MatterState,
+  input: { builders: readonly Builder[]; structures: readonly StandingStructure[]; balances: Readonly<Record<string, number>>; taken: Iterable<string> },
+): { result: ConstructionResult; built: Constructed[] } {
+  const result = resolveConstruction({
+    previous: matter.builders,
+    builders: input.builders,
+    sites: matter.sites,
+    structures: input.structures,
+    params: { buildTurns: matter.buildTurns, nodeCost: matter.config.nodeCost, mineCost: matter.config.mineCost },
+    balances: input.balances,
+  });
+  const taken = new Set(input.taken);
+  const built = result.completed.map((c): Constructed => {
+    const id = structureId(c.owner, c.structure, c.site.name, taken);
+    taken.add(id);
+    return { id, builder: c.builder, owner: c.owner, structure: c.structure, hex: c.site.hex, site: c.site };
+  });
+  return { result, built };
+}
+
+/** The node or mine a completed build adds: no order, no speed, the scenario's usual stats (`structureTemplates`). */
+function newStructure(b: Constructed, builder: GameUnit | undefined, matter: MatterState, ownerName: string): { unit: GameUnit; fromBuilder: boolean } {
+  const stats = matter.templates.get(b.structure);
+  return {
+    unit: {
+      id: b.id,
+      name: `${ownerName} ${capitalise(b.structure)} ${b.site.name}`,
+      owner: b.owner,
+      class: b.structure,
+      hex: b.hex,
+      speed: 0,
+      sensorRange: stats?.sensorRange ?? builder?.sensorRange ?? 0,
+      strength: stats?.strength ?? 0,
+      status: `Built by ${builder?.name ?? b.builder} (ECON-03)`,
+    },
+    fromBuilder: stats === undefined,
+  };
+}
+
+/** Where the GM's report of construction and the structures it added differ from the engine's result. */
+function constructionDifferences(
+  builds: readonly BuildProgress[],
+  result: ConstructionResult,
+  gmBuilt: readonly GameUnit[],
+  built: readonly Constructed[],
+): ConstructionDifference[] {
+  const differences: ConstructionDifference[] = [];
+  const reported = new Map(builds.map((b) => [b.builder, b]));
+  const builders = new Set([...reported.keys(), ...result.outcomes.map((o) => o.builder)]);
+  for (const id of [...builders].sort()) {
+    const gm = reported.get(id);
+    const o = result.outcomes.find((x) => x.builder === id);
+    // The GM reports progress and resets; whatever else a builder did, it reports nothing for.
+    const ours = !o ? 'nothing' : o.kind === 'progressed' || o.kind === 'completed' ? 'progressed' : o.lost > 0 ? 'reset' : 'nothing';
+    const sameStructure = ours !== 'progressed' || !gm || !o?.structure || gm.structure === o.structure;
+    if ((gm?.progress ?? 'nothing') === ours && sameStructure) continue;
+    differences.push({ subject: id, gm: gm ? `${gm.progress} (${gm.structure})` : 'nothing', engine: o ? `${o.kind} (${o.reason})` : 'nothing' });
+  }
+  const same = (a: { owner: string; hex: GameUnit['hex'] }, ak: string, b: { owner: string; hex: GameUnit['hex'] }, bk: string) => a.owner === b.owner && ak === bk && hexEquals(a.hex, b.hex);
+  for (const g of gmBuilt) {
+    if (!built.some((b) => same(b, b.structure, g, g.class))) differences.push({ subject: g.id, gm: `added a ${g.class}`, engine: 'not completed' });
+  }
+  for (const b of built) {
+    if (!gmBuilt.some((g) => same(b, b.structure, g, g.class))) differences.push({ subject: b.id, gm: 'nothing', engine: `completed a ${b.structure}, built by ${b.builder}` });
+  }
+  return differences;
+}
+
+/**
+ * What a builder's phase came to, in words (ECON-03, FLAG-02), for its owner's
+ * status report and for the GM. The codes are the lib's; this is only text.
+ */
+export function outcomeText(o: BuildOutcome): string {
+  const text: Record<OutcomeReason, string> = {
+    'on-site': 'the phase counted',
+    built: 'the structure is complete',
+    'site-occupied': "the site already holds a structure, so the phase didn't count",
+    'in-combat': "it fought, so the phase didn't count",
+    spoofed: "it was spoofed, so the phase didn't count",
+    contested: "another player's builder is on the site, so the phase didn't count",
+    'not-a-site': 'its Build order names no zone or planet',
+    'not-a-fleet': "only fleets build, so the order does nothing",
+    'cannot-pay': "its owner can't pay, so the phase didn't count",
+    'off-site': 'it is off its site',
+    replaced: 'its Build order was replaced',
+    destroyed: 'it was destroyed',
+    'order-ended': 'it no longer has a Build order',
+  };
+  return `${text[o.reason]}${o.lost > 0 ? `, and its ${o.lost} Economy phase(s) of progress are lost` : ''}`;
+}
+
+/** What a builder's own status report says about its build (LIGHT-02), after whatever the GM wrote. */
+const BUILD_STATUS = /;?\s*Building: .*$/;
+function withBuildStatus(unit: GameUnit, result: ConstructionResult, matter: MatterState): GameUnit {
+  const gm = (unit.status ?? '').replace(BUILD_STATUS, '').trim();
+  const state = result.states.find((s) => s.builder === unit.id);
+  if (!state) return unit.status === undefined ? unit : { ...unit, status: gm };
+  const outcome = result.outcomes.find((o) => o.builder === unit.id);
+  const site = matter.sites.find((s) => hexEquals(s.hex, state.site))?.name ?? formatHex(state.site);
+  const note = outcome && outcome.kind !== 'progressed' ? `; this turn ${outcomeText(outcome)}` : '';
+  return { ...unit, status: `${gm ? `${gm}; ` : ''}Building: ${state.structure} at ${site}, ${state.phases} of ${matter.buildTurns} Economy phase(s) done${note}` };
+}
+
+/**
+ * The fleets with a `Build` order this turn, for the construction lib
+ * (ECON-03): from the Decision phase's plans, and from where Movement left each
+ * one, whether it was in a combat group, whether it was spoofed, and whether
+ * Combat destroyed it. A seized fleet counts as spoofed. `now` are the units
+ * standing after Combat and `removed` those that left the game; a unit in
+ * neither is taken to have stayed where it was.
+ */
+export function buildersOf(input: {
+  plans: readonly FleetPlan[];
+  before: readonly GameUnit[];
+  now: readonly GameUnit[];
+  removed: readonly GameUnit[];
+  movement?: MovementResult;
+}): Builder[] {
+  const { movement } = input;
+  const fought = new Set(movement?.phase.combats.flatMap((g) => g.members.map((m) => m.unit)));
+  const spoofed = new Set([...(movement?.phase.spoofed ?? []), ...(movement?.phase.seized.map((s) => s.unit) ?? [])]);
+  return input.plans.flatMap((plan): Builder[] => {
+    const unit = input.before.find((u) => u.id === plan.unit);
+    if (!plan.build || !unit) return [];
+    const standing = input.now.find((u) => u.id === unit.id);
+    const where = standing ?? input.removed.find((u) => u.id === unit.id) ?? unit;
+    return [
+      {
+        unit: unit.id,
+        owner: unit.owner,
+        class: unit.class,
+        site: plan.build.site,
+        hex: where.hex,
+        inCombat: fought.has(unit.id),
+        spoofed: spoofed.has(unit.id),
+        replaced: plan.build.replaced,
+        destroyed: !standing && input.removed.some((u) => u.id === unit.id),
+      },
+    ];
+  });
+}
+
+/** What construction would come to this turn, as far as is known before the GM resolves it: for the GM's prompt (ECON-03). */
+export interface ConstructionPreview {
+  readonly outcomes: readonly BuildOutcome[];
+  readonly built: readonly BuiltStructure[];
+  /** Each player's matter after this turn's output, which builders pay from. */
+  readonly balances: Readonly<Record<string, number>>;
+}
+
+/**
+ * Runs construction as it stands once Movement is done and the engine has
+ * resolved Combat, before the GM resolves the rest of the turn. Only what the
+ * engine knows counts: a unit the GM destroys in a combat the engine left to it
+ * is still standing here. `applyOutcome` works out the result that is applied.
+ * Without matter the engine doesn't do construction.
+ */
+export function previewConstruction(engine: EngineState, plans: readonly FleetPlan[], movement: MovementResult, combat?: CombatPhase): ConstructionPreview | undefined {
+  const { matter } = engine;
+  if (!matter) return undefined;
+  const destroyed = new Set(combat?.destroyed ?? []);
+  const now = movement.units.filter((u) => !destroyed.has(u.id));
+  const removed = movement.units.filter((u) => destroyed.has(u.id));
+  const balances = Object.fromEntries(Object.keys(matter.ledger.balances).map((p) => [p, balanceOf(matter.ledger, p) + matterIncome(now, p, matter.config)]));
+  const builders = buildersOf({ plans, before: engine.units, now, removed, movement });
+  const { result, built } = constructStructures(matter, {
+    builders,
+    structures: now.filter(isStructure).map((u) => ({ hex: u.hex, structure: u.class })),
+    balances,
+    taken: [...engine.roster.keys(), ...engine.units.map((u) => u.id)],
+  });
+  return { outcomes: result.outcomes, built: built.map(({ site: _site, ...b }) => b), balances };
 }

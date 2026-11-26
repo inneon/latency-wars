@@ -6,7 +6,9 @@
  */
 import {
   applyOutcome,
+  type CombatPhase,
   type EngineState,
+  type FleetPlan,
   type GameSetup,
   type GameUnit,
   type MovementResult,
@@ -28,8 +30,16 @@ export * from '@latency-wars/engine';
 export * from '@latency-wars/playtest-briefing';
 export { decisionProblems, unaccountedUnits } from './gm-adapter';
 
-export function applyResolution(engine: EngineState, resolution: GmResolution, players: readonly string[], turn: number, movement?: MovementResult) {
-  const applied = applyOutcome(engine, toOutcome(resolution), players, turn, movement);
+export function applyResolution(
+  engine: EngineState,
+  resolution: GmResolution,
+  players: readonly string[],
+  turn: number,
+  movement?: MovementResult,
+  combat?: CombatPhase,
+  plans?: readonly FleetPlan[],
+) {
+  const applied = applyOutcome(engine, toOutcome(resolution), players, turn, movement, combat, plans);
   return { ...applied, overrides: applied.overrides.map(toGmOverride) };
 }
 

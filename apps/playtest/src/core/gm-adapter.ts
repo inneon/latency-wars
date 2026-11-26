@@ -55,7 +55,15 @@ function intent(d: FleetDecision): MoveIntent {
 
 /** The engine's view of the GM's Decision phase: each fleet's plan for the turn (AUTO-03). */
 export function toPlans(gm: GmDecisions): FleetPlan[] {
-  return gm.decisions.map((d) => ({ unit: d.unit, intent: intent(d), order: activeOrder(d), stance: d.stance, evading: d.evading, unwilling: d.unwilling }));
+  return gm.decisions.map((d) => ({
+    unit: d.unit,
+    intent: intent(d),
+    order: activeOrder(d),
+    stance: d.stance,
+    evading: d.evading,
+    unwilling: d.unwilling,
+    ...(d.order === 'build' && d.order_hex ? { build: { site: d.order_hex, replaced: d.build_replaced ?? false } } : {}),
+  }));
 }
 
 /**
@@ -93,6 +101,7 @@ export function decisionProblems(units: readonly GameUnit[], gm: GmDecisions): s
     if (d.move_unit && !ids.has(d.move_unit) && (d.move === 'pursue' || d.move === 'escort')) problems.push(`${d.unit}: move_unit ${d.move_unit} isn't in play.`);
     if ((d.order === 'attack' || d.order === 'escort') && !d.order_target) problems.push(`${d.unit}: an ${d.order} order needs order_target.`);
     if (d.order === 'defend' && !d.order_hex) problems.push(`${d.unit}: a defend order needs order_hex.`);
+    if (d.order === 'build' && !d.order_hex) problems.push(`${d.unit}: a build order needs order_hex, the site's hex.`);
   }
   const missing = units.filter((u) => moves(u) && !seen.has(u.id)).map((u) => u.id);
   if (missing.length) problems.push(`These fleets and flagships have no decision: ${missing.join(', ')}. Give one for every fleet and flagship in play, including those that hold.`);

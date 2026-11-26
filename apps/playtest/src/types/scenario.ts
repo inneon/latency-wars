@@ -91,7 +91,7 @@ export type MatterParameters = z.infer<typeof MatterParameters>;
 const MapFile = z.object({
   radius: z.number().int().positive(),
   impassable: z.array(z.tuple([z.number().int(), z.number().int()])).default([]),
-  /** Named hexes for whoever draws the map: orbital zones and planets. The engine doesn't read them. */
+  /** Named hexes: orbital zones and planets. They are the sites where a fleet can build (ECON-03, MAT-02), and whoever draws the map marks them. */
   features: z
     .array(z.object({ name: z.string(), kind: z.enum(['zone', 'planet']), hex: z.tuple([z.number().int(), z.number().int()]) }))
     .default([]),
@@ -110,6 +110,8 @@ export const ScenarioFile = z.object({
   parameters: z.object({
     c: z.number().positive(),
     trackDecay: z.number().int().positive().optional(),
+    /** `BUILD_TURNS` (ECON-03). */
+    buildTurns: z.number().int().positive(),
     /** `ENGAGE_RANGE` (MOVE-03). */
     engageRange: z.number().int().nonnegative().default(1),
     hijack: HijackParameters,
@@ -173,6 +175,7 @@ export interface Scenario {
   parameters: {
     c: number;
     trackDecay?: number;
+    buildTurns: number;
     engageRange?: number;
     hijack: HijackParameters;
     qbits: QbitParameters;

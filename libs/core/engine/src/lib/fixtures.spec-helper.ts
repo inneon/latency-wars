@@ -22,9 +22,10 @@ export const setup: GameSetup = {
     unit('blue-line', 'blue', 'fleet', 0, -3, 1),
     unit('red-flagship', 'red', 'flagship', 3, 0, 1),
   ],
-  map: { radius: 4, impassable: [{ q: 0, r: 0 }] },
+  map: { radius: 4, impassable: [{ q: 0, r: 0 }], features: [] },
   parameters: {
     c: 1,
+    buildTurns: 2,
     hijack: { spoofCost: 2, maxTrackAge: 2 },
     qbits: { start: 10, divisor: 1, decay: 0, orderCost: 1, scanCost: 1, linkBonuses: [], flatIncome: {} },
   },

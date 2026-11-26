@@ -2,11 +2,11 @@ import { formatHex, type Hex } from '@latency-wars/domain';
 import { settleEconomy } from '@latency-wars/economy';
 import { furthestToward, illegalMove } from '@latency-wars/movement';
 import { recordBroadcast, recordTurnEnd } from '@latency-wars/visibility';
-import { judgeProduceOrders, settleMatterEconomy } from './matter';
+import { buildersOf, judgeProduceOrders, settleMatterEconomy } from './matter';
 import { type MovementResult, yardsThatFought } from './movement-phase';
 import { deliveries, NO_ANSWER, RECEIPT } from './orders';
 import type { EngineState, QueuedMessage, WebNews } from './state';
-import type { CombatPhase, GameSetup, GameUnit, Override, ReportedUnit, TurnOutcome } from './types';
+import type { CombatPhase, ConstructionPhase, FleetPlan, GameSetup, GameUnit, Override, ReportedUnit, TurnOutcome } from './types';
 
 /*
  * The engine has the last word on what it models. It never sends a turn back
@@ -25,6 +25,8 @@ export interface Applied {
   readonly overrides: Override[];
   /** What the engine did with shipyards and construction this turn that isn't a correction. */
   readonly notes: string[];
+  /** What construction came to this turn, and where the GM's report differed (ECON-03). Absent in a game without matter. */
+  readonly construction?: ConstructionPhase;
 }
 
 /**
@@ -42,6 +44,10 @@ export interface Applied {
  * unit in a resolved combat ends at the strength it left, and is destroyed if
  * it left it at 0, whatever the outcome reports, unless an override names it.
  * Without it, strengths are the outcome's.
+ *
+ * `plans` are the Decision phase's fleet plans. A fleet with a `build` in one
+ * is a builder (ECON-03): the engine works out from them, Movement and Combat
+ * what each builder's turn came to. Without them nothing is built.
  */
 export function applyOutcome(
   engine: EngineState,
@@ -50,6 +56,7 @@ export function applyOutcome(
   turn: number,
   movement?: MovementResult,
   combat?: CombatPhase,
+  plans: readonly FleetPlan[] = [],
 ): Applied {
   const adjustments: string[] = [];
   const overrides: Override[] = [];
@@ -223,6 +230,7 @@ export function applyOutcome(
         turn,
         before: previous,
         units,
+        builders: buildersOf({ plans, before: previous, now: units, removed, ...(movement ? { movement } : {}) }),
         builds: outcome.builds,
         yardsInCombat: movement ? yardsThatFought(movement.units, movement.phase) : [],
         roster: engine.roster,
@@ -260,6 +268,7 @@ export function applyOutcome(
     adjustments,
     overrides,
     notes: settled?.notes ?? [],
+    ...(settled ? { construction: settled.construction } : {}),
   };
 }
 

@@ -20,6 +20,7 @@
   "parameters": {
     "c": 3,
     "trackDecay": 8,
+    "buildTurns": 2,
     "hijack": {
       "spoofCost": 3,
       "maxTrackAge": 1

@@ -115,6 +115,8 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: engine settled the matter ledger`;
     case 'production':
       return `Turn ${e.turn}: engine handled ${e.notes.length} production and construction event(s)`;
+    case 'construction':
+      return `Turn ${e.turn}: engine worked out ${e.phase.outcomes.length} build outcome(s), ${e.phase.built.length} completed, ${e.phase.differences.length} difference(s) from the GM (ECON-03)`;
     case 'seeded':
       return `Turn ${e.turn}: ${e.player}'s ${e.reports.length} seeded unit(s) reported (QBIT-11)`;
     case 'capture':

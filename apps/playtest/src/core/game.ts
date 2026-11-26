@@ -11,6 +11,7 @@ import {
   chargeCascade,
   commandEffects,
   deliverReportedLosses,
+  type FleetPlan,
   type EngineState,
   type HijackQuote,
   type IntelPurchase,
@@ -20,6 +21,7 @@ import {
   outbox,
   type OversightQuote,
   payForEmission,
+  previewConstruction,
   queueSpoofReceipts,
   quoteCascade,
   quoteHijack,
@@ -42,6 +44,7 @@ import {
   renderMatterForGm,
   renderMessages,
   renderCombatForGm,
+  renderConstructionForGm,
   renderMovementForGm,
   renderOrdersForGm,
   renderOutbox,
@@ -94,10 +97,14 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   // back, and the GM hears about any corrections at the start of its next
   // resolution.
   let engine = startEngine(scenario);
-  const apply = (resolution: GmResolution, turn: number, movement?: MovementResult, combat?: CombatPhase): Applied => {
-    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, movement, combat);
+  const apply = (resolution: GmResolution, turn: number, movement?: MovementResult, combat?: CombatPhase, plans?: FleetPlan[]): Applied => {
+    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, movement, combat, plans);
     if (applied.adjustments.length || applied.overrides.length) {
       record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides.map(toGmOverride) });
+    }
+    const construction = applied.construction;
+    if (construction && (construction.outcomes.length || construction.built.length || construction.differences.length)) {
+      record({ type: 'construction', turn, phase: construction });
     }
     record({ type: 'state', turn, units: [...applied.engine.units], removed: [...applied.removed] });
     const statements = applied.engine.ledger.statements.filter((s) => s.turn === turn);
@@ -263,23 +270,25 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
 
     // Movement (TURN-03): the engine moves every unit and works out who fights (MOVE-01 to MOVE-04, COMBAT-02).
     const effects = commandEffects(hijacks);
-    const movement = runMovementPhase(engine.map, engine.units, toPlans(decided), scenario.parameters.engageRange ?? 1, effects);
+    const plans = toPlans(decided);
+    const movement = runMovementPhase(engine.map, engine.units, plans, scenario.parameters.engageRange ?? 1, effects);
     record({ type: 'movement', turn, phase: movement.phase });
 
     // Combat (TURN-03): with the scenario's damage, the engine resolves each combat Movement formed (COMBAT-01 to COMBAT-03).
     const damage = scenario.parameters.damage;
-    const combat = damage ? runCombatPhase(movement.units, movement.phase, toPlans(decided), effects, damage) : undefined;
+    const combat = damage ? runCombatPhase(movement.units, movement.phase, plans, effects, damage) : undefined;
     if (combat) record({ type: 'combat', turn, phase: combat });
 
     // The rest of the turn (TURN-03): the GM resolves it from where Movement left everyone and what Combat did.
     const label = `turn ${turn} resolve`;
-    const prompt = prompts.gmResolvePrompt(turn, renderMovementForGm(movement, engine.units), turn === maxRounds, combat && renderCombatForGm(combat));
+    const construction = engine.matter && renderConstructionForGm(previewConstruction(engine, plans, movement, combat), engine.matter);
+    const prompt = prompts.gmResolvePrompt(turn, renderMovementForGm(movement, engine.units), turn === maxRounds, combat && renderCombatForGm(combat), construction);
     // A resolution that leaves units out goes back to the GM: the engine can't tell what happened to them.
     const before = engine;
     latest = await askFor(gm, label, prompt, GmResolution, { ...corrections('gm', label), check: (r) => unaccountedUnits(before, r) });
     lastTurn = turn;
     record({ type: 'gm_resolution', turn, resolution: latest });
-    applied = apply(latest, turn, movement, combat);
+    applied = apply(latest, turn, movement, combat, plans);
     engine = applied.engine;
     const productionNotes = [...judged.notes, ...applied.notes];
     if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });

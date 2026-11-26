@@ -1,6 +1,6 @@
 # engine
 
-The game state and the turn's bookkeeping, built on the rules libs (`@latency-wars/visibility`, `economy`, `movement`, `engagement`, `combat`). It holds every unit, the visibility log, the orders and messages in flight, and both ledgers. It holds no rules of its own: each function calls a rules lib for the rule and keeps the state that results. No I/O, no prompts, no rendered text.
+The game state and the turn's bookkeeping, built on the rules libs (`@latency-wars/visibility`, `economy`, `movement`, `engagement`, `combat`, `construction`). It holds every unit, the visibility log, the orders and messages in flight, and both ledgers. It holds no rules of its own: each function calls a rules lib for the rule and keeps the state that results. No I/O, no prompts, no rendered text.
 
 It takes engine-shaped inputs (`SubmittedOrder`, `Purchase`, `FleetPlan`, `TurnOutcome`). Whoever drives it converts its own answers into these: in the playtest, that is `apps/playtest/src/core/gm-adapter.ts`. Tagged `scope:shared`, so lint fails if it imports a playtest lib.
 
@@ -24,7 +24,8 @@ Import with `@latency-wars/engine`.
 | `runMovementPhase`, `commandEffects` | MOVE-01 to MOVE-04, COMBAT-02, QBIT-10 | The Movement phase, from each fleet's plan |
 | `runCombatPhase`, `damageDealt` | COMBAT-01 to COMBAT-03, QBIT-10 | The Combat phase, from the Movement phase's groups and the scenario's damage (`Parameters.damage`) |
 | `yardsThatFought(units, movementPhase)` | PROD-04, COMBAT-02 | The shipyards that fought: every mine in a combat group Movement formed, resolved or not |
-| `applyOutcome(engine, outcome, players, turn, movement?, combat?)` | MOVE-01, TURN-03, COMBAT-03, ECON-01, MAT-01, ECON-03, PROD-04, FB-02, ORD-09 | Applies the end of a turn: corrects what breaks a hard rule, holds combat's units to the Combat phase, settles the Economy phase (no production for a yard that fought, from `movement`), queues messages |
+| `applyOutcome(engine, outcome, players, turn, movement?, combat?, plans?)` | MOVE-01, TURN-03, COMBAT-03, ECON-01, MAT-01, ECON-03, PROD-04, FB-02, ORD-09 | Applies the end of a turn: corrects what breaks a hard rule, holds combat's units to the Combat phase, settles the Economy phase (no production for a yard that fought, from `movement`; construction worked out from the `plans`' `Build` orders, Movement and Combat, in a game with matter), queues messages |
+| `buildersOf`, `previewConstruction` | ECON-03, FLAG-02 | The fleets with a `Build` order this turn, from the plans, Movement and Combat; and what construction would come to before the GM resolves the rest of the turn |
 | `ranking` | — | Where each player stands when the game stops |
 
 ## What still comes from outside

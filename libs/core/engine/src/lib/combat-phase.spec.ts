@@ -32,9 +32,10 @@ const setup: GameSetup = {
     unit('red-probe', 'red', 'fleet', 3, -3, 0),
     unit('blue-raider', 'blue', 'fleet', 5, -3, 6, 2),
   ],
-  map: { radius: 6, impassable: [{ q: 0, r: 0 }] },
+  map: { radius: 6, impassable: [{ q: 0, r: 0 }], features: [] },
   parameters: {
     c: 3,
+    buildTurns: 2,
     hijack: { spoofCost: 2, maxTrackAge: 2 },
     qbits: { start: 10, divisor: 1, decay: 0, orderCost: 1, scanCost: 1, linkBonuses: [], flatIncome: {} },
     damage,

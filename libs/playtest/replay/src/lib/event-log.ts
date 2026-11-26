@@ -245,6 +245,42 @@ export const CombatPhase: z.ZodType<Engine.CombatPhase> = z.object({
 });
 export type CombatPhase = Engine.CombatPhase;
 
+/** What a builder's turn came to in the Economy phase (ECON-03): the construction lib's outcome, with a reason code. */
+export const BuildOutcome: z.ZodType<Engine.ConstructionPhase['outcomes'][number]> = z.object({
+  builder: z.string(),
+  owner: z.string(),
+  structure: z.enum(['node', 'mine']).optional(),
+  site: Hex,
+  kind: z.enum(['progressed', 'held', 'reset', 'unpaid', 'completed']),
+  reason: z.enum([
+    'on-site',
+    'built',
+    'site-occupied',
+    'in-combat',
+    'spoofed',
+    'contested',
+    'not-a-site',
+    'not-a-fleet',
+    'cannot-pay',
+    'off-site',
+    'replaced',
+    'destroyed',
+    'order-ended',
+  ]),
+  /** Phases counted once this phase is done. */
+  phases: z.number(),
+  /** Phases of earlier progress this phase lost. */
+  lost: z.number(),
+});
+
+/** Construction in one turn's Economy phase (ECON-03): what the engine worked out, which is what was applied, and where the GM's report differed. */
+export const ConstructionPhase: z.ZodType<Engine.ConstructionPhase> = z.object({
+  outcomes: z.array(BuildOutcome),
+  built: z.array(z.object({ id: z.string(), builder: z.string(), owner: z.string(), structure: z.enum(['node', 'mine']), hex: Hex })),
+  differences: z.array(z.object({ subject: z.string(), gm: z.string(), engine: z.string() })),
+});
+export type ConstructionPhase = Engine.ConstructionPhase;
+
 /** Everything that happens in a play-test, in order. The outputs are all derived from these. */
 export const PlaytestEvent = z.discriminatedUnion('type', [
   /** Always first: which game this is, and the format the rest of the log is written in. */
@@ -291,6 +327,12 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
    * rejected, each unit a yard finished, each production a destroyed yard lost. True state: for the designer and the GM, never players.
    */
   z.object({ type: z.literal('production'), turn, notes: z.array(z.string()) }),
+  /**
+   * Construction in a turn's Economy phase (ECON-03): each builder's outcome as the engine worked it out, the structures it
+   * added, and every difference from what the GM reported. Not written in a turn with no builders and nothing to compare.
+   * Logs from before this event have none. True state: never shown to players.
+   */
+  z.object({ type: z.literal('construction'), turn, phase: ConstructionPhase }),
   /**
    * What the player's seeded units did at the start of a turn's Planning phase (QBIT-11): each scan used, the qBits
    * left, and the units that have gone quiet. The player is shown this.

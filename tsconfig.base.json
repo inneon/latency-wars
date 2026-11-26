@@ -33,6 +33,9 @@
       "@latency-wars/combat": [
         "./libs/core/combat/src/index.ts"
       ],
+      "@latency-wars/construction": [
+        "./libs/core/construction/src/index.ts"
+      ],
       "@latency-wars/engagement": [
         "./libs/core/engagement/src/index.ts"
       ],

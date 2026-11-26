@@ -1,3 +1,4 @@
+import type { Builder } from '@latency-wars/construction';
 import { balanceOf, matterStatementFor, openLedger } from '@latency-wars/economy';
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
@@ -33,12 +34,26 @@ const unit = (id: string, owner: string, hex: { q: number; r: number }, cls: Pla
   strength,
 });
 
+/** A fleet with a Build order for `site`, on it at the end of Movement and untroubled, unless the test says otherwise. */
+const builder = (unitId: string, site: { q: number; r: number }, over: Partial<Builder> = {}): Builder => ({
+  unit: unitId,
+  owner: 'blue',
+  class: 'fleet',
+  site,
+  hex: site,
+  inCombat: false,
+  spoofed: false,
+  replaced: false,
+  destroyed: false,
+  ...over,
+});
+
 /** Settles one Economy phase from the scenario's starting units, changed as the test says. */
 function settle(
   matter: MatterState,
-  { turn = 1, units = scenario.units, builds = [], yardsInCombat = [] }: Partial<Parameters<typeof settleMatterEconomy>[1]> = {},
+  { turn = 1, units = scenario.units, builders = [], builds = [], yardsInCombat = [] }: Partial<Parameters<typeof settleMatterEconomy>[1]> = {},
 ) {
-  return settleMatterEconomy(matter, { turn, before: scenario.units, units, builds, yardsInCombat, roster: new Map(scenario.units.map((u) => [u.id, u])) });
+  return settleMatterEconomy(matter, { turn, before: scenario.units, units, builders, builds, yardsInCombat, roster: new Map(scenario.units.map((u) => [u.id, u])) });
 }
 const blue = (matter: MatterState) => balanceOf(matter.ledger, 'blue');
 /** Each player starts with 8 qBits, as in Ycnetal. */
@@ -166,66 +181,84 @@ describe('the Economy phase (MAT-01, ECON-03, PROD-04)', () => {
     expect(matterStatementFor(matter.ledger, 'blue', 1)).toMatchObject({ production: 0 });
   });
 
-  describe('building', () => {
+  describe('building (ECON-03)', () => {
     const atLangis = () => scenario.units.map((u) => (u.id === 'blue-line' ? { ...u, hex: LANGIS } : u));
+    const mine = () => builder('blue-line', LANGIS);
     const progressed = [{ builder: 'blue-line', structure: 'mine' as const, progress: 'progressed' as const }];
 
     it('charges a build on its first progress, after the turn\'s matter is added, and not again', () => {
-      const first = settle(start, { units: atLangis(), builds: progressed });
+      const first = settle(start, { units: atLangis(), builders: [mine()], builds: progressed });
       expect(blue(first.matter)).toBe(8 + 3 - 8);
       expect(matterStatementFor(first.matter.ledger, 'blue', 1)?.spends).toMatchObject([{ label: 'mine at (-3, 3)', cost: 8 }]);
-      const second = settle(first.matter, { turn: 2, units: atLangis(), builds: progressed });
+      expect(first.construction.outcomes).toMatchObject([{ builder: 'blue-line', kind: 'progressed', phases: 1 }]);
+      const second = settle(first.matter, { turn: 2, units: atLangis(), builders: [mine()], builds: progressed });
       expect(blue(second.matter)).toBe(8 + 3 - 8 + 3);
     });
 
     it('charges again for a build whose progress was reset', () => {
-      const first = settle(start, { units: atLangis(), builds: progressed });
-      const reset = settle(first.matter, { turn: 2, units: atLangis(), builds: [{ ...progressed[0], progress: 'reset' } as never] });
-      const again = settle(reset.matter, { turn: 3, units: atLangis(), builds: progressed });
+      const first = settle(start, { units: atLangis(), builders: [mine()], builds: progressed });
+      const away = scenario.units;
+      const reset = settle(first.matter, {
+        turn: 2,
+        units: away,
+        builders: [builder('blue-line', LANGIS, { hex: { q: 6, r: 0 } })],
+        builds: [{ builder: 'blue-line', structure: 'mine', progress: 'reset' }],
+      });
+      expect(reset.construction.outcomes).toMatchObject([{ kind: 'reset', reason: 'off-site', lost: 1 }]);
+      expect(reset.notes.join('\n')).toContain('lost 1 Economy phase(s)');
+      const again = settle(reset.matter, { turn: 3, units: atLangis(), builders: [mine()], builds: progressed });
       expect(matterStatementFor(again.matter.ledger, 'blue', 3)?.spends).toHaveLength(1);
     });
 
-    it('takes no progress from a builder whose owner cannot pay, and tells the GM', () => {
-      const units = scenario.units.map((u) => (u.id === 'blue-raider' ? { ...u, hex: { q: -2, r: 2 } } : u));
-      // 8 + 3 matter, a mine costs 8, so the node's 4 is out of reach.
+    it('takes no progress from a builder whose owner cannot pay, and tells the GM that differs from its report', () => {
+      const units = scenario.units.map((u) => (u.id === 'blue-raider' ? { ...u, hex: { q: -2, r: 2 } } : u.id === 'blue-line' ? { ...u, hex: LANGIS } : u));
+      // 8 + 3 matter, the first builder's mine costs 8, so the second's node (4) is out of reach.
       const both = settle(start, {
-        units: units.map((u) => (u.id === 'blue-line' ? { ...u, hex: LANGIS } : u)),
-        builds: [...progressed, { builder: 'blue-raider', structure: 'node', progress: 'progressed' }],
-      });
-      expect(both.adjustments).toHaveLength(1);
-      expect(both.adjustments[0]).toContain('blue-raider made no progress on its node');
-      expect(matterStatementFor(both.matter.ledger, 'blue', 1)?.refusals).toHaveLength(1);
-      expect(both.matter.paid.has('blue-raider')).toBe(false);
-    });
-
-    it('does not build a structure the GM completed with no matter to pay for it', () => {
-      const units = [
-        ...scenario.units.map((u) => (u.id === 'blue-raider' ? { ...u, hex: { q: -2, r: 2 } } : u.id === 'blue-line' ? { ...u, hex: LANGIS } : u)),
-        unit('blue-node-langis-l1', 'blue', { q: -2, r: 2 }, 'node'),
-      ];
-      const { units: after, adjustments } = settle(start, {
         units,
+        builders: [mine(), builder('blue-raider', { q: -2, r: 2 })],
         builds: [...progressed, { builder: 'blue-raider', structure: 'node', progress: 'progressed' }],
       });
-      expect(after.some((u) => u.id === 'blue-node-langis-l1')).toBe(false);
-      expect(adjustments.join('\n')).toContain("blue-node-langis-l1 wasn't built");
+      expect(both.construction.outcomes).toMatchObject([
+        { builder: 'blue-line', kind: 'progressed' },
+        { builder: 'blue-raider', kind: 'unpaid', reason: 'cannot-pay', phases: 0 },
+      ]);
+      expect(both.matter.builders.some((b) => b.builder === 'blue-raider' && b.phases > 0)).toBe(false);
+      expect(both.construction.differences).toEqual([{ subject: 'blue-raider', gm: 'progressed (node)', engine: 'unpaid (cannot-pay)' }]);
+      expect(both.adjustments).toHaveLength(1);
+      expect(both.adjustments[0]).toContain('blue-raider');
     });
 
-    it('lets a paid build complete without charging twice', () => {
-      const first = settle(start, { units: atLangis(), builds: progressed });
+    it('adds the structure itself when the phases are done, and sets aside one the GM added without the engine completing it', () => {
+      const stray = unit('blue-node-langis-l1', 'blue', { q: -2, r: 2 }, 'node');
+      const { units: after, construction, adjustments } = settle(start, { units: [...atLangis(), stray], builders: [mine()], builds: progressed });
+      expect(after.some((u) => u.id === 'blue-node-langis-l1')).toBe(false);
+      expect(construction.differences).toEqual([{ subject: 'blue-node-langis-l1', gm: 'added a node', engine: 'not completed' }]);
+      expect(adjustments.join('\n')).toContain('blue-node-langis-l1');
+    });
+
+    it('completes a paid build after BUILD_TURNS phases without charging twice, and the GM agreeing is no difference', () => {
+      const first = settle(start, { units: atLangis(), builders: [mine()], builds: progressed });
       const done = [...atLangis(), unit('blue-mine-langis', 'blue', LANGIS, 'mine', 3)];
-      const second = settle(first.matter, { turn: 2, units: done, builds: progressed });
+      const second = settle(first.matter, { turn: 2, units: done, builders: [mine()], builds: progressed });
       expect(second.adjustments).toEqual([]);
-      expect(second.units.some((u) => u.id === 'blue-mine-langis')).toBe(true);
-      expect(second.matter.paid.has('blue-line')).toBe(false);
-      // The new mine produces from the next Economy phase, not this one (ECON-03).
+      expect(second.construction.differences).toEqual([]);
+      expect(second.construction.built).toMatchObject([{ id: 'blue-mine-langis', builder: 'blue-line', owner: 'blue', structure: 'mine', hex: LANGIS }]);
+      expect(second.units.find((u) => u.id === 'blue-mine-langis')).toMatchObject({ owner: 'blue', class: 'mine', hex: LANGIS, speed: 0 });
+      expect(second.matter.builders).toEqual([]);
+      // The new mine produces from the next Economy phase, not this one (MAT-01).
       expect(blue(second.matter)).toBe(8 + 3 - 8 + 3);
     });
 
-    it('charges a structure added with no builder entry at once, and says so', () => {
-      const { matter, adjustments } = settle(start, { units: [...scenario.units, unit('blue-node-new', 'blue', { q: -2, r: 2 }, 'node')] });
-      expect(blue(matter)).toBe(8 + 3 - 4);
-      expect(adjustments[0]).toContain('without a progress report');
+    it('adds the structure when the GM reports nothing, and shows the difference', () => {
+      const first = settle(start, { units: atLangis(), builders: [mine()] });
+      const second = settle(first.matter, { turn: 2, units: atLangis(), builders: [mine()] });
+      expect(second.units.some((u) => u.id === 'blue-mine-langis')).toBe(true);
+      expect(second.construction.differences.map((d) => d.subject).sort()).toEqual(['blue-line', 'blue-mine-langis']);
+    });
+
+    it('puts a builder\'s progress in its status report (LIGHT-02)', () => {
+      const { units } = settle(start, { units: atLangis(), builders: [mine()], builds: progressed });
+      expect(units.find((u) => u.id === 'blue-line')?.status).toContain('Building: mine at Langis, 1 of 2 Economy phase(s) done');
     });
   });
 
@@ -242,6 +275,7 @@ describe('the Economy phase (MAT-01, ECON-03, PROD-04)', () => {
         turn: 2,
         before: first.units,
         units: first.units,
+        builders: [],
         builds: [],
         yardsInCombat: [],
         roster: new Map(scenario.units.map((u) => [u.id, u])),
@@ -286,6 +320,7 @@ describe('the Economy phase (MAT-01, ECON-03, PROD-04)', () => {
         turn: 2,
         before: first.units,
         units: first.units,
+        builders: [],
         builds: [],
         yardsInCombat: [],
         roster: new Map(),
