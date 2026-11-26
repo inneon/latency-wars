@@ -4,6 +4,7 @@ import type { PlaytestUnit, Scenario } from '../types/scenario';
 import {
   type Applied,
   type CombatPhase,
+  type MovementResult,
   applyOutcome,
   cascadeNewsFor,
   cascadeWinners,
@@ -93,8 +94,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   // back, and the GM hears about any corrections at the start of its next
   // resolution.
   let engine = startEngine(scenario);
-  const apply = (resolution: GmResolution, turn: number, afterMovement?: readonly PlaytestUnit[], combat?: CombatPhase): Applied => {
-    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, afterMovement, combat);
+  const apply = (resolution: GmResolution, turn: number, movement?: MovementResult, combat?: CombatPhase): Applied => {
+    const applied = applyOutcome(engine, toOutcome(resolution), players, turn, movement, combat);
     if (applied.adjustments.length || applied.overrides.length) {
       record({ type: 'engine', turn, adjustments: applied.adjustments, overrides: applied.overrides.map(toGmOverride) });
     }
@@ -278,7 +279,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
     latest = await askFor(gm, label, prompt, GmResolution, { ...corrections('gm', label), check: (r) => unaccountedUnits(before, r) });
     lastTurn = turn;
     record({ type: 'gm_resolution', turn, resolution: latest });
-    applied = apply(latest, turn, movement.units, combat);
+    applied = apply(latest, turn, movement, combat);
     engine = applied.engine;
     const productionNotes = [...judged.notes, ...applied.notes];
     if (productionNotes.length) record({ type: 'production', turn, notes: productionNotes });

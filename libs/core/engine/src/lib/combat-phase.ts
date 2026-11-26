@@ -1,5 +1,5 @@
 import { type Combatant, resolveCombat } from '@latency-wars/combat';
-import type { CommandEffects } from './movement-phase';
+import { type CommandEffects, yardsThatFought } from './movement-phase';
 import type { CombatOutcome, CombatPhase, DamageParameters, FleetPlan, GameUnit, MovementPhase } from './types';
 
 /*
@@ -66,10 +66,9 @@ export function runCombatPhase(
       : { group: index, members, hits: [], lost: {}, unresolved: result.reason };
   });
 
-  const members = movement.combats.flatMap((g) => g.members.map((m) => m.unit));
   return {
     combats,
     destroyed: combats.flatMap((c) => (c.unresolved ? [] : c.members.filter((m) => m.end === 0).map((m) => m.unit))),
-    yardsInCombat: members.filter((id) => byId.get(id)?.class === 'mine'),
+    yardsInCombat: yardsThatFought(units, movement),
   };
 }

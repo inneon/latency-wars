@@ -109,7 +109,7 @@ describe('applying Combat (COMBAT-03)', () => {
   it('holds each combat’s units to the strengths it left, and removes the ones it destroyed, whatever the outcome says', () => {
     const { engine, movement, combat } = turnOne();
     // The outcome reports nobody hurt: the engine corrects it.
-    const applied = applyOutcome(engine, holdOutcome(movement.units), players, 1, movement.units, combat);
+    const applied = applyOutcome(engine, holdOutcome(movement.units), players, 1, movement, combat);
     expect(applied.engine.units.find((u) => u.id === 'red-flagship')?.strength).toBe(2);
     expect(applied.removed.map((u) => u.id)).toContain('red-escort');
     expect(applied.adjustments).toEqual(
@@ -125,15 +125,55 @@ describe('applying Combat (COMBAT-03)', () => {
     const outcome = holdOutcome(movement.units);
     const flagship = outcome.units.find((u) => u.id === 'red-flagship');
     const reported = { ...outcome, units: outcome.units.filter((u) => u.id !== 'red-flagship'), removed: flagship ? [{ ...flagship, strength: 0 }] : [] };
-    const applied = applyOutcome(engine, reported, players, 1, movement.units, combat);
+    const applied = applyOutcome(engine, reported, players, 1, movement, combat);
     expect(applied.engine.units.find((u) => u.id === 'red-flagship')?.strength).toBe(2);
   });
 
   it('accepts what the outcome says for a unit with a declared override', () => {
     const { engine, movement, combat } = turnOne();
     const override = { unitId: 'red-escort', reason: 'a ruling', ruleIds: ['COMBAT-03'] };
-    const applied = applyOutcome(engine, { ...holdOutcome(movement.units), overrides: [override] }, players, 1, movement.units, combat);
+    const applied = applyOutcome(engine, { ...holdOutcome(movement.units), overrides: [override] }, players, 1, movement, combat);
     expect(applied.engine.units.find((u) => u.id === 'red-escort')?.strength).toBe(2);
     expect(applied.overrides).toEqual([override]);
+  });
+});
+
+describe('which shipyards fought (PROD-04)', () => {
+  // The same fight, in a game with matter, and Red's yard three turns into a raider.
+  const matter = { start: 20, mineOutput: 3, nodeCost: 4, mineCost: 8, units: [{ class: 'raider', strength: 2, speed: 2, sensorRange: 2, cost: 6, turns: 3 }] };
+  const withMatter: GameSetup = { ...setup, parameters: { ...setup.parameters, matter } };
+
+  /** Turn 1 played through, with the raider Balanced (the yard a bystander) or Aggressive (the yard in the fight). */
+  function play(stance: 'balanced' | 'aggressive', damage?: typeof setup.parameters.damage) {
+    const started = startEngine(withMatter);
+    const yardBusy = started.matter && { ...started.matter, producing: new Map([['red-mine', { unitClass: 'raider', turnsLeft: 3 }]]) };
+    const engine = { ...started, matter: yardBusy };
+    const turnPlans = plans.map((p) => (p.unit === 'blue-raider' ? { ...p, stance } : p));
+    const movement = runMovementPhase(withMatter.map, engine.units, turnPlans, 1);
+    const combat = damage ? runCombatPhase(movement.units, movement.phase, turnPlans, noEffects, damage) : undefined;
+    return applyOutcome(engine, holdOutcome(movement.units), players, 1, movement, combat);
+  }
+  const turnsLeft = (applied: ReturnType<typeof play>) => applied.engine.matter?.producing.get('red-mine')?.turnsLeft;
+
+  it('a mine in one of Movement’s combat groups doesn’t advance its production that Economy phase', () => {
+    const applied = play('aggressive', damage);
+    expect(turnsLeft(applied)).toBe(3);
+    expect(applied.notes).toContain("red-mine fought, so this Economy phase doesn't count towards its raider (PROD-04).");
+  });
+
+  it('a mine that is a bystander in the same hex advances it', () => {
+    expect(turnsLeft(play('balanced', damage))).toBe(2);
+  });
+
+  it('works out the yards from Movement, so it holds without the scenario’s damage too', () => {
+    expect(turnsLeft(play('aggressive'))).toBe(3);
+    expect(turnsLeft(play('balanced'))).toBe(2);
+  });
+
+  it('counts no yard as fighting without a Movement phase', () => {
+    const started = startEngine(withMatter);
+    const engine = { ...started, matter: started.matter && { ...started.matter, producing: new Map([['red-mine', { unitClass: 'raider', turnsLeft: 3 }]]) } };
+    const applied = applyOutcome(engine, holdOutcome(engine.units), players, 1);
+    expect(applied.engine.matter?.producing.get('red-mine')?.turnsLeft).toBe(2);
   });
 });

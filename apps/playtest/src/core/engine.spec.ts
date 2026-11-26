@@ -53,13 +53,11 @@ const resolution = (
     messages = [],
     overrides = [],
     builds = [],
-    yardsInCombat = [],
   }: {
     removed?: UnitState[];
     messages?: FleetMessage[];
     overrides?: GmResolution['overrides'];
     builds?: GmResolution['builds'];
-    yardsInCombat?: string[];
   } = {},
 ): GmResolution => ({
   resolution_log: '',
@@ -70,7 +68,6 @@ const resolution = (
   player_notes: [],
   overrides,
   builds,
-  yards_in_combat: yardsInCombat,
   rulings: [],
   game_over: false,
   outcome: '',

@@ -23,7 +23,6 @@ describe('the-blockade scenario', () => {
       player_notes: [],
       overrides: [],
       builds: [],
-      yards_in_combat: [],
       rulings: [],
       game_over: false,
       outcome: '',

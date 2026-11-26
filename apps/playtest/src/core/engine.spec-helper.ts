@@ -9,6 +9,7 @@ import {
   type EngineState,
   type GameSetup,
   type GameUnit,
+  type MovementResult,
   type HijackQuote,
   type OversightQuote,
   type Purchase,
@@ -27,8 +28,8 @@ export * from '@latency-wars/engine';
 export * from '@latency-wars/playtest-briefing';
 export { decisionProblems, unaccountedUnits } from './gm-adapter';
 
-export function applyResolution(engine: EngineState, resolution: GmResolution, players: readonly string[], turn: number, afterMovement?: readonly GameUnit[]) {
-  const applied = applyOutcome(engine, toOutcome(resolution), players, turn, afterMovement);
+export function applyResolution(engine: EngineState, resolution: GmResolution, players: readonly string[], turn: number, movement?: MovementResult) {
+  const applied = applyOutcome(engine, toOutcome(resolution), players, turn, movement);
   return { ...applied, overrides: applied.overrides.map(toGmOverride) };
 }
 

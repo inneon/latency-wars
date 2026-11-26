@@ -29,7 +29,6 @@ export function toOutcome(resolution: GmResolution): TurnOutcome {
     removed: resolution.removed_units.map(reported),
     messages: resolution.messages.map((m) => ({ fromUnit: m.from_unit, text: m.text, instantAck: m.instant_ack, reportsDestroyed: m.reports_destroyed })),
     builds: resolution.builds,
-    yardsInCombat: resolution.yards_in_combat,
     overrides: resolution.overrides.map((o) => ({ unitId: o.unit_id, reason: o.reason, ruleIds: o.rule_ids })),
   };
 }

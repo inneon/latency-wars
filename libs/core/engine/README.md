@@ -22,8 +22,9 @@ Import with `@latency-wars/engine`.
 | `useSeeds` | QBIT-11 | Seeded units' free scans |
 | `judgeProduction` | PROD-04 | Judges and charges `Produce` orders on delivery |
 | `runMovementPhase`, `commandEffects` | MOVE-01 to MOVE-04, COMBAT-02, QBIT-10 | The Movement phase, from each fleet's plan |
-| `runCombatPhase`, `damageDealt` | COMBAT-01 to COMBAT-03, QBIT-10, PROD-04 | The Combat phase, from the Movement phase's groups and the scenario's damage (`Parameters.damage`) |
-| `applyOutcome(engine, outcome, players, turn, afterMovement?, combat?)` | MOVE-01, TURN-03, COMBAT-03, ECON-01, MAT-01, ECON-03, PROD-04, FB-02, ORD-09 | Applies the end of a turn: corrects what breaks a hard rule, holds combat's units to the Combat phase, settles the Economy phase, queues messages |
+| `runCombatPhase`, `damageDealt` | COMBAT-01 to COMBAT-03, QBIT-10 | The Combat phase, from the Movement phase's groups and the scenario's damage (`Parameters.damage`) |
+| `yardsThatFought(units, movementPhase)` | PROD-04, COMBAT-02 | The shipyards that fought: every mine in a combat group Movement formed, resolved or not |
+| `applyOutcome(engine, outcome, players, turn, movement?, combat?)` | MOVE-01, TURN-03, COMBAT-03, ECON-01, MAT-01, ECON-03, PROD-04, FB-02, ORD-09 | Applies the end of a turn: corrects what breaks a hard rule, holds combat's units to the Combat phase, settles the Economy phase (no production for a yard that fought, from `movement`), queues messages |
 | `ranking` | — | Where each player stands when the game stops |
 
 ## What still comes from outside

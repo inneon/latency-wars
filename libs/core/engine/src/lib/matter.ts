@@ -198,6 +198,7 @@ export interface EconomyInput {
   /** The units at the end of the turn, after Combat, as the engine has settled them. A structure not in `before` was built this turn. */
   readonly units: readonly GameUnit[];
   readonly builds: readonly BuildProgress[];
+  /** Shipyards that fought this turn (PROD-04), as the engine works them out (`yardsThatFought`). */
   readonly yardsInCombat: readonly string[];
   /** Every unit that has been in the game: so a new unit's id is never one already used. */
   readonly roster: ReadonlyMap<string, GameUnit>;
@@ -252,9 +253,6 @@ export function settleMatterEconomy(matter: MatterState, input: EconomyInput): S
 
   // Production advances, unless the yard fought (PROD-04); a destroyed yard loses it.
   const producing = new Map(matter.producing);
-  for (const id of yardsInCombat) {
-    if (standing(id)?.class !== 'mine') adjustments.push(`${id} was listed in yards_in_combat, but it isn't a mine in the game; ignored.`);
-  }
   for (const [key, p] of producing) {
     const yardId = yardOf(key);
     if (!standing(yardId)) {

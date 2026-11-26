@@ -1,5 +1,6 @@
 import { type ActiveOrder, afterStep, type Decision, type Decisions, engagementGroups, startMovement } from '@latency-wars/engagement';
 import { type GameMap, type Intents, type MoveIntent, runMovement } from '@latency-wars/movement';
+import type { UnitId } from '@latency-wars/domain';
 import type { FleetPlan, GameUnit, HijackQuote, MovementPhase } from './types';
 
 /*
@@ -137,4 +138,15 @@ export function runMovementPhase(
       notes,
     },
   };
+}
+
+/**
+ * The shipyards that fought this turn (PROD-04): every mine in a combat group
+ * the Movement phase formed (COMBAT-02), whether or not the engine resolved
+ * that combat. `units` are any units with each id's class, such as those
+ * Movement left.
+ */
+export function yardsThatFought(units: readonly GameUnit[], phase: MovementPhase): UnitId[] {
+  const mines = new Set(units.filter((u) => u.class === 'mine').map((u) => u.id));
+  return phase.combats.flatMap((g) => g.members.map((m) => m.unit)).filter((id) => mines.has(id));
 }

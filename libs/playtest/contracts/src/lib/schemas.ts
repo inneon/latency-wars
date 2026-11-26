@@ -224,13 +224,6 @@ export const GmResolution = z.object({
         'The engine charges the matter on a build\'s first progress; leave out a builder that made no progress and lost none (it fought, or builders contested the site). ' +
         'A structure you add to `units` for a completed build needs its builder\'s entry too. Empty if there were none.',
     ),
-  yards_in_combat: z
-    .array(z.string())
-    .default([])
-    .describe(
-      'The ids of shipyards (mines) that took part in a fight this turn. An Economy phase in which a yard fought does not count towards production (PROD-04). ' +
-        'The engine keeps every other part of production. Empty if none. In a scenario where the engine resolves Combat, it works this out itself and ignores this list.',
-    ),
   messages: z
     .array(FleetMessage)
     .describe(

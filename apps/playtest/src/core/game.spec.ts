@@ -49,7 +49,6 @@ const resolution = (scenario: Scenario, turn: number, over = false, extra: Parti
   ],
   overrides: [],
   builds: [],
-  yards_in_combat: [],
   rulings: [{ situation: 'pass-through', ruling: 'they fight', rule_ids: ['MOVE-03'], basis: 'invented' }],
   game_over: over,
   outcome: over ? 'Blue wins' : '',

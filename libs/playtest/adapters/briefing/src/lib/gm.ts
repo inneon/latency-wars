@@ -69,7 +69,7 @@ export function renderMatterForGm(matter: MatterState, units: readonly GameUnit[
   });
   const yards = units.filter((u) => u.class === 'mine').map((u) => `- \`${u.id}\` (${u.owner}): ${yardStatusOf(matter, u.id).replace(/^Shipyard: /, '')}`);
   return [
-    `The matter ledger for this turn, kept by the engine (authoritative). Produce orders delivered this turn have been judged and, if accepted, paid for. The engine adds each mine's output in the Economy phase (MAT-01) from the mines still standing after Combat, charges a builder's cost on its first progress (ECON-03), advances each yard's production unless you list it in yards_in_combat, and adds finished units itself (PROD-04). Don't keep balances or production yourself, and don't list units a yard makes.`,
+    `The matter ledger for this turn, kept by the engine (authoritative). Produce orders delivered this turn have been judged and, if accepted, paid for. The engine adds each mine's output in the Economy phase (MAT-01) from the mines still standing after Combat, charges a builder's cost on its first progress (ECON-03), advances each yard's production unless the yard was in one of the turn's combats, which it works out itself, and adds finished units itself (PROD-04). Don't keep balances or production yourself, and don't list units a yard makes.`,
     '',
     '| Player | Balance after purchases | Spent this turn | Output per turn (current mines) |',
     '|---|---|---|---|',

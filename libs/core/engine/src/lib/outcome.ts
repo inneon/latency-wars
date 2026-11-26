@@ -3,6 +3,7 @@ import { settleEconomy } from '@latency-wars/economy';
 import { furthestToward, illegalMove } from '@latency-wars/movement';
 import { recordBroadcast, recordTurnEnd } from '@latency-wars/visibility';
 import { judgeProduceOrders, settleMatterEconomy } from './matter';
+import { type MovementResult, yardsThatFought } from './movement-phase';
 import { deliveries, NO_ANSWER, RECEIPT } from './orders';
 import type { EngineState, QueuedMessage, WebNews } from './state';
 import type { CombatPhase, GameSetup, GameUnit, Override, ReportedUnit, TurnOutcome } from './types';
@@ -31,22 +32,23 @@ export interface Applied {
  * and its messages. Whatever breaks a hard rule is corrected. Turn 0 is setup:
  * the starting units stand, whatever the outcome says.
  *
- * `afterMovement` is where the Movement phase left every unit. Nothing moves
- * after Movement, so a unit reported anywhere else is put back. Without it,
- * positions are only checked against each unit's speed.
+ * `movement` is the Movement phase's result. Nothing moves after Movement,
+ * so a unit reported anywhere other than where it left it is put back.
+ * The engine also works out from it which shipyards fought (PROD-04): every
+ * mine in one of its combat groups, whatever the damage rule. Without it,
+ * positions are only checked against each unit's speed, and no yard fought.
  *
  * `combat` is the Combat phase as the engine resolved it (COMBAT-03). Each
  * unit in a resolved combat ends at the strength it left, and is destroyed if
  * it left it at 0, whatever the outcome reports, unless an override names it.
- * Its yards are the ones that fought (PROD-04). Without it, strengths are the
- * outcome's.
+ * Without it, strengths are the outcome's.
  */
 export function applyOutcome(
   engine: EngineState,
   outcome: TurnOutcome,
   players: readonly string[],
   turn: number,
-  afterMovement?: readonly GameUnit[],
+  movement?: MovementResult,
   combat?: CombatPhase,
 ): Applied {
   const adjustments: string[] = [];
@@ -98,7 +100,7 @@ export function applyOutcome(
    * which.
    */
   const reach = (unit: GameUnit, to: Hex, what: string): { at: Hex; legal: boolean } => {
-    const moved = afterMovement?.find((u) => u.id === unit.id);
+    const moved = movement?.units.find((u) => u.id === unit.id);
     if (moved) {
       if (moved.hex.q === to.q && moved.hex.r === to.r) return { at: to, legal: true };
       const override = overrideFor(unit.id);
@@ -202,14 +204,14 @@ export function applyOutcome(
 
   for (const u of previous) {
     if (!handled.has(u.id) && !removedIds.has(u.id)) {
-      const at = afterMovement?.find((m) => m.id === u.id)?.hex ?? u.hex;
+      const at = movement?.units.find((m) => m.id === u.id)?.hex ?? u.hex;
       const end = combatEnd.get(u.id);
       if (end !== undefined && destroyedInCombat.has(u.id)) {
         adjustments.push(`${u.id} was missing from both units and removed_units; Combat left it at 0 (COMBAT-03), so it was destroyed.`);
         removed.push({ ...u, hex: at, strength: 0 });
         continue;
       }
-      adjustments.push(`${u.id} was missing from both units and removed_units; the engine kept it where ${afterMovement ? 'Movement left it' : 'it was'}.`);
+      adjustments.push(`${u.id} was missing from both units and removed_units; the engine kept it where ${movement ? 'Movement left it' : 'it was'}.`);
       units.push({ ...u, hex: at, strength: end ?? u.strength });
     }
   }
@@ -222,7 +224,7 @@ export function applyOutcome(
         before: previous,
         units,
         builds: outcome.builds,
-        yardsInCombat: combat?.yardsInCombat ?? outcome.yardsInCombat,
+        yardsInCombat: movement ? yardsThatFought(movement.units, movement.phase) : [],
         roster: engine.roster,
       })
     : undefined;

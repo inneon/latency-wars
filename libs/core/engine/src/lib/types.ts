@@ -205,8 +205,6 @@ export interface TurnOutcome {
   readonly removed: readonly ReportedUnit[];
   readonly messages: readonly ReportedMessage[];
   readonly builds: readonly BuildProgress[];
-  /** Shipyards that fought this turn (PROD-04). */
-  readonly yardsInCombat: readonly UnitId[];
   readonly overrides: readonly Override[];
 }
 
@@ -320,6 +318,6 @@ export interface CombatPhase {
   readonly combats: readonly CombatOutcome[];
   /** Units a resolved combat left at 0: destroyed. */
   readonly destroyed: readonly UnitId[];
-  /** Shipyards in any combat this turn (PROD-04). */
+  /** Shipyards in any combat this turn (PROD-04), as `yardsThatFought` gives them. */
   readonly yardsInCombat: readonly UnitId[];
 }

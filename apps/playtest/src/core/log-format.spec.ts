@@ -86,7 +86,6 @@ const resolution = (units: UnitState[], extra: Partial<GmResolution> = {}): GmRe
   player_notes: [],
   overrides: [],
   builds: [],
-  yards_in_combat: [],
   rulings: [{ situation: 'pass-through', ruling: 'they fight', rule_ids: ['MOVE-03'], basis: 'interpreted' }],
   game_over: false,
   outcome: '',

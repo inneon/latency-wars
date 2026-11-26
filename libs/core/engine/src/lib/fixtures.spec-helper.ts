@@ -38,5 +38,5 @@ export function holdOutcome(units: readonly GameUnit[], moves: Record<string, [n
     const [q, r] = moves[u.id] ?? [u.hex.q, u.hex.r];
     return { id: u.id, owner: u.owner, class: u.class, hex: { q, r }, strength: u.strength };
   });
-  return { units: reported, removed: [], messages: [], builds: [], yardsInCombat: [], overrides: [] };
+  return { units: reported, removed: [], messages: [], builds: [], overrides: [] };
 }
