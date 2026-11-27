@@ -44,6 +44,7 @@ export const resolved = (turn: number, over = false): PlaytestEvent => ({
   turn,
   resolution: {
     resolution_log: `log ${turn}`,
+  endings: [],
     true_state: `state ${turn}`,
     units: [],
     removed_units: [],

@@ -2,7 +2,7 @@ import type { BuildOutcome, Site, Structure } from '@latency-wars/construction';
 import type { Hex, PlayerId, Unit, UnitId } from '@latency-wars/domain';
 import type { ActiveOrder, Bystander, Engagement, Membership, Stance } from '@latency-wars/engagement';
 import type { GameMap, MoveIntent, UnitMoved } from '@latency-wars/movement';
-import type { OrderBody, PlanOrder } from './order';
+import type { Doctrine, OrderBody, PlanOrder, StageOutcome } from '@latency-wars/command';
 
 /*
  * What the engine holds and what it takes in. Every input is engine-shaped:
@@ -92,6 +92,8 @@ export interface Parameters {
   readonly capture?: CaptureParameters;
   /** Without it, the engine doesn't resolve Combat: the GM does. */
   readonly damage?: DamageParameters;
+  /** `STAGES_MAX` (ORD-11). The rules' default when absent. */
+  readonly stagesMax?: number;
 }
 
 /**
@@ -130,6 +132,8 @@ export interface GameSetup {
   /** The map. Its `features` are the sites where a fleet can build: orbital zones and planets (SPACE-02, ECON-03, MAT-02). */
   readonly map: GameMap & { readonly features: readonly Site[] };
   readonly parameters: Parameters;
+  /** Starting doctrines by unit (AUTO-01). A fleet or flagship not listed is Balanced, with its starting hex as home. */
+  readonly doctrines?: Readonly<Record<UnitId, Partial<Doctrine>>>;
 }
 
 // ---- Inputs ----
@@ -184,8 +188,6 @@ export interface ReportedUnit {
 export interface ReportedMessage {
   readonly fromUnit: UnitId;
   readonly text: string;
-  /** The ack of an instant order (ORD-09). */
-  readonly instantAck: boolean;
   /** Units it reports destroyed this turn. */
   readonly reportsDestroyed?: readonly UnitId[];
 }
@@ -213,6 +215,23 @@ export interface TurnOutcome {
   readonly messages: readonly ReportedMessage[];
   readonly builds: readonly BuildProgress[];
   readonly overrides: readonly Override[];
+  /** Stages that ended this turn after the Decision phase: completed, failed or target lost (RES-10). */
+  readonly endings?: readonly StageEnding[];
+}
+
+/** A stage of a fleet's order that ended, and how (RES-10, FB-03). */
+export interface StageEnding {
+  readonly unit: UnitId;
+  readonly ending: StageOutcome;
+}
+
+/** What the Decision phase settled: each fleet's plan for the turn, and what the engine can't judge about its orders yet. */
+export interface Decisions {
+  readonly plans: readonly FleetPlan[];
+  /** Delivered orders that aren't physically possible (RES-01 step 2), by recipient and send turn (ORD-03). */
+  readonly rejections?: readonly { readonly unit: UnitId; readonly sentTurn: number; readonly reason: string }[];
+  /** Stages found to end in this Decision phase: declined (RES-04), or failing as they begin (ORD-11). They hand over at once (RES-10). */
+  readonly endings?: readonly StageEnding[];
 }
 
 // ---- Outputs ----

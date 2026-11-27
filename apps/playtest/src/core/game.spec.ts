@@ -39,12 +39,12 @@ const unitStates = (scenario: Scenario) =>
 
 const resolution = (scenario: Scenario, turn: number, over = false, extra: Partial<GmResolution> = {}): GmResolution => ({
   resolution_log: `log ${turn}`,
-  true_state: `state ${turn}`,
+  endings: [],
   // Nobody moves.
   units: unitStates(scenario),
   removed_units: [],
   // Blue Line acks every turn; sent at the end of a turn from 1 hex away, each ack arrives two Planning phases later.
-  messages: turn > 0 ? [{ from_unit: 'blue-line', text: `ACK-FROM-LINE-${turn}`, instant_ack: false }] : [],
+  messages: turn > 0 ? [{ from_unit: 'blue-line', text: `ACK-FROM-LINE-${turn}` }] : [],
   player_notes: [
     { player_id: 'blue', note: `SECRET-BLUE-${turn}` },
     { player_id: 'red', note: `SECRET-RED-${turn}` },
@@ -60,6 +60,8 @@ const resolution = (scenario: Scenario, turn: number, over = false, extra: Parti
 /** The GM's Decision phase: every fleet and flagship in the prompt's unit table holds, unless `given` says otherwise. */
 const decisions = (prompt: string, given: readonly FleetDecision[] = []): GmDecisions => ({
   decision_log: 'decided',
+  rejections: [],
+  endings: [],
   decisions: [...prompt.matchAll(/\| `([^`]+)` \| [^|]+ \| (?:fleet|flagship) \|/g)].map(
     ([, unit]) => given.find((d) => d.unit === unit) ?? { unit: unit ?? '', move: 'hold', order: 'none', stance: 'balanced', evading: false },
   ),
@@ -391,7 +393,7 @@ describe('runPlaytest', () => {
 
     const debrief = gmDebriefers[0]?.prompts[0]?.prompt ?? '';
     expect(debrief).toContain('Blue wins');
-    expect(debrief).toContain('state 2');
+    expect(debrief).toContain('Doctrines and active orders');
     expect(debrief).toContain('[invented] (MOVE-03) pass-through → they fight');
     expect(debrief).toContain('Turn 1, blue: what is age?');
     expect(debrief).toContain('Step out of the GM role');

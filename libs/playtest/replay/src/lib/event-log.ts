@@ -5,7 +5,7 @@
  */
 import type { MatterStatement as LedgerMatterStatement, QbitStatement as LedgerStatement } from '@latency-wars/economy';
 import type * as Engine from '@latency-wars/engine';
-import { EngineOverride, Feedback, GmDecisions, GmFeedback, GmResolution, LoggedPlayerTurn } from '@latency-wars/playtest-contracts';
+import { EngineOverride, Feedback, GmDecisions, GmFeedback, LoggedGmResolution, LoggedPlayerTurn } from '@latency-wars/playtest-contracts';
 import { z } from 'zod';
 
 /**
@@ -295,10 +295,29 @@ export const ConstructionPhase: z.ZodType<Engine.ConstructionPhase> = z.object({
 export type ConstructionPhase = Engine.ConstructionPhase;
 
 /** Everything that happens in a play-test, in order. The outputs are all derived from these. */
+/** A delivered order's ack (FB-02), with the order in the rules' notation. */
+const CommandAck = z.object({
+  unit: z.string(),
+  player: z.string(),
+  sentTurn: z.number().int(),
+  order: z.string(),
+  ack: z.enum(['accepted', 'stale', 'rejected']),
+  continues: z.boolean().optional(),
+  reason: z.string().optional(),
+});
+export type CommandAck = z.infer<typeof CommandAck>;
+
+/** A stage that ended, and how (RES-10, FB-03). */
+const LoggedStageEnding = z.object({
+  unit: z.string(),
+  ending: z.enum(['completed', 'declined', 'target-lost', 'failed']),
+  reason: z.string().optional(),
+});
+
 export const PlaytestEvent = z.discriminatedUnion('type', [
   /** Always first: which game this is, and the format the rest of the log is written in. */
   z.object({ type: z.literal('scenario'), logVersion: z.number().int(), scenario: ScenarioHeader }),
-  z.object({ type: z.literal('setup'), resolution: GmResolution }),
+  z.object({ type: z.literal('setup'), resolution: LoggedGmResolution }),
   z.object({ type: z.literal('player_turn'), turn, player, step: z.enum(['initial', 'final']), submission: LoggedPlayerTurn }),
   /** A player asked for quotes: the scans the engine charged for, its spoof quotes, and what they were told. */
   z.object({
@@ -321,7 +340,7 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('movement'), turn, phase: MovementPhase }),
   /** The engine's Combat phase, in scenarios that set the damage units deal. */
   z.object({ type: z.literal('combat'), turn, phase: CombatPhase }),
-  z.object({ type: z.literal('gm_resolution'), turn, resolution: GmResolution }),
+  z.object({ type: z.literal('gm_resolution'), turn, resolution: LoggedGmResolution }),
   /** Exactly what a player was told for a Planning phase: the GM's messages plus the computed sensor picture. */
   z.object({ type: z.literal('report'), turn, player, text: z.string() }),
   /** What the engine corrected in a GM resolution, and any overrides the GM declared. Turn 0 is setup. */
@@ -346,6 +365,21 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
    * Logs from before this event have none. True state: never shown to players.
    */
   z.object({ type: z.literal('construction'), turn, phase: ConstructionPhase }),
+  /**
+   * The Decision phase's orders, settled by the engine (RES-01, ORD-07, RES-10): each delivered order's ack (FB-02), the
+   * stages the GM found to end in that phase, where the GM's decisions disagree with the fleets' slots, and every fleet's
+   * doctrine and active order afterwards as text. Players see only the acks, when they arrive.
+   */
+  z.object({
+    type: z.literal('command'),
+    turn,
+    acks: z.array(CommandAck),
+    endings: z.array(LoggedStageEnding),
+    differences: z.array(z.string()),
+    slots: z.string(),
+  }),
+  /** Stages that ended after the Decision phase; the next stage or the fallback takes effect in the next one (RES-10). */
+  z.object({ type: z.literal('stage_endings'), turn, endings: z.array(LoggedStageEnding) }),
   /**
    * What the player's seeded units did at the start of a turn's Planning phase (QBIT-11): each scan used, the qBits
    * left, and the units that have gone quiet. The player is shown this.

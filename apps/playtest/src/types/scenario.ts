@@ -1,3 +1,4 @@
+import type { Doctrine } from '@latency-wars/engine';
 import type { Hex } from '@latency-wars/domain';
 import type { MapFeature, PlaytestUnit } from '@latency-wars/playtest-replay';
 import { z } from 'zod';
@@ -128,6 +129,19 @@ export const ScenarioFile = z.object({
   }),
   /** The true state at the end of turn 0. Every unit is assumed to have held this position before play began. */
   units: z.array(UnitFile).min(1),
+  /**
+   * Starting doctrines (AUTO-01), by unit id. A fleet or flagship not listed is Balanced, with its home the structure
+   * its owner has in its starting hex, or else that hex.
+   */
+  doctrines: z
+    .record(
+      z.string(),
+      z.object({
+        stance: z.enum(['aggressive', 'balanced', 'evasive']).optional(),
+        home: z.union([z.object({ hex: z.tuple([z.number().int(), z.number().int()]) }), z.object({ structure: z.string() })]).optional(),
+      }),
+    )
+    .default({}),
   /** Public to everyone: map, house rules, victory conditions. */
   common: z.string(),
   /** GM only: the true starting state and anything players must not know. */
@@ -154,6 +168,13 @@ export const ScenarioFile = z.object({
   }
   for (const u of file.units) {
     if (!players.has(u.owner)) ctx.addIssue({ code: 'custom', path: ['units'], message: `unit ${u.id} has unknown owner ${u.owner}` });
+  }
+  for (const [id, d] of Object.entries(file.doctrines)) {
+    const unit = file.units.find((u) => u.id === id);
+    if (!unit || (unit.class !== 'fleet' && unit.class !== 'flagship')) ctx.addIssue({ code: 'custom', path: ['doctrines', id], message: `${id} isn't a fleet or flagship` });
+    if (d.home && 'structure' in d.home && !file.units.some((u) => u.id === (d.home as { structure: string }).structure)) {
+      ctx.addIssue({ code: 'custom', path: ['doctrines', id], message: `home ${d.home.structure} isn't a unit` });
+    }
   }
   for (const p of Object.keys(file.parameters.qbits.flatIncome)) {
     if (!players.has(p)) ctx.addIssue({ code: 'custom', path: ['parameters', 'qbits', 'flatIncome'], message: `flat income for unknown player ${p}` });
@@ -191,6 +212,8 @@ export interface Scenario {
   };
   /** The true state at the end of turn 0. */
   units: PlaytestUnit[];
+  /** Starting doctrines by unit (AUTO-01). */
+  doctrines: Record<string, Partial<Doctrine>>;
   rules: { path: string; content: string }[];
   common: string;
   /** What every player is given as hints.md: consequences of the rules that past players found non-obvious. Absent when a run turns hints off. */

@@ -407,6 +407,48 @@
       "strength": 2
     }
   ],
+  "doctrines": {
+    "blue-flagship": {
+      "home": {
+        "structure": "blue-mine-thgil"
+      }
+    },
+    "blue-line": {
+      "home": {
+        "structure": "blue-mine-thgil"
+      }
+    },
+    "blue-raider": {
+      "home": {
+        "structure": "blue-mine-thgil"
+      }
+    },
+    "blue-probe": {
+      "home": {
+        "structure": "blue-mine-thgil"
+      }
+    },
+    "red-flagship": {
+      "home": {
+        "structure": "red-mine-yaled"
+      }
+    },
+    "red-line": {
+      "home": {
+        "structure": "red-mine-yaled"
+      }
+    },
+    "red-raider": {
+      "home": {
+        "structure": "red-mine-yaled"
+      }
+    },
+    "red-probe": {
+      "home": {
+        "structure": "red-mine-yaled"
+      }
+    }
+  },
   "common": "common.md",
   "gm": "gm.md",
   "hints": "hints.md",

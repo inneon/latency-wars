@@ -1,0 +1,15 @@
+{
+  "name": "command",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/core/command/src",
+  "projectType": "library",
+  "tags": ["type:core", "scope:shared"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p libs/core/command/tsconfig.lib.json --noEmit && tsc -p libs/core/command/tsconfig.spec.json --noEmit"
+      }
+    }
+  }
+}

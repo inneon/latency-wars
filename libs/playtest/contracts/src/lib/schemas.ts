@@ -219,13 +219,7 @@ export const FleetMessage = z.object({
   from_unit: z.string().describe('The unit sending it: the fleet that acks, reports or fought.'),
   text: z
     .string()
-    .describe('The message as the player will read it, e.g. "Accepted: Attack(red-raider)" or "Engaged red-line at (1, -1): lost 2 strength".'),
-  instant_ack: z
-    .boolean()
-    .describe(
-      'True only for the ack of an instant order. The engine sends its player a receipt that says only Delivered by the next Planning ' +
-        'phase (ORD-09), and delivers this text at light speed like any other message.',
-    ),
+    .describe('The message as the player will read it, e.g. "Engaged red-line at (1, -1): lost 2 strength" or "Completed: MoveTo(2, -1)".'),
   reports_destroyed: z
     .array(z.string())
     .optional()
@@ -272,18 +266,11 @@ export const FleetDecision = z.object({
     .enum(['none', 'attack', 'defend', 'escort', 'build', 'other'])
     .describe(
       'Its active order after Delivery and Decision, as MOVE-04 reads it: a fallback counts only once it has taken effect (ORD-01, RES-10). ' +
-        'build: a Build order, with the site in order_hex; the engine works out its construction (ECON-03). ' +
+        'build: its current stage is a Build, with the site in order_hex; the engine works out its construction (ECON-03). ' +
         'other: any objective but Attack, Defend, Escort and Build. none: no order, so its stance decides.',
     ),
   order_target: z.string().optional().describe('attack: the unit attacked. escort: the charge.'),
   order_hex: HexRef.optional().describe('defend: the defended hex, or the defended node\'s hex. build: the hex of the site.'),
-  build_replaced: z
-    .boolean()
-    .optional()
-    .describe(
-      'build only: true if a different order took the place of its Build order this turn, so the build in progress is lost. ' +
-        'A newly delivered Build for the same site and structure continues the build and is not a replacement. Leave out otherwise.',
-    ),
   stance: z.enum(['aggressive', 'balanced', 'evasive']).describe('Its doctrine\'s stance (AUTO-01).'),
   evading: z.boolean().describe('True if it evades this turn (AUTO-03 priority 2).'),
   unwilling: z
@@ -299,6 +286,32 @@ export const GmDecisions = z.object({
     .string()
     .describe('A write-up of the Delivery and Decision phases for the designer: each delivered order checked (RES-01), and why each fleet does what it does (AUTO-03). Players never see it.'),
   decisions: z.array(FleetDecision).describe('One for every fleet and flagship in play, including those that hold. Not for nodes or mines.'),
+  rejections: z
+    .array(
+      z.object({
+        unit: z.string().describe('The fleet or flagship the order was delivered to.'),
+        sent_turn: z.number().int().describe('The turn the order was sent: with the unit, it names the order (ORD-03).'),
+        reason: z.string().describe('Why it is not physically possible, as the fleet would report it.'),
+      }),
+    )
+    .default([])
+    .describe(
+      'Every order delivered this turn that is not physically possible (RES-01 step 2): a capability the unit lacks, a hex it cannot reach, an objective that no longer exists as far as it can tell. ' +
+        'Judge only the first stage on the facts. The engine already rejects an order whose stages break ORD-11 or that a flagship may not take (FLAG-01, FLAG-02), and works out Accepted and Stale itself (ORD-07). Empty if none.',
+    ),
+  endings: z
+    .array(
+      z.object({
+        unit: z.string(),
+        ending: z.enum(['declined', 'failed']),
+        reason: z.string().describe('As the fleet reports it (FB-03).'),
+      }),
+    )
+    .default([])
+    .describe(
+      "Stages found to end in this Decision phase: an Attack declined on the Discretion condition (RES-04), or a later stage that fails as it begins (ORD-11, RES-09). " +
+        'The engine hands over to the next stage or the fallback at once (RES-10), so give the fleet\'s decision as it acts after that. Empty if none.',
+    ),
   rulings: z.array(Ruling).describe('Every ruling the Delivery and Decision phases needed. Include routine explicit ones only if notable.'),
 }).meta({ title: 'GmDecisions' });
 export type GmDecisions = z.infer<typeof GmDecisions>;
@@ -309,12 +322,6 @@ export const GmResolution = z.object({
     .describe(
       'A write-up of the turn for the designer, phase by phase: what happened in each phase, with the distances, deliveries, ' +
         'engagements and damage it depends on. Players never see it.',
-    ),
-  true_state: z
-    .string()
-    .describe(
-      'The complete authoritative game state after this turn, beyond what `units` holds and the engine tracks: active orders, doctrines, ' +
-        'orders in transit (send turn, emission hex, sequence, recipient). Players never see this.',
     ),
   units: z
     .array(UnitState)
@@ -333,10 +340,24 @@ export const GmResolution = z.object({
         'The engine charges the matter on a build\'s first progress; leave out a builder that made no progress and lost none (it fought, or builders contested the site). ' +
         'A structure you add to `units` for a completed build needs its builder\'s entry too. Empty if there were none.',
     ),
+  endings: z
+    .array(
+      z.object({
+        unit: z.string(),
+        ending: z.enum(['completed', 'failed', 'target_lost']),
+        reason: z.string().optional().describe('For failed: as the fleet reports it (FB-03).'),
+      }),
+    )
+    .default([])
+    .describe(
+      "Every stage of a fleet's active order that ended this turn after the Decision phase (RES-10): a MoveTo or ReturnHome completed on arrival, a Build completed when built, " +
+        'an Attack completed when the fleet saw its target destroyed, a stage that failed (RES-09) or lost its target (RES-05). ' +
+        'The engine hands over to the next stage or the fallback in the next Decision phase. Still write the execution report in messages (FB-03). Empty if none.',
+    ),
   messages: z
     .array(FleetMessage)
     .describe(
-      'Every ack, query, execution report or combat report a unit sends home this turn (FB-02, FB-03), from the unit that sends it. ' +
+      'Every query, execution report or combat report a unit sends home this turn (FB-03), from the unit that sends it. Not acks: the engine sends every ack (FB-02). ' +
         'Not for `Produce` orders: the engine acks those and reports completions itself (PROD-04). ' +
         "The engine delivers each one when it reaches the owner's flagship. A unit that left the game sends nothing. " +
         'Like `status`, a message never says what the unit senses of other units (LIGHT-02, FB-04); a combat report may name the units it fought.',
@@ -358,6 +379,13 @@ export const GmResolution = z.object({
   outcome: z.string().describe('If the game is over, who won and why, or that it is a draw. Otherwise an empty string.'),
 }).meta({ title: 'GmResolution' });
 export type GmResolution = z.infer<typeof GmResolution>;
+
+/**
+ * A GM resolution as the event log holds it. Logs before the engine kept each
+ * fleet's orders (v0.19) also have the GM's free-text `true_state`.
+ */
+export const LoggedGmResolution = GmResolution.extend({ true_state: z.string().optional() });
+export type LoggedGmResolution = z.infer<typeof LoggedGmResolution>;
 
 const Rating = z.number().int().min(1).max(5).describe('1 (very poor) to 5 (excellent).');
 

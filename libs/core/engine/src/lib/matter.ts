@@ -24,7 +24,7 @@ import {
   spendMatter,
 } from '@latency-wars/economy';
 import type { MovementResult } from './movement-phase';
-import type { OrderBody } from './order';
+import type { OrderBody } from '@latency-wars/command';
 import type { EngineState, QueuedMessage, SentOrder } from './state';
 import type {
   BuildProgress,

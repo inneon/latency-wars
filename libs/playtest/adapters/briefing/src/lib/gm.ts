@@ -20,6 +20,8 @@ import {
   type OversightQuote,
   type SentOrder,
   yardStatusOf,
+  type FleetSlot,
+  type OrderAck,
 } from '@latency-wars/engine';
 import { spendLine } from './player';
 
@@ -235,4 +237,46 @@ export function renderCombatForGm(phase: CombatPhase): string {
   const destroyed = phase.destroyed.length ? `Destroyed, so list them in removed_units: ${phase.destroyed.map((d) => `\`${d}\``).join(', ')}.` : 'Nobody was destroyed.';
   const yards = phase.yardsInCombat.length ? `\n\nShipyards that fought this turn (PROD-04): ${phase.yardsInCombat.map((y) => `\`${y}\``).join(', ')}.` : '';
   return `The engine resolved Combat (COMBAT-01 to COMBAT-03), with the scenario's damage. Report each resolved combat's units at the strength it ends at; the engine holds them to it:\n${combats.join('\n')}\n\n${destroyed}${yards}`;
+}
+
+/** A fleet's doctrine and active order (AUTO-01, ORD-07), in the rules' notation. */
+export function slotText(slot: FleetSlot): string {
+  const { stance, home } = slot.doctrine;
+  const doctrine = `stance ${stance}, home ${'hex' in home ? formatHex(home.hex) : `\`${home.structure}\``}`;
+  const { active } = slot;
+  if (!active) return `${doctrine}; no order, so its stance decides (AUTO-03)`;
+  const order = formatOrder({ kind: 'plan', stages: [...active.stages], fallback: active.fallback });
+  const where = active.isFallback
+    ? `its fallback, in effect since the order sent in turn ${active.sentTurn} ended`
+    : `sent in turn ${active.sentTurn}, on stage ${active.at + 1} of ${active.stages.length}`;
+  const ended = slot.pending ? `; its stage has ended (${slot.pending.kind}), and what follows takes effect in the next Decision phase` : '';
+  return `${doctrine}; ${order} (${where})${ended}`;
+}
+
+/** Every fleet's slot, one line each, in the units' order. */
+export function renderSlots(slots: ReadonlyMap<string, FleetSlot>, units: readonly GameUnit[]): string {
+  return (
+    units
+      .flatMap((u) => {
+        const slot = slots.get(u.id);
+        return slot ? [`- \`${u.id}\` (${u.owner}): ${slotText(slot)}`] : [];
+      })
+      .join('\n') || '- None.'
+  );
+}
+
+const ackWord = (a: OrderAck['ack']) =>
+  a.kind === 'accepted' ? (a.continues ? 'Accepted, continuing the stage it was on' : 'Accepted') : a.kind === 'stale' ? 'Stale' : `Rejected: ${a.reason}`;
+
+/**
+ * How the engine settled this turn's orders to fleets and flagships
+ * (RES-01, ORD-07), and every fleet's doctrine and active order afterwards,
+ * earlier endings handed over (RES-10). For the GM's Decision phase.
+ */
+export function renderCommandForGm(command: { readonly slots: ReadonlyMap<string, FleetSlot>; readonly acks: readonly OrderAck[] }, units: readonly GameUnit[]): string {
+  const acks = command.acks.map((a) => `- \`${a.unit}\`, sent turn ${a.sentTurn}: ${formatOrder(a.order)}. **${ackWord(a.ack)}**`);
+  return [
+    `## This turn's orders to fleets, as the engine settled them (RES-01, ORD-07)\n\n${acks.join('\n') || '- None delivered.'}`,
+    `## Every fleet's doctrine and active order (authoritative)\n\nAfter this turn's deliveries, with any stage that ended last turn handed over to what follows (RES-10).\n\n${renderSlots(command.slots, units)}`,
+  ].join('\n\n');
 }

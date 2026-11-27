@@ -30,6 +30,9 @@
       "@latency-wars/movement": [
         "./libs/core/movement/src/index.ts"
       ],
+      "@latency-wars/command": [
+        "./libs/core/command/src/index.ts"
+      ],
       "@latency-wars/combat": [
         "./libs/core/combat/src/index.ts"
       ],

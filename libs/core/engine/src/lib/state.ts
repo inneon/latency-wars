@@ -3,7 +3,7 @@ import { openLedger, type QbitLedger, type QbitParams } from '@latency-wars/econ
 import type { GameMap } from '@latency-wars/movement';
 import { emptyLog, type KnowledgeState, knowledgeState, recordHeldTurns, type VisibilityLog } from '@latency-wars/visibility';
 import { type MatterState, startMatter } from './matter';
-import type { OrderBody } from './order';
+import { type Doctrine, type FleetSlot, newSlot, type OrderBody } from '@latency-wars/command';
 import type { GameSetup, GameUnit } from './types';
 
 /** A message on its way home. */
@@ -83,6 +83,8 @@ export interface EngineState {
   readonly cascade: readonly CascadeCharge[];
   /** Every flagship shaken by a seize (QBIT-13). */
   readonly shakes: readonly Shake[];
+  /** What each fleet and flagship in the game is doing: its doctrine and active order (ORD-07, AUTO-01). */
+  readonly slots: ReadonlyMap<string, FleetSlot>;
 }
 
 export function startEngine(setup: GameSetup): EngineState {
@@ -110,7 +112,21 @@ export function startEngine(setup: GameSetup): EngineState {
     webNews: [],
     cascade: [],
     shakes: [],
+    slots: new Map(setup.units.filter(commandable).map((u) => [u.id, newSlot(startingDoctrine(u, setup.units, setup.doctrines?.[u.id]))])),
   };
+}
+
+/** Whether a unit takes orders with stages and has a doctrine: fleets and flagships. */
+export const commandable = (u: GameUnit) => u.class === 'fleet' || u.class === 'flagship';
+
+/**
+ * The doctrine a fleet is formed with (AUTO-01): Balanced unless set, with its
+ * home where it was formed, the structure there if its owner has one (as a
+ * yard's new units do, PROD-04), or else the hex.
+ */
+export function startingDoctrine(unit: GameUnit, units: readonly GameUnit[], set: Partial<Doctrine> = {}): Doctrine {
+  const structure = units.find((u) => u.owner === unit.owner && (u.class === 'mine' || u.class === 'node') && u.hex.q === unit.hex.q && u.hex.r === unit.hex.r);
+  return { stance: set.stance ?? 'balanced', home: set.home ?? (structure ? { structure: structure.id } : { hex: unit.hex }) };
 }
 
 /** The ledger's parameters, with each link's `k` from the zone bonuses (ECON-01) and any flat income. */

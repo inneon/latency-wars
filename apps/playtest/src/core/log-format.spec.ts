@@ -51,6 +51,8 @@ const agent = (id: string, reply: (label: string, prompt: string) => unknown): A
 /** The GM's Decision phase: every fleet and flagship in the prompt's unit table holds, unless `given` says otherwise. */
 const decisions = (prompt: string, given: readonly FleetDecision[] = []): GmDecisions => ({
   decision_log: 'decided',
+  rejections: [],
+  endings: [],
   decisions: [...prompt.matchAll(/\| `([^`]+)` \| [^|]+ \| (?:fleet|flagship) \|/g)].map(
     ([, unit]) => given.find((d) => d.unit === unit) ?? { unit: unit ?? '', move: 'hold', order: 'none', stance: 'balanced', evading: false },
   ),
@@ -80,7 +82,7 @@ const submission = (purchases: PlayerTurn['qbit_purchases'], orders: PlayerTurn[
 
 const resolution = (units: UnitState[], extra: Partial<GmResolution> = {}): GmResolution => ({
   resolution_log: 'log',
-  true_state: 'state',
+  endings: [],
   units,
   removed_units: [],
   messages: [],
@@ -122,7 +124,7 @@ async function playScriptedGame(scenario: Scenario): Promise<PlaytestEvent[]> {
       ],
       {
         removed_units: turn2.filter((u) => u.id === 'red-raider').map((u) => ({ ...u, strength: 0, status: 'Destroyed' })),
-        messages: [{ from_unit: 'blue-raider', text: 'Holding.', instant_ack: true }],
+        messages: [{ from_unit: 'blue-raider', text: 'Holding.' }],
         game_over: true,
         outcome: 'Blue wins',
       },

@@ -69,7 +69,7 @@ const resolution = (
   } = {},
 ): GmResolution => ({
   resolution_log: '',
-  true_state: '',
+  endings: [],
   units,
   removed_units: removed,
   messages,
@@ -283,7 +283,7 @@ describe('applyResolution: removed units', () => {
 });
 
 describe('applyResolution: messages', () => {
-  const ack = (from: string, text: string, instant = false): FleetMessage => ({ from_unit: from, text, instant_ack: instant });
+  const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text });
 
   it('delivers a message when its sender\'s status report would arrive (FB-04)', () => {
     // Blue Line is 1 hex from Blue's flagship: sent at the end of turn 1, it arrives in turn 3.
@@ -298,24 +298,22 @@ describe('applyResolution: messages', () => {
 
   it("sends an instant order's receipt next turn, whatever the distance, and its ack at light speed (ORD-09)", () => {
     // Blue Node North is 4 hexes from Blue's flagship: its ack, sent at the end of turn 1, arrives in turn 4.
-    const { engine } = play(resolution(states(), { messages: [ack('blue-node-north', 'Accepted', true)] }));
+    const sent = recordOrders(startEngine(scenario), 'blue', 1, [{ unit: 'blue-node-north', order: holdOrder, delivery: 'instant' }]);
+    const engine = applyResolution(sent, resolution(states(), { messages: [ack('blue-node-north', 'Accepted')] }), players, 1).engine;
     expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([expect.objectContaining({ text: 'Delivered.', instant: true })]);
     expect(messagesArriving(engine, scenario, 'blue', 4)).toEqual([expect.objectContaining({ text: 'Accepted', instant: false })]);
   });
 
-  it('drops messages from a unit that is gone, and turns an ack from a unit that was not there into "No answer"', () => {
+  it('drops messages from a unit that is gone (FB-05)', () => {
     const present = states().filter((u) => u.id !== 'blue-raider');
     const gone = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: -3, r: 4, strength: 0 };
     const { engine, adjustments } = play(
       resolution(present, { removed: [gone], messages: [ack('blue-raider', 'Engaged and destroyed')] }),
-      resolution(present, { messages: [ack('blue-raider', 'Failed: the recipient does not exist', true)] }),
+      resolution(present, { messages: [ack('blue-raider', 'Failed: the recipient does not exist')] }),
     );
     expect(adjustments[0]).toEqual([expect.stringContaining('A message from blue-raider was dropped')]);
-    expect(adjustments[1]).toEqual([
-      expect.stringContaining('its player is told "No answer"'),
-      expect.stringContaining('A message from blue-raider was dropped'),
-    ]);
-    expect(messagesArriving(engine, scenario, 'blue', 3)).toEqual([expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' })]);
+    expect(adjustments[1]).toEqual([expect.stringContaining('A message from blue-raider was dropped')]);
+    expect(messagesArriving(engine, scenario, 'blue', 3)).toEqual([]);
   });
 });
 
@@ -724,7 +722,7 @@ describe('the qBit ledger', () => {
 
 describe('orders: when they land, and when the player hears back', () => {
   const order = (unit: string, body: OrderBody = holdOrder, delivery: 'light' | 'instant' = 'light'): PlayerTurn['orders'][number] => ({ unit, order: body, delivery });
-  const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text, instant_ack: false });
+  const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text });
 
   it('delivers a light order when its wavefront reaches the recipient (ORD-04), and a local one at once (ORD-05)', () => {
     let engine = startEngine(scenario);
@@ -796,7 +794,7 @@ describe('orders: when they land, and when the player hears back', () => {
 
 describe('instant orders and acks (ORD-06, ORD-09)', () => {
   const instant = (unit: string): PlayerTurn['orders'][number] => ({ unit, order: holdOrder, delivery: 'instant' });
-  const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text, instant_ack: true });
+  const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text });
 
   it('delivers an instant order in the turn it is sent', () => {
     const engine = recordOrders(startEngine(scenario), 'blue', 1, [instant('blue-node-north')]);
@@ -814,10 +812,7 @@ describe('instant orders and acks (ORD-06, ORD-09)', () => {
     );
     engine = applied.engine;
     expect(messagesArriving(engine, scenario, 'blue', 2)).toEqual([expect.objectContaining({ fromUnit: 'blue-raider', text: 'No answer (FB-09).' })]);
-    expect(applied.adjustments).toEqual([
-      expect.stringContaining("blue-raider didn't survive the turn to send its ack"),
-      expect.stringContaining('A message from blue-raider was dropped'),
-    ]);
+    expect(applied.adjustments).toEqual([expect.stringContaining('A message from blue-raider was dropped')]);
   });
 
   it('still answers when the GM forgot the ack: "No answer" if the recipient is gone, "Delivered" if not', () => {
@@ -840,7 +835,7 @@ describe('destroyed units in the picture', () => {
     const flagshipAt = { 'red-flagship': [3, -2] as [number, number] };
     const raider = { id: 'blue-raider', owner: 'blue', class: 'fleet' as const, q: 2, r: -1, strength: 0 };
     const override = { unit_id: 'blue-raider', reason: 'test setup', rule_ids: [] };
-    const report: FleetMessage = { from_unit: 'red-flagship', text: 'Engaged blue-raider: destroyed it', instant_ack: false, reports_destroyed: ['blue-raider'] };
+    const report: FleetMessage = { from_unit: 'red-flagship', text: 'Engaged blue-raider: destroyed it', reports_destroyed: ['blue-raider'] };
     let engine = applyResolution(
       startEngine(scenario),
       resolution(states(flagshipAt).filter((u) => u.id !== 'blue-raider'), { removed: [raider], messages: [report], overrides: [override] }),
@@ -853,7 +848,7 @@ describe('destroyed units in the picture', () => {
   });
 
   it("ignores a reported kill that didn't happen", () => {
-    const report: FleetMessage = { from_unit: 'red-line', text: 'Destroyed blue-line', instant_ack: false, reports_destroyed: ['blue-line'] };
+    const report: FleetMessage = { from_unit: 'red-line', text: 'Destroyed blue-line', reports_destroyed: ['blue-line'] };
     const { adjustments } = play(resolution(states(), { messages: [report] }));
     expect(adjustments[0]).toEqual([expect.stringContaining("reports blue-line destroyed, but blue-line didn't leave the game this turn")]);
   });

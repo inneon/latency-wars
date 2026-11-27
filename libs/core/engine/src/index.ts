@@ -1,8 +1,8 @@
 export * from './lib/cascade';
 export * from './lib/combat-phase';
+export * from './lib/command-phase';
 export * from './lib/matter';
 export * from './lib/movement-phase';
-export * from './lib/order';
 export * from './lib/orders';
 export * from './lib/outcome';
 export * from './lib/purchases';
@@ -10,3 +10,4 @@ export * from './lib/ranking';
 export * from './lib/state';
 export * from './lib/turn';
 export * from './lib/types';
+export * from '@latency-wars/command';

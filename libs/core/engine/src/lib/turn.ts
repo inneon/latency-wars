@@ -1,13 +1,15 @@
-import type { PlayerId } from '@latency-wars/domain';
+import { type FleetSlot, onePerUnit } from '@latency-wars/command';
+import type { PlayerId, UnitId } from '@latency-wars/domain';
 import { type CascadeQuote, cascadeWinners, chargeCascade, quoteCascade } from './cascade';
 import { runCombatPhase } from './combat-phase';
+import { type OrderAck, queueAcks, recordEndings, settleOrders, slotDifferences, syncSlots, withSlots } from './command-phase';
 import { type ConstructionPreview, previewConstruction } from './matter';
 import { type CommandEffects, commandEffects, type MovementResult, runMovementPhase } from './movement-phase';
-import { deliverReportedLosses, queueSpoofReceipts, recordOrders } from './orders';
+import { deliverReportedLosses, findOwnUnit, queueSpoofReceipts, recordOrders } from './orders';
 import { type Applied, applyOutcome, judgeProduction } from './outcome';
 import { payForEmission, quoteHijack, quoteOversight, resolveScans, type Scans, type SeedReport, settleCommandContest, useSeeds } from './purchases';
 import { type EngineState, startEngine } from './state';
-import type { CombatPhase, FleetPlan, GameSetup, HijackQuote, OversightQuote, Purchase, SubmittedOrder, TurnOutcome } from './types';
+import type { CombatPhase, Decisions, FleetPlan, GameSetup, GameUnit, HijackQuote, OversightQuote, Purchase, StageEnding, SubmittedOrder, TurnOutcome } from './types';
 
 /*
  * The turn (TURN-01, TURN-03). The engine runs the phases in order and pauses
@@ -55,6 +57,12 @@ export type Question =
       readonly production: readonly string[];
       /** What the engine did with the last outcome it was given. */
       readonly previous: Pick<Applied, 'adjustments' | 'notes'>;
+      /**
+       * Each fleet's slot once this turn's orders are settled and earlier endings
+       * have handed over, and the ack each delivered order gets (RES-01, ORD-07,
+       * RES-10), as they stand before any rejection or ending the answer gives.
+       */
+      readonly command: { readonly slots: ReadonlyMap<UnitId, FleetSlot>; readonly acks: readonly OrderAck[] };
     }
   /** Combat onward: the rest of the turn, from where Movement and Combat left everyone. */
   | {
@@ -72,7 +80,7 @@ export type Answer =
   | { readonly kind: 'setup'; readonly outcome: TurnOutcome; readonly gameOver: boolean }
   | { readonly kind: 'plan'; readonly plans: ReadonlyMap<PlayerId, PlayerPlan> }
   | { readonly kind: 'confirm'; readonly plans: ReadonlyMap<PlayerId, PlayerPlan> }
-  | { readonly kind: 'decide'; readonly plans: readonly FleetPlan[] }
+  | ({ readonly kind: 'decide' } & Decisions)
   /** `gameOver`: the answer says a victory condition the engine doesn't check was met. */
   | { readonly kind: 'resolve'; readonly outcome: TurnOutcome; readonly gameOver: boolean };
 
@@ -98,7 +106,26 @@ export type TurnEvent =
   /** Cascades completed this turn (QBIT-12). */
   | { readonly kind: 'cascade-completed'; readonly turn: number; readonly completed: readonly PlayerId[] }
   /** A player has no flagship, but nothing has ended the game. */
-  | { readonly kind: 'flagship-lost'; readonly turn: number; readonly player: PlayerId };
+  | { readonly kind: 'flagship-lost'; readonly turn: number; readonly player: PlayerId }
+  /** Orders refused at Emission because the player had already sent one to that unit this turn (ORD-08). */
+  | { readonly kind: 'orders-refused'; readonly turn: number; readonly player: PlayerId; readonly refused: readonly SubmittedOrder[] }
+  /**
+   * The Decision phase's orders: each delivered order's ack (FB-02), the
+   * stages found to end in this phase, and where the decisions disagree with
+   * the fleets' slots.
+   */
+  | {
+      readonly kind: 'command';
+      readonly turn: number;
+      readonly acks: readonly OrderAck[];
+      readonly endings: readonly StageEnding[];
+      readonly differences: readonly string[];
+      /** Every fleet's slot once the phase settled them, and the units on the map, in order. */
+      readonly slots: ReadonlyMap<UnitId, FleetSlot>;
+      readonly units: readonly GameUnit[];
+    }
+  /** Stages that ended after the Decision phase; what follows takes effect in the next one (RES-10). */
+  | { readonly kind: 'stage-endings'; readonly turn: number; readonly endings: readonly StageEnding[] };
 
 export type Ending = 'declared' | 'capture' | 'cascade' | 'turns';
 
@@ -112,6 +139,8 @@ interface TurnWork {
   readonly fleets: readonly FleetPlan[];
   readonly movement?: MovementResult;
   readonly combat?: CombatPhase;
+  /** This turn's acks, sent home in Observation (FB-02). */
+  readonly acks: readonly OrderAck[];
 }
 
 export interface GameState {
@@ -153,7 +182,7 @@ export function advance(state: GameState, answer: Answer): Advance {
     case 'confirm':
       return emission(state, { ...requireWork(state), plans: new Map([...requireWork(state).plans, ...answer.plans]) }, []);
     case 'decide':
-      return afterDecisions(state, answer.plans);
+      return afterDecisions(state, answer);
     case 'resolve':
       return afterResolution(state, answer.outcome, answer.gameOver);
   }
@@ -222,6 +251,7 @@ const emptyWork = (plans: ReadonlyMap<PlayerId, PlayerPlan>): TurnWork => ({
   production: [],
   effects: { spoofed: new Set(), seized: new Map() },
   fleets: [],
+  acks: [],
 });
 
 /**
@@ -238,12 +268,16 @@ function emission(state: GameState, work: TurnWork, events: TurnEvent[]): Advanc
   const sent = new Map<PlayerId, readonly SubmittedOrder[]>();
   const bought = new Map<PlayerId, HijackQuote[]>();
   const guards = new Map<PlayerId, OversightQuote[]>();
+  engine = syncSlots(engine);
   for (const id of players(state)) {
     const plan = work.plans.get(id);
     if (!plan) continue;
+    // At most one order to each unit a turn (ORD-08): the first stands.
+    const { allowed, refused } = onePerUnit(plan.orders, (o) => findOwnUnit(engine, id, o.unit)?.id);
+    if (refused.length > 0) events.push({ kind: 'orders-refused', turn, player: id, refused });
     const quoted = plan.purchases.filter((q) => q.kind === 'spoof' || q.kind === 'seize').map((q) => quoteHijack(engine, setup, id, turn, q));
     const guarded = plan.purchases.filter((q) => q.kind === 'oversee').map((q) => quoteOversight(engine, setup, id, turn, q));
-    const paid = payForEmission(engine, setup, id, turn, plan.orders, quoted, guarded);
+    const paid = payForEmission(engine, setup, id, turn, allowed, quoted, guarded);
     engine = recordOrders(paid.engine, id, turn, paid.orders);
     sent.set(id, paid.orders);
     if (paid.hijacks.length > 0) bought.set(id, paid.hijacks);
@@ -267,23 +301,41 @@ function emission(state: GameState, work: TurnWork, events: TurnEvent[]): Advanc
   return {
     state: { ...state, engine, awaiting: 'decide', work: next },
     events,
-    ask: { kind: 'decide', turn, orders: sent, hijacks, oversights: guards, production: judged.notes, previous: state.previous },
+    ask: { kind: 'decide', turn, orders: sent, hijacks, oversights: guards, production: judged.notes, previous: state.previous, command: preview(engine, setup, turn) },
   };
 }
 
-/** Movement, then Combat in a game whose scenario sets damage (TURN-03). */
-function afterDecisions(state: GameState, fleets: readonly FleetPlan[]): Advance {
-  const { turn, setup, engine } = state;
+/** What settling this turn's orders would give, before any rejection or ending is judged. */
+function preview(engine: EngineState, setup: GameSetup, turn: number) {
+  const settled = settleOrders(engine, setup, turn);
+  return { slots: settled.engine.slots, acks: settled.acks };
+}
+
+/**
+ * The rest of the Decision phase: this turn's orders settled with the
+ * answer's rejections and endings (RES-01, ORD-07, RES-10), each fleet's
+ * stance and build site taken from its slot. Then Movement, and Combat in a
+ * game whose scenario sets damage (TURN-03).
+ */
+function afterDecisions(state: GameState, decisions: Decisions): Advance {
+  const { turn, setup } = state;
   const work = requireWork(state);
+  const settled = settleOrders(state.engine, setup, turn, decisions);
+  const engine = settled.engine;
   const effects = commandEffects(work.hijacks);
+  const fleets = withSlots(engine, setup, decisions.plans, settled.replaced);
+  const differences = slotDifferences(engine, decisions.plans, effects);
   const movement = runMovementPhase(engine.map, engine.units, fleets, setup.parameters.engageRange ?? 1, effects);
-  const events: TurnEvent[] = [{ kind: 'movement', turn, result: movement }];
+  const events: TurnEvent[] = [
+    { kind: 'command', turn, acks: settled.acks, endings: decisions.endings ?? [], differences, slots: engine.slots, units: engine.units },
+    { kind: 'movement', turn, result: movement },
+  ];
   const damage = setup.parameters.damage;
   const combat = damage ? runCombatPhase(movement.units, movement.phase, fleets, effects, damage) : undefined;
   if (combat) events.push({ kind: 'combat', turn, phase: combat });
   const construction = engine.matter ? previewConstruction(engine, fleets, movement, combat) : undefined;
   return {
-    state: { ...state, awaiting: 'resolve', work: { ...work, effects, fleets, movement, combat } },
+    state: { ...state, engine, awaiting: 'resolve', work: { ...work, effects, fleets, movement, combat, acks: settled.acks } },
     events,
     ask: { kind: 'resolve', turn, movement, combat, construction, last: turn === state.maxTurns },
   };
@@ -300,8 +352,10 @@ function afterResolution(state: GameState, outcome: TurnOutcome, declared: boole
   const { turn, setup } = state;
   const work = requireWork(state);
   const applied = applyOutcome(state.engine, outcome, players(state), turn, work.movement, work.combat, work.fleets);
-  let engine = applied.engine;
+  const endings = outcome.endings ?? [];
+  let engine = syncSlots(queueAcks(recordEndings(applied.engine, endings), work.acks, turn));
   const events: TurnEvent[] = [{ kind: 'applied', turn, applied }];
+  if (endings.length > 0) events.push({ kind: 'stage-endings', turn, endings });
   const notes = [...work.production, ...applied.notes];
   if (notes.length) events.push({ kind: 'production', turn, notes });
 

@@ -16,7 +16,7 @@ describe('the-blockade scenario', () => {
     const scenario = await loadScenario(findWorkspaceRoot(__dirname), 'the-blockade');
     const resolution: GmResolution = {
       resolution_log: '',
-      true_state: '',
+  endings: [],
       units: scenario.units.map((u) => ({ id: u.id, owner: u.owner, class: u.class, q: u.hex.q, r: u.hex.r, strength: u.strength })),
       removed_units: [],
       messages: [],

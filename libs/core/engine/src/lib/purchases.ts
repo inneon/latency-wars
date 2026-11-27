@@ -1,7 +1,7 @@
 import { formatHex, type Hex, hexDistance } from '@latency-wars/domain';
 import { qbitIncome, spend } from '@latency-wars/economy';
 import { lightTravelTurns, type Observation, recordInstantArrival } from '@latency-wars/visibility';
-import { attackTargets, formatOrder, type PlanOrder } from './order';
+import { attackTargets, formatOrder, type PlanOrder } from '@latency-wars/command';
 import { findOwnUnit } from './orders';
 import { type EngineState, formatQbits, knowledge } from './state';
 import type { GameSetup, GameUnit, HijackQuote, IntelPurchase, OversightQuote, Purchase, SubmittedOrder } from './types';

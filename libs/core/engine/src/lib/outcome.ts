@@ -345,11 +345,6 @@ function queueMessages(
     }
     const sender = alive(m.fromUnit);
     const base = { player: known.owner, fromUnit: known.id, fromName: known.name, sentTurn: turn, hex: (sender ?? known).hex };
-    if (m.instantAck && !acked.has(known.id)) {
-      acked.add(known.id);
-      if (!sender) adjustments.push(`${m.fromUnit} didn't survive the turn to send its ack, so its player is told "No answer" (FB-09).`);
-      queued.push({ ...base, text: sender ? RECEIPT : NO_ANSWER, instant: true, reportsDestroyed: [] });
-    }
     if (!sender) {
       adjustments.push(`A message from ${m.fromUnit} was dropped: it isn't in the game at the end of the turn, so it can't send anything (FB-05).`);
       continue;
@@ -363,7 +358,7 @@ function queueMessages(
     queued.push({ ...base, text: m.text, instant: false, reportsDestroyed });
   }
 
-  // Every instant order is answered (ORD-09), even if no ack was written for it.
+  // Every instant order is answered (ORD-09).
   for (const order of instantOrders) {
     if (!order.recipient || acked.has(order.recipient)) continue;
     acked.add(order.recipient);

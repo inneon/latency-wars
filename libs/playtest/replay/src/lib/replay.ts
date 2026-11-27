@@ -231,6 +231,8 @@ export interface Replay {
 interface TurnEvents {
   state?: Extract<PlaytestEvent, { type: 'state' }>;
   resolution?: Extract<PlaytestEvent, { type: 'setup' | 'gm_resolution' }>['resolution'];
+  /** Every fleet's doctrine and active order once the Decision phase settled them, as text. */
+  slots?: string;
   statements: Extract<PlaytestEvent, { type: 'qbits' }>['statements'];
   matter: Extract<PlaytestEvent, { type: 'matter' }>['statements'];
   production: string[];
@@ -293,6 +295,9 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
         break;
       case 'gm_resolution':
         at(e.turn).resolution = e.resolution;
+        break;
+      case 'command':
+        at(e.turn).slots = e.slots;
         break;
       case 'state':
         at(e.turn).state = e;
@@ -436,7 +441,7 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
             }),
       gm: t.resolution && {
         log: t.resolution.resolution_log,
-        trueState: t.resolution.true_state,
+        trueState: t.resolution.true_state ?? t.slots ?? '',
         rulings: t.resolution.rulings,
         messages: t.resolution.messages,
       },

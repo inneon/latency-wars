@@ -117,6 +117,10 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: engine handled ${e.notes.length} production and construction event(s)`;
     case 'construction':
       return `Turn ${e.turn}: engine worked out ${e.phase.outcomes.length} build outcome(s), ${e.phase.built.length} completed, ${e.phase.differences.length} difference(s) from the GM (ECON-03)`;
+    case 'command':
+      return `Turn ${e.turn}: engine settled ${e.acks.length} order(s) (${e.acks.filter((a) => a.ack === 'stale').length} stale, ${e.acks.filter((a) => a.ack === 'rejected').length} rejected), ${e.differences.length} difference(s) from the GM`;
+    case 'stage_endings':
+      return `Turn ${e.turn}: ${e.endings.length} stage(s) ended (RES-10)`;
     case 'seeded':
       return `Turn ${e.turn}: ${e.player}'s ${e.reports.length} seeded unit(s) reported (QBIT-11)`;
     case 'shake':

@@ -1,7 +1,7 @@
 import { renderCombatPhase, renderConstructionPhase, renderMatterStatement, renderMovementPhase, renderStatement } from '@latency-wars/playtest-briefing';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
-import type { Feedback, GmDecisions, GmFeedback, GmResolution, LoggedPlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
+import type { Feedback, GmDecisions, GmFeedback, LoggedGmResolution, LoggedPlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
 import { orderText } from '@latency-wars/playtest-replay';
 import type { AgentUsage } from '../types/usage';
 
@@ -50,7 +50,7 @@ function gmDecisions(d: GmDecisions): string {
   return [d.rulings.length ? `#### Rulings\n\n${rulingsTable(d.rulings)}` : '', details('GM write-up', d.decision_log), table].filter(Boolean).join('\n\n');
 }
 
-function gmResolution(r: GmResolution): string {
+function gmResolution(r: LoggedGmResolution): string {
   const units = [
     '| Unit | Owner | Hex | Strength |',
     '|---|---|---|---|',
@@ -59,8 +59,25 @@ function gmResolution(r: GmResolution): string {
   return [
     `#### Rulings\n\n${rulingsTable(r.rulings)}`,
     details('GM write-up', r.resolution_log),
-    details('True state', `${units}\n\n${r.true_state}`),
+    details('True state', r.true_state === undefined ? units : `${units}\n\n${r.true_state}`),
     r.game_over ? `**Game over:** ${r.outcome}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+type CommandEvent = Extract<PlaytestEvent, { type: 'command' }>;
+
+const endingLine = (e: CommandEvent['endings'][number]) => `- \`${e.unit}\`: ${e.ending}${e.reason ? ` (${e.reason})` : ''}`;
+
+/** The Decision phase's orders as the engine settled them: acks, endings, differences from the GM, and every fleet's slot. */
+function commandSection(e: CommandEvent): string {
+  const acks = e.acks.map((a) => `- \`${a.unit}\`, sent turn ${a.sentTurn}: ${a.order}. **${a.ack}**${a.continues ? ', continuing' : ''}${a.reason ? `: ${a.reason}` : ''}`);
+  return [
+    acks.length ? `#### Acks (FB-02)\n\n${acks.join('\n')}` : '',
+    e.endings.length ? `#### Stages ended in Decision (RES-10)\n\n${e.endings.map(endingLine).join('\n')}` : '',
+    e.differences.length ? `#### Where the GM's decisions differ from the slots\n\n${e.differences.map((d) => `- ${d}`).join('\n')}` : '',
+    details('Doctrines and active orders', e.slots),
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -85,7 +102,9 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       e.type === 'qbits' ||
       e.type === 'matter' ||
       e.type === 'production' ||
-      e.type === 'construction'
+      e.type === 'construction' ||
+      e.type === 'command' ||
+      e.type === 'stage_endings'
     ) {
       if (e.turn !== currentTurn) {
         currentTurn = e.turn;
@@ -115,6 +134,8 @@ export function renderTranscript(scenario: Scenario, events: PlaytestEvent[]): s
       if (e.type === 'matter') out.push(`#### Matter ledger\n\n${e.statements.map((st) => `- **${name(st.player)}**: ${renderMatterStatement(st)}`).join('\n')}`);
       if (e.type === 'production') out.push(`#### Shipyards and construction (engine)\n\n${e.notes.map((n) => `- ${n}`).join('\n')}`);
       if (e.type === 'construction') out.push(`#### Construction (engine)\n\n${renderConstructionPhase(e.phase)}`);
+      if (e.type === 'command') out.push(`### Orders (engine)`, commandSection(e));
+      if (e.type === 'stage_endings') out.push(`#### Stages ended this turn (RES-10)\n\n${e.endings.map(endingLine).join('\n')}`);
     } else if (e.type === 'engine') {
       const lines = [
         ...e.overrides.map((o) => `> - **GM override** of \`${o.unit_id}\` (${o.rule_ids.join(', ') || 'no rule cited'}): ${o.reason}`),

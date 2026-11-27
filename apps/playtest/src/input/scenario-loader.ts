@@ -51,6 +51,12 @@ export async function loadScenario(workspaceRoot: string, scenario: string, pers
     },
     parameters: file.parameters,
     units: file.units.map(({ hex: [q, r], ...unit }) => ({ ...unit, hex: { q, r } })),
+    doctrines: Object.fromEntries(
+      Object.entries(file.doctrines).map(([id, { stance, home }]) => [
+        id,
+        { ...(stance ? { stance } : {}), ...(home ? { home: 'hex' in home ? { hex: { q: home.hex[0], r: home.hex[1] } } : home } : {}) },
+      ]),
+    ),
     rules: await Promise.all(
       file.rules.map(async (p) => ({ path: p, content: await readFile(path.join(workspaceRoot, p), 'utf8') })),
     ),

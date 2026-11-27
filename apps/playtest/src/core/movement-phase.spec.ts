@@ -17,7 +17,7 @@ const unit = (id: string, owner: string, cls: PlaytestUnit['class'], at: Hex, sp
   strength,
 });
 const decide = (unit: string, d: Partial<FleetDecision> = {}): FleetDecision => ({ unit, move: 'hold', order: 'none', stance: 'balanced', evading: false, ...d });
-const gm = (...decisions: FleetDecision[]): GmDecisions => ({ decision_log: '', decisions, rulings: [] });
+const gm = (...decisions: FleetDecision[]): GmDecisions => ({ decision_log: '', decisions, rulings: [], rejections: [], endings: [] });
 
 const home = hex(0, -6);
 const redFlagship = unit('red-flagship', 'red', 'flagship', home);

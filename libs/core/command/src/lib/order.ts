@@ -2,13 +2,12 @@ import { formatHex, type Hex, type UnitId } from '@latency-wars/domain';
 import type { Stance } from '@latency-wars/engagement';
 
 /*
- * An order as a player sends it. The engine holds it structured and hands it
- * on in the rules' notation; what a fleet makes of it (delivery, hand-over
- * between stages, fallback timing) is still the GM's to rule on (RES-01).
+ * An order as a player sends it, structured (ORD-01, ORD-11), and its notation
+ * for the GM, the players' outboxes and the reports. `slot.ts` checks an order
+ * on delivery and carries it from stage to stage.
  *
  * Every part but the objective is optional, because the rules give each a
- * default (ORD-01). Nothing here fills a default in: that is the lifecycle's
- * job, once the engine runs it.
+ * default (ORD-01).
  */
 
 /** A site a `Defend` order holds: a hex, or a node's hex. */

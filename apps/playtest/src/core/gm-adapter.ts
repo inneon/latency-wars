@@ -1,5 +1,5 @@
 import type { ActiveOrder } from '@latency-wars/engagement';
-import { type EngineState, type FleetPlan, type GameUnit, moves, type Override, type ReportedUnit, type TurnOutcome } from '@latency-wars/engine';
+import { type Decisions, type EngineState, type FleetPlan, type GameUnit, moves, type Override, type ReportedUnit, type StageEnding, type TurnOutcome } from '@latency-wars/engine';
 import type { MoveIntent } from '@latency-wars/movement';
 import type { EngineOverride, FleetDecision, GmDecisions, GmResolution, UnitState } from '@latency-wars/playtest-contracts';
 
@@ -27,9 +27,24 @@ export function toOutcome(resolution: GmResolution): TurnOutcome {
   return {
     units: resolution.units.map(reported),
     removed: resolution.removed_units.map(reported),
-    messages: resolution.messages.map((m) => ({ fromUnit: m.from_unit, text: m.text, instantAck: m.instant_ack, reportsDestroyed: m.reports_destroyed })),
+    messages: resolution.messages.map((m) => ({ fromUnit: m.from_unit, text: m.text, reportsDestroyed: m.reports_destroyed })),
     builds: resolution.builds,
     overrides: resolution.overrides.map((o) => ({ unitId: o.unit_id, reason: o.reason, ruleIds: o.rule_ids })),
+    endings: resolution.endings.map(
+      (e): StageEnding => ({
+        unit: e.unit,
+        ending: e.ending === 'completed' ? { kind: 'completed' } : e.ending === 'target_lost' ? { kind: 'target-lost' } : { kind: 'failed', reason: e.reason ?? '' },
+      }),
+    ),
+  };
+}
+
+/** The engine's view of the GM's Decision phase: each fleet's plan, and the rejections and endings the engine can't judge (RES-01, RES-10). */
+export function toDecisions(gm: GmDecisions): Decisions {
+  return {
+    plans: toPlans(gm),
+    rejections: gm.rejections.map((r) => ({ unit: r.unit, sentTurn: r.sent_turn, reason: r.reason })),
+    endings: gm.endings.map((e): StageEnding => ({ unit: e.unit, ending: e.ending === 'declined' ? { kind: 'declined', reason: e.reason } : { kind: 'failed', reason: e.reason } })),
   };
 }
 
@@ -62,7 +77,7 @@ export function toPlans(gm: GmDecisions): FleetPlan[] {
     stance: d.stance,
     evading: d.evading,
     unwilling: d.unwilling,
-    ...(d.order === 'build' && d.order_hex ? { build: { site: d.order_hex, replaced: d.build_replaced ?? false } } : {}),
+    ...(d.order === 'build' && d.order_hex ? { build: { site: d.order_hex, replaced: false } } : {}),
   }));
 }
 

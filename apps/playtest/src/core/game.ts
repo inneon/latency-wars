@@ -18,6 +18,8 @@ import {
   type TurnEvent,
   shakeNewsFor,
   webNewsFor,
+  formatOrder,
+  type StageEnding,
 } from '@latency-wars/engine';
 import {
   renderCascadeNews,
@@ -38,11 +40,13 @@ import {
   renderSeedReports,
   renderSensorPicture,
   renderWebNews,
+  renderCommandForGm,
+  renderSlots,
 } from '@latency-wars/playtest-briefing';
 import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { LOG_VERSION } from '@latency-wars/playtest-replay';
 import { askFor } from './ask';
-import { decisionProblems, toGmOverride, toOutcome, toPlans, unaccountedUnits } from './gm-adapter';
+import { decisionProblems, toDecisions, toGmOverride, toOutcome, unaccountedUnits } from './gm-adapter';
 import * as prompts from './prompts';
 
 export interface PlaytestOptions {
@@ -151,6 +155,30 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       }
       case 'flagship-lost':
         return record({ type: 'warning', message: `Turn ${e.turn}: ${e.player}'s flagship is gone, but the GM didn't declare the game over.` });
+      case 'orders-refused':
+        return record({
+          type: 'warning',
+          message: `Turn ${e.turn}: ${e.player} sent more than one order to ${e.refused.map((o) => o.unit).join(', ')}; only the first to each unit was sent (ORD-08).`,
+        });
+      case 'command':
+        return record({
+          type: 'command',
+          turn: e.turn,
+          acks: e.acks.map((a) => ({
+            unit: a.unit,
+            player: a.player,
+            sentTurn: a.sentTurn,
+            order: formatOrder(a.order),
+            ack: a.ack.kind,
+            ...(a.ack.kind === 'accepted' ? { continues: a.ack.continues } : {}),
+            ...(a.ack.kind === 'rejected' ? { reason: a.ack.reason } : {}),
+          })),
+          endings: e.endings.map(loggedEnding),
+          differences: [...e.differences],
+          slots: renderSlots(e.slots, e.units),
+        });
+      case 'stage-endings':
+        return record({ type: 'stage_endings', turn: e.turn, endings: e.endings.map(loggedEnding) });
     }
   };
 
@@ -246,12 +274,13 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
             ledgers,
             ask.previous.adjustments,
             ask.previous.notes,
+            renderCommandForGm(ask.command, engine.units),
           ),
           GmDecisions,
           { ...corrections('gm', label), check: (d) => decisionProblems(atStart, d) },
         );
         record({ type: 'gm_decisions', turn, decisions: decided });
-        return { kind: 'decide', plans: toPlans(decided) };
+        return { kind: 'decide', ...toDecisions(decided) };
       }
 
       case 'resolve': {
@@ -282,6 +311,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   }
   record({ type: 'ranking', turn: state.ending?.turn ?? state.turn, rows: ranking(state.engine, scenario) });
   const final = latest;
+  const truth = prompts.truthAtEnd(state.engine.units, state.engine.slots);
 
   // Debrief: each player answers in their own conversation, so they remember the game they played.
   // The GM's conversation holds every turn, so its debrief goes to a new one with the game's record.
@@ -289,7 +319,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
   // feedback still counts.
   const failed = (who: string, what: string) => (err: unknown) =>
     record({ type: 'warning', message: `${who}'s ${what} failed, so it is missing: ${firstLine(err)}` });
-  const gmDebrief = prompts.gmDebriefPrompt(final, gameRecord(events));
+  const gmDebrief = prompts.gmDebriefPrompt(final, truth, gameRecord(events));
   const askGmDebrief = () => askFor(agents.newGmDebriefer(), 'debrief', gmDebrief, GmFeedback);
   await Promise.all([
     askGmDebrief()
@@ -300,7 +330,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       })
       .then((feedback) => record({ type: 'gm_feedback', feedback }), failed('The GM', 'debrief')),
     ...scenario.players.map((p) =>
-      askFor(player(p.id), 'debrief', prompts.playerDebriefPrompt(final), Feedback).then(
+      askFor(player(p.id), 'debrief', prompts.playerDebriefPrompt(final, truth), Feedback).then(
         (feedback) => record({ type: 'player_feedback', player: p.id, feedback }),
         failed(p.name, 'debrief'),
       ),
@@ -342,6 +372,9 @@ function composeReports(
     }),
   );
 }
+
+/** A stage ending as the event log records it. */
+const loggedEnding = ({ unit, ending }: StageEnding) => ({ unit, ending: ending.kind, ...('reason' in ending ? { reason: ending.reason } : {}) });
 
 /** Each submission as the engine takes it: orders and qBit purchases. */
 function plansOf(submissions: ReadonlyMap<string, PlayerTurn>): Map<string, PlayerPlan> {

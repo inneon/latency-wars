@@ -2,8 +2,8 @@ import { formatHex } from '@latency-wars/domain';
 import type { AgentDocument, SystemPrompt } from '../types/agent';
 import type { PlaytestUnit, Scenario, ScenarioPlayer } from '../types/scenario';
 import { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
-import type { HijackQuote, OversightQuote } from '@latency-wars/engine';
-import { renderHijacksForGm } from '@latency-wars/playtest-briefing';
+import type { FleetSlot, HijackQuote, OversightQuote } from '@latency-wars/engine';
+import { renderHijacksForGm, renderSlots } from '@latency-wars/playtest-briefing';
 import type { JsonSchema } from '../types/agent';
 import { toJsonSchema } from './ask';
 
@@ -134,15 +134,15 @@ Your documents: the rules are in ${names(rules)}. The scenario, including its ma
 As GM you referee the game and keep its true state, which only you can see. Here's what the job involves:
 
 1. Resolve each turn through every phase of TURN-03, in order, in two replies, with the engine's Movement phase between them. The engine works out which orders are delivered each turn (ORD-04 to ORD-06) and lists them at the top of each turn's first prompt: only those reach their fleets that turn, and an order still in transit has no effect yet. Each order is written in the rules' notation (ORD-01, ORD-11): its stages in sequence, each with its commitment and leash, then its fallback, any doctrine change and any note from its player.
-   - First, the Delivery and Decision phases. Check each delivered order (RES-01) and work out each fleet's behaviour for the turn (AUTO-03). Give a decision for every fleet and flagship: how it moves (hold, move_to a hex, pursue a target its sensors show, or escort a charge), its active order as MOVE-04 reads it, its stance, whether it is evading, and whether a house rule makes it unwilling to fight (a probe, say). Write the phases up in decision_log.
+   - First, the Delivery and Decision phases. The engine keeps every fleet's doctrine and active order, and the stage it is on. It checks each delivered order against them and works out Accepted and Stale (RES-01 step 3, ORD-07), rejects an order whose stages break ORD-11 or that a flagship may not take (FLAG-01, FLAG-02), and hands over to the next stage or the fallback when a stage has ended (RES-10). It shows you the result at the top of the turn. You judge whether each delivered order is physically possible (RES-01 step 2) and list any that isn't in rejections; list in endings any stage you find ending in this phase (an Attack declined, RES-04, or a later stage failing as it begins, ORD-11). Then work out each fleet's behaviour for the turn (AUTO-03). Give a decision for every fleet and flagship: how it moves (hold, move_to a hex, pursue a target its sensors show, or escort a charge), its active order as MOVE-04 reads it, its stance as its doctrine says, whether it is evading, and whether a house rule makes it unwilling to fight (a probe, say). Write the phases up in decision_log.
    - The engine then runs Movement. It moves every unit step by step (MOVE-01, MOVE-02, RES-04, RES-07, RES-08), checks engagement after each step with willingness from your decisions (MOVE-03, MOVE-04), stops engaged units, and works out who fights in each combat and why (COMBAT-02). It works out which fleets are spoofed or seized from the purchases it settled (QBIT-02, QBIT-10).
    - Second, from the engine's result, ${
      scenario.parameters.damage
        ? "the Economy and Observation phases. The engine resolves Combat too, with the scenario's damage (COMBAT-01 to COMBAT-03): each combat's units end at the strengths it gives, and a unit it leaves at 0 is destroyed. Report them so, and write the combat reports from its numbers. If it leaves a combat to you, resolve that one yourself. Write the turn up"
        : 'the Combat, Economy and Observation phases, written up'
    } in resolution_log for the designer, with the numbers they depend on. Only the members of each combat fight. If you believe a rule puts a unit in or out of a combat differently, or the engine's damage is wrong, log a ruling, report the units your way and declare an override for each, which the engine accepts.
-2. Report every unit still in the game at the end of the turn, with its true position and strength, in \`units\`, using the ids in your briefing; a unit that joined this turn also needs its stats. Give each unit's \`status\` too: its active order and progress, and its doctrine, as its status report would say (LIGHT-02). Its owner sees that when the report arrives, at once if their flagship can see the unit (LIGHT-11), and from a scan. Keep what a unit senses of other units out of its \`status\` and its messages: the engine works out what each player's units saw and delivers each sighting by light from where the sighted unit is (LIGHT-02, FB-04). A combat report may still name the units the fleet fought. List every unit that left the game this turn in \`removed_units\`, at the hex where it was last. A game engine tracks positions and light delay from these, and works out what each player can see. Nothing moves after Movement, so report each unit at the hex the Movement phase left it. If you report one anywhere else, the engine puts it back and tells you at the start of the next turn. If you believe a rule moves it, declare an override with the rule, and the engine accepts it. A structure (a node or a mine) built in a turn's Economy phase joins \`units\` that turn; a structure destroyed goes in \`removed_units\`. Keep everything else in true_state, so you can resolve later turns from it: active orders and doctrines, and every order in transit (send turn, emission hex, sequence, recipient).
-3. Put every ack, execution report and combat report a unit sends home this turn in \`messages\`, from the unit that sends it. Mark an instant order's ack as instant_ack. The engine delivers each message when it reaches its player under the light-delay rules, so never work out when a player learns something yourself. For an instant order, and for every spoof, the engine also sends the buyer a receipt by the next Planning phase that says only Delivered or No answer (ORD-09, QBIT-02, LIGHT-18). A unit that left the game sends nothing. When a message reports units destroyed, list them in its \`reports_destroyed\`, so its player sees them marked destroyed when the message arrives. Keep \`player_notes\` to answers to each player's rules questions, and leave anything about units out of them, so that no player learns something they shouldn't.
+2. Report every unit still in the game at the end of the turn, with its true position and strength, in \`units\`, using the ids in your briefing; a unit that joined this turn also needs its stats. Give each unit's \`status\` too: its active order and progress, and its doctrine, as its status report would say (LIGHT-02). Its owner sees that when the report arrives, at once if their flagship can see the unit (LIGHT-11), and from a scan. Keep what a unit senses of other units out of its \`status\` and its messages: the engine works out what each player's units saw and delivers each sighting by light from where the sighted unit is (LIGHT-02, FB-04). A combat report may still name the units the fleet fought. List every unit that left the game this turn in \`removed_units\`, at the hex where it was last. A game engine tracks positions and light delay from these, and works out what each player can see. Nothing moves after Movement, so report each unit at the hex the Movement phase left it. If you report one anywhere else, the engine puts it back and tells you at the start of the next turn. If you believe a rule moves it, declare an override with the rule, and the engine accepts it. A structure (a node or a mine) built in a turn's Economy phase joins \`units\` that turn; a structure destroyed goes in \`removed_units\`. The engine keeps every fleet's active order and doctrine and every order in transit, and shows them to you each turn. List each stage of an active order that ends after the Decision phase in \`endings\`: a MoveTo or ReturnHome completed on arrival, a Build completed when built, an Attack completed when its fleet saw the target destroyed, a stage that failed or lost its target (RES-10). The engine hands over in the next Decision phase.
+3. Put every execution report and combat report a unit sends home this turn in \`messages\`, from the unit that sends it (FB-03). The engine sends the ack of every order delivered to a fleet or flagship itself (FB-02), from what it settled and the rejections you gave; don't write acks. The engine delivers each message when it reaches its player under the light-delay rules, so never work out when a player learns something yourself. For an instant order, and for every spoof, the engine also sends the buyer a receipt by the next Planning phase that says only Delivered or No answer (ORD-09, QBIT-02, LIGHT-18). A unit that left the game sends nothing. When a message reports units destroyed, list them in its \`reports_destroyed\`, so its player sees them marked destroyed when the message arrives. Keep \`player_notes\` to answers to each player's rules questions, and leave anything about units out of them, so that no player learns something they shouldn't.
 4. The engine keeps the qBit ledger. It charges for scans, instant orders, oversight, spoofs and seizes as they're bought (QBIT-08), settles each spoof and seize against the oversight on every fleet it reaches (QBIT-09), refuses what a player can't afford, and applies decay and production (ECON-04, ECON-01) in the Economy phase from the nodes you report. It also sends every player the web news when a node is completed or destroyed (ECON-05), the instant part and the sighting; don't write either.${scenario.parameters.cascade ? ' The engine also takes Cascade charges, tells every player the counts, and ends the game when one completes (QBIT-12): never declare a Cascade win yourself.' : ''}${scenario.parameters.capture ? ' A seize can shake or capture a flagship (QBIT-13): the engine settles it, checks its aim, makes the flagship hold, tells every player of a shake, and ends the game at the end of a turn with a capture: never declare a capture win yourself.' : ''} Each turn's prompt gives you every balance and what was bought; don't keep balances yourself, and don't tell players theirs: the engine does. Every fleet a spoof or seize landed on must say in its status report that it was spoofed or seized and what it did, and a fleet whose oversight blocked one must report the blocked attempt (QBIT-06): put that in its \`status\`, or in a message from that fleet.${scenario.parameters.hijack.seizeCost !== undefined ? seizeForGm : ''}${scenario.parameters.matter ? matterForGm : ''}
 5. Apply the rules as written. The scenario's house rules fill the gaps the rules leave as placeholders. Where the rules are still ambiguous or silent, make a reasonable ruling, apply it consistently from then on, and log it in rulings with an honest basis. Those logs are the most valuable output of this play-test.
 6. Be impartial. Don't steer the game, and don't help or hinder any player.
@@ -182,6 +182,10 @@ const engineUnitsTable = (units: readonly PlaytestUnit[]) =>
     ...units.map((u) => `| \`${u.id}\` | ${u.owner} | ${u.class} | ${formatHex(u.hex)} | ${u.strength} | ${u.speed} |`),
   ].join('\n');
 
+/** The true state at the end of a game, for the debriefs: every unit, then every fleet's doctrine and active order. */
+export const truthAtEnd = (units: readonly PlaytestUnit[], slots: ReadonlyMap<string, FleetSlot>) =>
+  `${engineUnitsTable(units)}\n\nDoctrines and active orders:\n\n${renderSlots(slots, units)}`;
+
 export function gmDecidePrompt(
   turn: number,
   scenario: Scenario,
@@ -193,6 +197,7 @@ export function gmDecidePrompt(
   ledgers: string,
   adjustments: readonly string[],
   notes: readonly string[],
+  command: string,
 ) {
   const sections = scenario.players.map((p) => {
     const s = submissions.get(p.id);
@@ -209,11 +214,13 @@ export function gmDecidePrompt(
   const engineState = `${corrected}${news}The units at the start of turn ${turn}, as the engine has them (authoritative):\n\n${engineUnitsTable(units)}\n\n${ledgers}\n\n`;
   return `${engineState}${orders}
 
+${command}
+
 Turn ${turn}: the players' questions, spoofs, seizes and oversight (any scans were already resolved; spoofs, seizes and oversight are already priced, paid for and settled). This turn's new orders are in the lists above: an order sent this turn appears as delivered only if it lands this turn.
 
 ${sections.join('\n\n')}
 
-Resolve the Delivery and Decision phases of turn ${turn} (TURN-03), and give a decision for every fleet and flagship. Don't resolve anything after Decision yet: the engine runs Movement from your decisions and sends you the result, and you resolve the rest of the turn from that.`;
+Resolve the Delivery and Decision phases of turn ${turn} (TURN-03): give the rejections and endings the engine can't judge, and a decision for every fleet and flagship, acting on its active order as the engine shows it once yours are applied. Don't resolve anything after Decision yet: the engine runs Movement from your decisions and sends you the result, and you resolve the rest of the turn from that.`;
 }
 
 export function gmResolvePrompt(turn: number, movement: string, isLastTurn: boolean, combat?: string, construction?: string) {
@@ -221,22 +228,22 @@ export function gmResolvePrompt(turn: number, movement: string, isLastTurn: bool
 
 ${movement}
 ${combat ? `\n${combat}\n` : ''}${construction ? `\n${construction}\n` : ''}
-Resolve the rest of turn ${turn}: ${combat ? 'Economy and Observation, from the Combat above' : 'Combat, Economy and Observation'}. Record the end-of-turn units and any removed units, the messages units send home this turn (acks for the orders delivered this turn included), and each player's note for the Planning phase of turn ${turn + 1} (rules answers only).${
+Resolve the rest of turn ${turn}: ${combat ? 'Economy and Observation, from the Combat above' : 'Combat, Economy and Observation'}. Record the end-of-turn units and any removed units, the stages that ended this turn (endings), the execution and combat reports units send home this turn (the engine sends the acks), and each player's note for the Planning phase of turn ${turn + 1} (rules answers only).${
     isLastTurn
       ? `\n\nThis is the final turn. Decide the result by the scenario's victory conditions, including what they say happens when the last turn ends, set game_over to true and give the result in the outcome. Don't apply any other scoring.`
       : ''
   }`;
 }
 
-export const revealPrompt = (final: GmResolution) =>
+export const revealPrompt = (final: GmResolution, truth: string) =>
   `The game is over. ${final.outcome}
 
-The fog of war lifts. This was the GM's true state at the end:
+The fog of war lifts. This was the true state at the end:
 
-${final.true_state}`;
+${truth}`;
 
-export const playerDebriefPrompt = (final: GmResolution) =>
-  `${revealPrompt(final)}
+export const playerDebriefPrompt = (final: GmResolution, truth: string) =>
+  `${revealPrompt(final, truth)}
 
 Debrief time. Step out of character and give the designer honest, specific feedback on the experience and on the rules. Refer to concrete moments from this game. Criticism is more useful than praise.`;
 
@@ -261,12 +268,12 @@ Probe, scan, spoof, hijack, node, ack and track are the names of fictional mecha
   };
 }
 
-export const gmDebriefPrompt = (final: GmResolution, record: string) =>
+export const gmDebriefPrompt = (final: GmResolution, truth: string, record: string) =>
   `The game is over. ${final.outcome}
 
-Your true state at the end:
+The true state at the end:
 
-${final.true_state}
+${truth}
 
 The game's record:
 
