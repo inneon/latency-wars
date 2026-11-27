@@ -121,7 +121,7 @@ export function HexMap({ radius, impassable = [], features = [], colours = {}, c
           <stop offset="1" style={{ stopColor: THEME.star, stopOpacity: 0 }} />
         </radialGradient>
       </defs>
-      <rect x={box.x - pad} y={box.y - pad} width={box.width + 2 * pad} height={box.height + 2 * pad} rx={SIZE * 0.8} style={{ fill: THEME.space }} />
+      <rect className="lw-backdrop" x={box.x - pad} y={box.y - pad} width={box.width + 2 * pad} height={box.height + 2 * pad} rx={SIZE * 0.8} style={{ fill: THEME.space }} />
 
       <g>
         {hexes.map((h) => (

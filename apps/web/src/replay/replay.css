@@ -99,11 +99,58 @@
 .replay-newer button:focus-visible, .replay-watch-controls :is(button, a):focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 
 /* Watch mode: the map fills the window, with the game's state laid over it. */
-.replay.replay-watching { max-width: none; height: 100vh; padding: 0; overflow: hidden; background: var(--lw-map-space, #131a2c); color: #e6e9f2; }
+.replay.replay-watching { 
+  max-width: none; 
+  height: 100vh; 
+  padding: 0; 
+  overflow: hidden; 
+  color: #e6e9f2; 
+  /* A shade darker than the map's space colour, to make up for the light the stars and nebula add. */
+  background-color: #0d1322;
+  /* Layer multiple radial gradients to act as stars with soft glows.
+     Cores sit below full white and halos are faint, so the stars read as distant
+     and don't compete with the map's sun or the unit markers. */
+  /* Layers are listed top first: vignette, bright stars, faint stars, nebula. */
+  background-image:
+    /* Vignette: darken the edges to pull the eye to the board */
+    radial-gradient(ellipse at center, transparent 55%, rgb(0 0 0 / 0.45) 100%),
+    /* Pinpoint core with a wide cool-white glow */
+    radial-gradient(6px 6px at 20% 30%, rgb(255 255 255 / 0.7) 15%, rgb(220 235 255 / 0.16) 45%, transparent 100%),
+    /* Tiny star with a soft halo */
+    radial-gradient(4px 4px at 40% 70%, rgb(255 255 255 / 0.55) 20%, rgb(255 255 255 / 0.1) 55%, transparent 100%),
+    /* Warm star with a large aura, like a small far-off sun */
+    radial-gradient(7px 7px at 75% 20%, rgb(255 250 235 / 0.75) 12%, rgb(255 225 170 / 0.18) 45%, transparent 100%),
+    /* Small star with a gentle glow */
+    radial-gradient(5px 5px at 85% 60%, rgb(255 255 255 / 0.6) 15%, rgb(255 255 255 / 0.12) 50%, transparent 100%),
+    /* Distant blue-tinted pinpoint */
+    radial-gradient(3.5px 3.5px at 55% 85%, rgb(238 244 255 / 0.5) 20%, rgb(200 220 255 / 0.1) 55%, transparent 100%),
+    /* Faint background stars: no halo, for depth */
+    radial-gradient(1.5px 1.5px at 30% 40%, rgb(255 255 255 / 0.35) 50%, transparent 100%),
+    radial-gradient(1px 1px at 70% 80%, rgb(220 230 255 / 0.3) 50%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 60% 25%, rgb(255 245 230 / 0.28) 50%, transparent 100%),
+    /* Nebula: two large, faint clouds of colour */
+    radial-gradient(ellipse 60% 45% at 15% 85%, rgb(120 60 160 / 0.12), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 85% 15%, rgb(40 110 160 / 0.1), transparent 70%);
+
+  /* Star layers tile at mismatched sizes so the repetition looks random;
+     the vignette and nebula cover the window once. */
+  background-size:
+    100% 100%,
+    350px 350px, 210px 210px, 470px 470px, 290px 290px, 190px 190px,
+    110px 110px, 170px 170px, 230px 230px,
+    100% 100%, 100% 100%;
+  background-repeat:
+    no-repeat,
+    repeat, repeat, repeat, repeat, repeat,
+    repeat, repeat, repeat,
+    no-repeat, no-repeat;
+}
 .replay-watching > .replay-error, .replay-watching > .replay-quiet, .replay-watching > .replay-empty { position: absolute; top: 1rem; left: 1.25rem; z-index: 1; }
 .replay-watch { position: relative; height: 100%; }
 .replay-watch-map { position: absolute; inset: 0; }
 .replay-watch-map .lw-map { width: 100%; height: 100%; }
+/* The page draws the space background in watch mode, so hide the map's own: any tint shows as a box around the board. */
+.replay-watch-map .lw-backdrop { fill-opacity: 0; }
 .replay-watch-caption { position: absolute; top: 1rem; left: 1.25rem; max-width: 24rem; pointer-events: none; text-shadow: 0 1px 3px #131a2c; }
 .replay-watch-caption .replay-newer { pointer-events: auto; margin: 0.4rem 0 0; }
 .replay-watch-turn { font-size: 2.4rem; font-weight: 700; line-height: 1.1; margin: 0.2rem 0; font-variant-numeric: tabular-nums; }
