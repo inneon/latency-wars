@@ -119,6 +119,8 @@ function describe(e: PlaytestEvent): string {
       return `Turn ${e.turn}: engine worked out ${e.phase.outcomes.length} build outcome(s), ${e.phase.built.length} completed, ${e.phase.differences.length} difference(s) from the GM (ECON-03)`;
     case 'seeded':
       return `Turn ${e.turn}: ${e.player}'s ${e.reports.length} seeded unit(s) reported (QBIT-11)`;
+    case 'shake':
+      return `Turn ${e.turn}: ${e.shaken.map((s) => `${s.by} shook ${s.flagship}`).join(', ')} (QBIT-13)`;
     case 'capture':
       return `Turn ${e.turn}: ${e.captured.map((c) => `${c.by} captured ${c.flagship}`).join(', ')} (QBIT-13)`;
     case 'cascade':

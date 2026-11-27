@@ -1,4 +1,4 @@
-import { LOG_VERSION, type PlaytestEvent } from './event-log';
+import { type HijackQuote, LOG_VERSION, type PlaytestEvent } from './event-log';
 import { blueFlagship, header, redFlagship, resolved, scenarioHeader, state, unit } from './fixtures.spec-helper';
 import { buildReplay, orderText } from './replay';
 
@@ -202,6 +202,82 @@ describe('buildReplay', () => {
     const replay = buildReplay('run', events);
     expect(replay.frames[1]).toMatchObject({ gameOver: true, outcome: "Blue captured Red's flagship (QBIT-13) in turn 1: Blue wins." });
     expect(replay.outcome).toBe("Blue captured Red's flagship (QBIT-13) in turn 1: Blue wins.");
+  });
+
+  describe('seizes and captures (QBIT-10, QBIT-13)', () => {
+    const redLine = unit('red-line', 'red', 2, 1, { strength: 4 });
+    const units = [...start, redLine];
+    const seize = (turn: number, by: string, target: string, extra: Partial<HijackQuote> = {}): PlaytestEvent => ({
+      type: 'hijacks',
+      turn,
+      player: by,
+      quotes: [{ kind: 'seize', target, order: '', strength: 5, cost: 20, breakdown: '', reaches: [target], ...extra }],
+      oversights: [],
+    });
+    const turnOf = (turn: number, extra: PlaytestEvent[] = []): PlaytestEvent[] => [...extra, resolved(turn), state(turn, units)];
+    const game = (...turns: PlaytestEvent[][]) => buildReplay('run', [header(units), state(0, units), ...turns.flat()]);
+
+    it('lists each seize with what became of it, where it was sent from and where it was aimed', () => {
+      const replay = game(
+        turnOf(1, [
+          seize(1, 'blue', 'red-line', { order: 'Attack(red-raider)', outcome: 'landed', aimedAt: { q: 2, r: 1 } }),
+          seize(1, 'red', 'blue-flagship', { capture: true, guard: 6.5, outcome: 'blocked', blocked: [{ unit: 'blue-flagship', oversight: 6.5 }] }),
+          { type: 'movement', turn: 1, phase: { steps: 0, moved: [], engagements: [], combats: [], bystanders: [], spoofed: [], seized: [{ unit: 'red-line', by: 'blue' }], notes: [] } },
+        ]),
+      );
+      const frame = replay.frames[1];
+      expect(frame?.seizes).toEqual([
+        expect.objectContaining({ by: 'blue', target: 'red-line', owner: 'red', flagship: false, outcome: 'landed', from: blueFlagship.hex, at: redLine.hex, aimedAt: { q: 2, r: 1 }, order: 'Attack(red-raider)' }),
+        expect.objectContaining({ by: 'red', target: 'blue-flagship', owner: 'blue', flagship: true, outcome: 'blocked', guard: 6.5, oversight: 6.5, from: redFlagship.hex, at: blueFlagship.hex }),
+      ]);
+      expect(frame?.seized).toEqual([{ unit: 'red-line', by: 'blue' }]);
+    });
+
+    it("works out what became of a seize logged before the engine said, from the reasons it gave", () => {
+      const replay = game(
+        turnOf(1, [
+          seize(1, 'blue', 'red-flagship', { capture: true, fails: "red-flagship wasn't at (3, 0), where the track showed it, so the seize missed (QBIT-13)." }),
+          seize(1, 'red', 'blue-flagship', { capture: true, fails: 'blocked by oversight on every fleet it reached: seize strength 5 against blue-flagship at 9 (QBIT-09).' }),
+        ]),
+      );
+      expect(replay.frames[1]?.seizes.map((s) => s.outcome)).toEqual(['missed', 'blocked']);
+    });
+
+    it("follows a shaken flagship's command: shaken, capturable next turn, then captured or lapsed", () => {
+      const shake: PlaytestEvent = { type: 'shake', turn: 1, shaken: [{ flagship: 'red-flagship', owner: 'red', by: 'blue' }] };
+      const lapsed = game(turnOf(1, [shake]), turnOf(2), turnOf(3), turnOf(4));
+      expect(lapsed.frames.map((f) => f.command.map((c) => c.stage))).toEqual([[], ['shaken'], ['capturable'], ['lapsed'], []]);
+      expect(lapsed.frames[1]?.command[0]).toEqual({ flagship: 'red-flagship', owner: 'red', by: 'blue', shakenIn: 1, stage: 'shaken' });
+
+      const captured = game(turnOf(1, [shake]), turnOf(2), turnOf(3, [{ type: 'capture', turn: 3, captured: [{ flagship: 'red-flagship', owner: 'red', by: 'blue' }] }]));
+      expect(captured.frames[3]?.command).toEqual([{ flagship: 'red-flagship', owner: 'red', by: 'blue', shakenIn: 1, stage: 'captured' }]);
+      expect(captured.frames[3]?.gameOver).toBe(true);
+    });
+
+    it('shows a capture logged with no shake before it as captured', () => {
+      const replay = game(turnOf(1, [{ type: 'capture', turn: 1, captured: [{ flagship: 'red-flagship', owner: 'red', by: 'blue' }] }]));
+      expect(replay.frames[1]?.command).toEqual([{ flagship: 'red-flagship', owner: 'red', by: 'blue', shakenIn: 1, stage: 'captured' }]);
+    });
+
+    it("weighs each flagship's guard against the enemy's qBits, in a scenario that allows captures", () => {
+      const statement = (turn: number, player: string, production: number, closing: number) => ({
+        player, turn, opening: 0, spends: [], refusals: [], decay: 0, links: [], production, closing,
+      });
+      const qbits = (turn: number): PlaytestEvent => ({ type: 'qbits', turn, statements: [statement(turn, 'blue', 4.5, 30), statement(turn, 'red', 10, 12)] });
+      const withCapture: PlaytestEvent = {
+        type: 'scenario',
+        logVersion: LOG_VERSION,
+        scenario: { ...scenarioHeader(units), parameters: { c: 3, capture: { guard: 2 }, hijack: { seizeCost: 12 } } },
+      };
+      const replay = buildReplay('run', [withCapture, state(0, units), resolved(1), state(1, units), qbits(1), resolved(2), state(2, units), qbits(2)]);
+      expect(replay.frames[1]?.threat).toEqual([]);
+      expect(replay.frames[2]?.threat).toEqual([
+        { defender: 'blue', attacker: 'red', guard: 9, needed: 22, funds: 12 },
+        { defender: 'red', attacker: 'blue', guard: 20, needed: 33, funds: 30 },
+      ]);
+      // Without capture parameters there is nothing to weigh.
+      expect(game(turnOf(1), turnOf(2)).frames[2]?.threat).toEqual([]);
+    });
   });
 
   describe('progress', () => {

@@ -16,10 +16,12 @@ import {
   type SeedReport,
   startGame,
   type TurnEvent,
+  shakeNewsFor,
   webNewsFor,
 } from '@latency-wars/engine';
 import {
   renderCascadeNews,
+  renderShakeNews,
   renderCascadeQuote,
   renderMatter,
   renderMatterForGm,
@@ -88,6 +90,7 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
       map: scenario.map,
       parameters: scenario.parameters,
       players: scenario.players.map(({ id, name, persona }) => ({ id, name, persona: persona.id, personaName: persona.name })),
+      hints: scenario.hints !== undefined,
       units: scenario.units,
     },
   });
@@ -128,6 +131,8 @@ export async function runPlaytest({ scenario, agents, maxRounds, emit }: Playtes
         return record({ type: 'combat', turn: e.turn, phase: e.phase });
       case 'production':
         return record({ type: 'production', turn: e.turn, notes: [...e.notes] });
+      case 'shaken':
+        return record({ type: 'shake', turn: e.turn, shaken: [...e.shaken] });
       case 'captured': {
         const what = e.captured.map((c) => `${nameOf(c.by)} captured ${nameOf(c.owner)}'s flagship`).join(' and ');
         const outcome =
@@ -332,7 +337,8 @@ function composeReports(
       const nameOf = (id: string) => scenario.players.find((q) => q.id === id)?.name ?? id;
       const web = renderWebNews(webNewsFor(engine, turn), p.id, nameOf);
       const cascade = renderCascadeNews(cascadeNewsFor(engine, scenario, turn), p.id, nameOf);
-      return [p.id, [note, renderQbits(engine, p.id, turn), matter, cascade, web, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
+      const shaken = renderShakeNews(shakeNewsFor(engine, turn), p.id, nameOf);
+      return [p.id, [note, renderQbits(engine, p.id, turn), matter, shaken, cascade, web, seeded, messages, sent, picture].filter(Boolean).join('\n\n')];
     }),
   );
 }
@@ -387,6 +393,9 @@ function gameRecord(events: PlaytestEvent[]): string {
         if (!q.refused) hijackNotes.push(`- Turn ${e.turn}, ${e.player}: ${q.kind} ${q.target} → ${q.order} for ${q.cost} qBits${q.fails ? ` (failed: ${q.fails})` : ''}`);
       }
     }
+    if (e.type === 'shake') {
+      for (const s of e.shaken) cascadeNotes.push(`- Turn ${e.turn}: ${s.by} shook ${s.flagship} (QBIT-13); every player was told.`);
+    }
     if (e.type === 'capture') {
       for (const c of e.captured) cascadeNotes.push(`- Turn ${e.turn}: ${c.by} captured ${c.flagship} (QBIT-13); the game ended.`);
     }
@@ -433,7 +442,7 @@ ${engineNotes.join('\n') || '(none)'}
 ${hijackNotes.join('\n') || '(none)'}
 </spoofs>
 
-<cascade note="Cascade charges paid or refused, any Cascade that completed (QBIT-12), and any flagship captured by a seize (QBIT-13). Every player saw every Cascade count at once.">
+<cascade note="Cascade charges paid or refused, any Cascade that completed (QBIT-12), and any flagship shaken or captured by a seize (QBIT-13). Every player saw every Cascade count at once.">
 ${cascadeNotes.join('\n') || '(none)'}
 </cascade>
 

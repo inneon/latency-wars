@@ -160,3 +160,27 @@
 @media (max-width: 40rem) {
   .replay-watch-turn { font-size: 1.6rem; }
 }
+
+/* Seizes and captures */
+.replay-mark-command { color: #b07cf0; }
+.replay-mark-foiled { opacity: 0.7; }
+.replay-seizes li { margin: 0.25rem 0; }
+.replay-command { margin: 0 0 0.4rem; padding-left: 0.6rem; border-left: 3px solid var(--owner, currentColor); }
+.replay-command[data-stage='lapsed'] { opacity: 0.7; }
+.replay-tag[data-outcome='landed'], .replay-tag[data-outcome='partly'] { border-color: var(--owner, currentColor); }
+.replay-tag[data-outcome='blocked'], .replay-tag[data-outcome='missed'] { border-style: dashed; }
+.replay-seizes .replay-tag { margin-left: 0; }
+.replay-contest-line { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; opacity: 0.85; flex-wrap: wrap; }
+.replay-contest { display: inline-flex; flex-direction: column; gap: 2px; width: 6rem; }
+.replay-contest-bar { display: block; height: 4px; border-radius: 2px; }
+.replay-contest-guard { background: var(--replay-line); }
+.replay-threat figure { margin: 0.5rem 0 0; }
+.replay-threat figcaption { font-size: 0.85rem; }
+.replay-threat svg { display: block; width: 100%; max-width: 28rem; height: auto; overflow: visible; }
+.replay-threat-line { fill: none; stroke-width: 1.5; }
+.replay-threat-axis { stroke: var(--replay-line); }
+.replay-threat-now { stroke: var(--replay-line); stroke-width: 6; }
+.replay-threat-label { font-size: 7px; fill: currentColor; opacity: 0.6; }
+.replay-threat circle { stroke-width: 1.2; }
+.replay-banner { pointer-events: none; margin: 0.5rem 0 0; padding: 0.35rem 0.6rem; border-left: 3px solid var(--owner, currentColor); background: rgb(19 26 44 / 0.75); font-weight: 600; }
+.replay-banner[data-stage='lapsed'] { font-weight: 400; opacity: 0.8; }

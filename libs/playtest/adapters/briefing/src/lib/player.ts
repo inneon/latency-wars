@@ -15,6 +15,7 @@ import {
   type OversightQuote,
   type QueuedMessage,
   type SeedReport,
+  type Shake,
   type WebNews,
 } from '@latency-wars/engine';
 import type { KnowledgeEntry, KnowledgeState, Observation } from '@latency-wars/visibility';
@@ -86,6 +87,25 @@ export function renderWebNews(news: readonly WebNews[], player: string, nameOf: 
     return `- ${whose} web ${change} ${count === 1 ? 'a node' : `${count} nodes`} last turn.`;
   });
   return `## Web news (ECON-05)\n\nFelt at once through the entanglement. Where each node is arrives at light speed, as a sighting in your sensor picture.\n\n${lines.join('\n')}`;
+}
+
+/**
+ * The shaken-command section of `player`'s report (QBIT-13): every flagship a
+ * seize landed on last turn, the same for every player. Empty when none was.
+ */
+export function renderShakeNews(shakes: readonly Shake[], player: string, nameOf: (player: string) => string): string {
+  if (shakes.length === 0) return '';
+  const lines = shakes.map((s) => {
+    const who = s.by === player ? 'Your' : `${nameOf(s.by)}'s`;
+    const whose = s.owner === player ? 'your' : `${nameOf(s.owner)}'s`;
+    const loser = s.owner === player ? 'you lose' : `${nameOf(s.owner)} loses`;
+    const answer =
+      s.owner === player
+        ? " To land, that seize must be aimed at the hex where they last saw it, so moving out of their sight breaks it. If they spoof the escorts in your flagship's hex this turn, it holds in place unless its order is AtAllCosts (FLAG-03)."
+        : '';
+    return `- ${who} seize landed on ${whose} flagship in turn ${s.turn}, shaking its command. It can't be seized this turn. If ${s.by === player ? 'you land' : `${nameOf(s.by)} lands`} another seize on it in turn ${s.turn + 2}, it is captured and ${loser}.${answer}`;
+  });
+  return `## Command shaken (QBIT-13)\n\nFelt at once through the entanglement, by every player.\n\n${lines.join('\n')}`;
 }
 
 /**

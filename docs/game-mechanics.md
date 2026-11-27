@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.18)
+# Latency Wars - Game Mechanics (v0.19)
 
 ## 0. About This Document
 
@@ -54,7 +54,8 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Spoof** | A qBit action that overrides the orders of an enemy fleet, and of every other fleet of that player in its hex, for one turn (`QBIT-02`). |
 | **Seeded unit** | A unit produced carrying qBits. Each Planning phase it spends one to send its owner a free scan of itself (`QBIT-11`). |
 | **Cascade** | A win bought with qBits: `CASCADE_TURNS` consecutive charges, each announced to every player at once (`QBIT-12`). |
-| **Capture** | A seize that lands on a flagship. Its owner's command collapses, and they lose (`QBIT-13`). |
+| **Shake** | A seize that lands on a flagship. Every player is told at once, and a second one two turns later captures it (`QBIT-13`). |
+| **Capture** | A second seize landing on a flagship two turns after the shake. Its owner's command collapses, and they lose (`QBIT-13`). |
 | **Seize** | A qBit action that takes command of one enemy fleet for one turn: it follows any order, `Attack` included, and fights on the seizer's side, but never damages its own flagship (`QBIT-10`). |
 | **Oversight** | A qBit action that protects one of a player's own fleets from spoofs for one turn (`QBIT-09`). |
 | **Strength (of a command)** | The qBits paid into a spoof or an oversight beyond its price. The stronger command wins (`QBIT-09`). |
@@ -99,7 +100,7 @@ All values are placeholders, to be tuned by playtesting.
 | `HIJACK_MAX_AGE` | Oldest track a spoof can be aimed with | 1 turn | `QBIT-04` |
 | `CASCADE_CHARGE` | qBits one Cascade charge costs | Set by each scenario | `QBIT-12`. Not priced by distance. A scenario without it has no Cascade. |
 | `CASCADE_TURNS` | Consecutive charges that complete a Cascade | Set by each scenario | `QBIT-12` |
-| `CAPTURE_GUARD` | A flagship's free oversight against capture, as a multiple of its owner's qBit production in the last Economy phase | Set by each scenario | `QBIT-13`. A scenario without it doesn't allow captures. |
+| `CAPTURE_GUARD` | A flagship's free oversight against a seize, as a multiple of its owner's live web output (`ECON-01`) | Set by each scenario | `QBIT-13`. A scenario without it doesn't allow captures. |
 
 ---
 
@@ -186,6 +187,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   - the acks for instant orders and spoofs, which say only Delivered or No answer (`ORD-09`, `QBIT-02`);
   - web news: that a player's web, theirs or another's, gained or lost a node, but not which node or where (`ECON-05`);
   - every player's Cascade count, and whose Cascade lapsed (`QBIT-12`);
+  - which flagships were shaken last turn, and by whom (`QBIT-13`);
   - prices (`QBIT-08`), worked out only from what the paying player knows.
 
   Anything else the engine knows MUST NOT reach a player except at light speed.
@@ -291,7 +293,7 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ### 6.3 The flagship
 - **FLAG-01** The flagship is never willing to fight (`MOVE-04`) and can't be given an `Attack` order. Once engaged, it fights back like any unit (`COMBAT-01`). Fleets MAY be ordered to `Attack` an enemy flagship's track.
   - *Why:* zero command lag makes the flagship the best-commanded unit on the map. If it could also start fights, "lead from the front" would dominate. It should be valuable to keep near the front, not a warship.
-- **FLAG-02** The flagship can't build (`ECON-03`), and can't be spoofed (`QBIT-04`). It can be seized only where the scenario allows captures, and a seize that lands on it is a capture (`QBIT-13`).
+- **FLAG-02** The flagship can't build (`ECON-03`), and can't be spoofed (`QBIT-04`). It can be seized only where the scenario allows captures, and a seize that lands on it shakes or captures it (`QBIT-13`).
 - **FLAG-03** If a spoof or seize lands this turn on a fleet escorting the flagship (`RES-08`) from the flagship's own hex, the flagship doesn't move that turn, unless its order is `AtAllCosts`. Its order resumes the next turn.
   - *Why:* the flagship sees its escorts turn away as it happens (`LIGHT-03`), so it doesn't march on alone. The spoof still opens a gap, but the attacker has to exploit it.
 
@@ -585,11 +587,14 @@ There are two resources. qBits are information: the web in orbital zones produce
   - Every player learns every count at once, through the entangled channel (`LIGHT-18`): in each Planning phase, each player's count as of the turn before, and whose count has just lapsed to 0. Nothing about where anyone is.
   - A player whose count reaches `CASCADE_TURNS` wins at the end of that turn if their flagship is still in the game. If more than one player does so in the same turn, the game is a draw. Destroying a flagship still wins as the scenario says, and a flagship destroyed in the turn its Cascade completes doesn't win.
   - *Why:* a large web has to become a result (design doc 2.6, 8.2), and a kill alone can't always arrive in time. Decay (`ECON-04`) caps a balance at about three turns of income, so a Cascade can't be saved up: only sustained high income pays for consecutive charges. The countdown is public, so the player behind gets the turns in between to cut that income by raiding nodes, or to go for the flagship. A charging player spends on the Cascade what they would otherwise spend on oversight, so the leader is exposed while it charges.
-- **QBIT-13** **Capture (command collapse).** In a scenario that sets `CAPTURE_GUARD`, a seize MAY target the enemy flagship. It needs what any seize needs (`QBIT-04`), and no order.
-  - The flagship always has free oversight of `CAPTURE_GUARD` × its owner's qBit production in the last Economy phase (`ECON-01`), on top of any oversight its owner buys for it (`QBIT-09`). The seizer isn't told either. The seize is settled against both like any other (`QBIT-09`).
-  - If it lands, the flagship is **captured**: it holds that turn, whatever its order, but stays its owner's and fights as usual if engaged. Its owner loses at the end of that turn.
+- **QBIT-13** **Capture (command collapse).** In a scenario that sets `CAPTURE_GUARD`, a seize MAY target the enemy flagship. It needs what any seize needs (`QBIT-04`), and no order. Capture takes two such seizes, two turns apart.
+  - **Aim:** a seize on a flagship lands only if the flagship is in the hex the buyer's track shows. One that isn't misses: it is paid for, and its buyer gets **No answer** (`QBIT-02`).
+  - **Guard:** the flagship always has free oversight of `CAPTURE_GUARD` × its owner's web output as it stands in Emission: Σ (k × length²) ÷ `QBIT_DIVISOR` over the links that exist then (`ECON-01`). A node completed in the last Economy phase counts; one destroyed in the last Combat phase doesn't. Any oversight its owner buys for it adds to this (`QBIT-09`). The seizer isn't told either. The seize is settled against both like any other (`QBIT-09`).
+  - **Shake:** the first seize to land on a flagship shakes its command. The flagship holds that turn, whatever its order, but stays its owner's and fights as usual if engaged. Every player learns at once, through the entangled channel (`LIGHT-18`), whose flagship was shaken and by whom.
+  - The turn after a shake, the flagship can't be seized: a seize on it is refused, and costs nothing. That turn is its owner's to answer: to move it out of sight, kill the scout, buy oversight, or strike back.
+  - **Capture:** a seize by the same player that lands on it in the turn after that (two turns after the shake) captures it. The flagship holds that turn, and its owner loses at the end of it. If no such seize lands, the shake lapses; a later one starts again.
   - A player whose flagship is captured or destroyed in a turn loses. If every player loses in the same turn, the game is a draw.
-  - *Why:* this is the Cascade of design doc 8.2 falling out of the qBit actions, instead of being a rule of its own. The guard scales with the defender's income, so it takes a real lead over them, not a fixed figure, to beat it: decay (`ECON-04`) caps a balance at about three turns of income, and the defender can add their own balance as oversight. Every node raided lowers the guard (design doc 5.4). It needs a fresh track on the flagship, so the leader has to find it: the hunt (design doc 2.1) stays the way to win, and a flagship that moves or kills the scouts near it is harder to capture.
+  - *Why:* this is the Cascade of design doc 8.2 falling out of the qBit actions, instead of being a rule of its own. Two steps, with the shake made public, give the defender warning and a turn to answer, and make the attacker pay twice. The aim means the answer can be physical: a flagship that moves out of the scouts' sight between steps can't be captured until it is found again, so the hunt (design doc 2.1) stays the way to win. The guard scales with the defender's live web, so it takes a real income lead to beat it, and every node raided lowers it (design doc 5.4).
 
 ---
 

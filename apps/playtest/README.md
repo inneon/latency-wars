@@ -139,6 +139,8 @@ A scenario is a directory under `scenarios/`:
 
 Each player in `scenario.json` names a default personality by id (`"persona": "bold"`). The personalities live in `apps/playtest/personas`, one Markdown file each: a `# Name` heading, then what the player is told about how it likes to play. Add a file to add a personality. `--persona` replaces the defaults for a run. The log's header and the report record who played which, and the analyst is told to separate what a personality did from what the rules did.
 
+Every player also gets `hints.md`: the consequences of the rules that earlier players found non-obvious, each with the rules it follows from. It's the general sheet in `apps/playtest/hints/players.md`, followed by the scenario's own if its `scenario.json` names one (`"hints": "hints.md"`). Hints are facts, not advice: strategy belongs in a personality. `--no-hints` leaves them out, to check whether a behaviour comes from the rules or from the sheet. The log's header and the report say whether hints were on, and the analyst is given the sheet. When a findings doc shows a mistake players keep making, add the fact behind it; when a rule changes, check the hints that cite it.
+
 Use house rules in `common.md` to stand in for whatever the rules haven't specified yet (combat, zone bonuses and unit production, at the moment), and label them as stopgaps so feedback separates them from the design under test. Personas matter: a rules lawyer and an impatient aggressive player find different problems.
 
 The scenarios so far:

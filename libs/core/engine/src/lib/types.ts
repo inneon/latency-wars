@@ -264,11 +264,26 @@ export interface HijackQuote {
   readonly atFlagship?: boolean;
   /** The fleets it reaches whose oversight blocked it, with that oversight's strength (QBIT-09). */
   readonly blocked?: readonly { readonly unit: UnitId; readonly oversight: number }[];
-  /** A seize on a flagship: if it lands, its owner's command collapses and they lose (QBIT-13). */
+  /** A seize on a flagship (QBIT-13): if it lands, it shakes the flagship's command, or captures it if it `completes` a shake. */
   readonly capture?: true;
-  /** A captured flagship's free oversight on the true state: `CAPTURE_GUARD` × its owner's last production (QBIT-13). */
+  /** It lands on a flagship this player shook two turns before: if it lands, the flagship is captured and its owner loses (QBIT-13). */
+  readonly completes?: true;
+  /** The flagship's free oversight on the true state: `CAPTURE_GUARD` × its owner's live web output (QBIT-13). */
   readonly guard?: number;
+  /** Where the buyer's track showed the target when it was bought (QBIT-04); for a seize on a flagship, where it was aimed (QBIT-13). */
+  readonly aimedAt?: Hex;
+  /** A seize on a flagship that wasn't where the buyer's track showed it, so it missed (QBIT-13). */
+  readonly missed?: true;
+  /** What happened, once oversight is settled (`settleCommandContest`). */
+  readonly outcome?: HijackOutcome;
 }
+
+/**
+ * What became of a spoof or seize: `landed` on every fleet it reached, `partly` (a spoof that some oversight blocked),
+ * `blocked` by oversight everywhere (QBIT-09), `missed` its aim (QBIT-13), `gone` (the target had left the map) or
+ * `refused` (never bought, QBIT-01).
+ */
+export type HijackOutcome = 'landed' | 'partly' | 'blocked' | 'missed' | 'gone' | 'refused';
 
 /** Oversight of one of the buyer's own fleets for the turn (QBIT-09). */
 export interface OversightQuote {

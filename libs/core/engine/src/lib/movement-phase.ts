@@ -16,7 +16,7 @@ export interface CommandEffects {
   readonly spoofed: ReadonlySet<string>;
   /** Seized fleet → the player who seized it. */
   readonly seized: ReadonlyMap<string, string>;
-  /** Captured flagship → the player who captured it (QBIT-13). It holds; it doesn't change sides. */
+  /** Flagship a seize landed on → the seizer (QBIT-13): shaken or captured. It holds; it doesn't change sides. */
   readonly captured?: ReadonlyMap<string, string>;
 }
 
@@ -94,7 +94,7 @@ export function runMovementPhase(
     // A captured flagship holds, whatever its order (QBIT-13).
     const captor = effects.captured?.get(u.id);
     if (captor) {
-      notes.push(`${u.id} is captured by ${captor} (QBIT-13): it holds this turn.`);
+      notes.push(`${u.id} is seized by ${captor} (QBIT-13): it holds this turn.`);
       order = undefined;
       intent = { kind: 'hold' };
     }

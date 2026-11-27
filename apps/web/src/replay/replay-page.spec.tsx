@@ -31,6 +31,10 @@ const frame = (turn: number, extra: Partial<Frame> = {}): Frame => ({
   corrections: [],
   production: [],
   overrides: [],
+  seizes: [],
+  seized: [],
+  command: [],
+  threat: [],
   gameOver: false,
   outcome: '',
   ...extra,
@@ -335,6 +339,98 @@ describe('ReplayPage, while a game is being played', () => {
       expect(screen.getByText('Start')).toBeTruthy();
       expect(window.location.search).toBe(`?watch&run=${next}&turn=0`);
     });
+  });
+});
+
+describe('ReplayPage, seizes and captures', () => {
+  const redLine = { ...redRaider, id: 'red-line', name: 'red line', hex: { q: 1, r: 1 } };
+  const seizeGame = (): Replay => ({
+    ...replay,
+    scenario: { ...replay.scenario, maxRounds: 4 },
+    frames: [
+      frame(0),
+      frame(1, {
+        units: [blueFlagship, redFlagship, redLine],
+        seized: [{ unit: 'red-line', by: 'blue' }],
+        seizes: [
+          { by: 'blue', target: 'red-line', owner: 'red', flagship: false, completes: false, outcome: 'landed', strength: 2, cost: 16, order: 'Attack(red-raider)', from: blueFlagship.hex, at: redLine.hex, aimedAt: redLine.hex },
+          { by: 'red', target: 'blue-flagship', owner: 'blue', flagship: true, completes: false, outcome: 'blocked', strength: 5, cost: 20, order: '', guard: 6.5, oversight: 6.5, from: redFlagship.hex, at: blueFlagship.hex, aimedAt: blueFlagship.hex },
+        ],
+        threat: [
+          { defender: 'blue', attacker: 'red', guard: 6.5, needed: 19, funds: 22 },
+          { defender: 'red', attacker: 'blue', guard: 9, needed: 22, funds: 10 },
+        ],
+      }),
+      frame(2, {
+        seizes: [
+          { by: 'blue', target: 'red-flagship', owner: 'red', flagship: true, completes: false, outcome: 'landed', strength: 12, cost: 26, order: '', guard: 9, from: blueFlagship.hex, at: redFlagship.hex, aimedAt: redFlagship.hex },
+          { by: 'red', target: 'blue-flagship', owner: 'blue', flagship: true, completes: false, outcome: 'missed', strength: 8, cost: 23, order: '', guard: 6.5, from: redFlagship.hex, at: blueFlagship.hex, aimedAt: { q: -2, r: 1 } },
+        ],
+        command: [{ flagship: 'red-flagship', owner: 'red', by: 'blue', shakenIn: 2, stage: 'shaken' }],
+        threat: [{ defender: 'red', attacker: 'blue', guard: 9, needed: 22, funds: 30 }],
+      }),
+      frame(3, { command: [{ flagship: 'red-flagship', owner: 'red', by: 'blue', shakenIn: 2, stage: 'capturable' }] }),
+      frame(4, {
+        seizes: [{ by: 'blue', target: 'red-flagship', owner: 'red', flagship: true, completes: true, outcome: 'landed', strength: 12, cost: 26, order: '', guard: 9, from: blueFlagship.hex, at: redFlagship.hex }],
+        command: [{ flagship: 'red-flagship', owner: 'red', by: 'blue', shakenIn: 2, stage: 'captured' }],
+        gameOver: true,
+        outcome: "Blue captured Red's flagship.",
+      }),
+    ],
+  });
+  const open = async (turn: number, watch = false) => {
+    window.history.replaceState(null, '', `/replay?${watch ? 'watch&' : ''}run=${replay.id}&turn=${turn}`);
+    vi.stubGlobal('fetch', api(runs, seizeGame()));
+    const view = render(<ReplayPage />);
+    await screen.findByRole('group', { name: new RegExp(`end of turn ${turn}`) });
+    return view;
+  };
+  const seizeSection = () => within(screen.getByRole('heading', { name: 'Seizes and captures' }).closest('section') as HTMLElement);
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('lists each seize with what became of it and the strengths that decided it, and draws it', async () => {
+    const { container } = await open(1);
+    const items = seizeSection().getAllByRole('listitem').map((li) => li.textContent);
+    expect(items[0]).toMatch(/^landed Blue seized red-line: Attack\(red-raider\), 16 qBits/);
+    expect(items[1]).toMatch(/^blocked Red seized Blue's flagship to shake it, 20 qBits.*strength 5 against oversight 6.5/);
+    expect([...container.querySelectorAll('[data-seize]')].map((g) => g.getAttribute('data-seize'))).toEqual(['landed', 'blocked']);
+    expect(screen.getByText('5 vs 6.5')).toBeTruthy();
+    // The seized fleet is drawn as Blue's, for this turn.
+    expect(screen.getByRole('button', { name: "red: red line at (1, 1), under blue's command" })).toBeTruthy();
+  });
+
+  it('shows a missed seize: where it was aimed, and where the flagship really was', async () => {
+    const { container } = await open(2);
+    expect(seizeSection().getByText(/Aimed at \(-2, 1\), where Red's track showed it; it was at \(-2, 0\)\./)).toBeTruthy();
+    expect(container.querySelector('[data-seize="missed"] line')).toBeTruthy();
+  });
+
+  it("follows a shaken flagship's command on the map, in the panel and on the timeline", async () => {
+    const { container } = await open(2);
+    expect(seizeSection().getByText("Blue shook Red's flagship. It can't be seized in turn 3; Blue can capture it in turn 4.")).toBeTruthy();
+    expect(container.querySelector('[data-command="shaken"]')?.textContent).toBe('Shaken by Blue');
+    expect(screen.getByRole('button', { name: /^Turn 2: flagship shaken, a seize on a flagship failed$/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next turn' }));
+    expect(seizeSection().getByText("Blue can capture Red's flagship in turn 4.")).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next turn' }));
+    expect(seizeSection().getByText("Blue captured Red's flagship.")).toBeTruthy();
+    expect(container.querySelector('[data-command="captured"]')).toBeTruthy();
+    expect(screen.getByRole('button', { name: "red: red flagship at (2, 0), under blue's command" })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Turn 4: flagship captured, game over$/ })).toBeTruthy();
+  });
+
+  it('charts how close each flagship came to capture', async () => {
+    await open(1);
+    const chart = within(screen.getByRole('heading', { name: 'How close a capture was' }).closest('section') as HTMLElement);
+    expect(chart.getByText(/in turn 1: Red had 22, a seize needed 19/)).toBeTruthy();
+    expect(chart.getByRole('img', { name: "Red's qBits against the cost of a seize on Blue's flagship, by turn" })).toBeTruthy();
+    expect(chart.getAllByRole('img')).toHaveLength(2);
+  });
+
+  it('puts a shake in watch mode for everyone to see', async () => {
+    await open(2, true);
+    expect(screen.getByText("Blue shook Red's flagship. It can't be seized in turn 3; Blue can capture it in turn 4.").className).toBe('replay-banner');
   });
 });
 

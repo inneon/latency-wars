@@ -86,7 +86,7 @@ describe('the turn, driven without a GM (TURN-03)', () => {
     expect(state.ending?.why).toBe('turns');
   });
 
-  it('ends the game when a seize captures a flagship (QBIT-13)', () => {
+  it('shakes a flagship with a first seize, refuses one the next turn, and captures it with the next (QBIT-13)', () => {
     // Red's flagship is within Blue's flagship's sensors, so Blue has a fresh track on it.
     const near: GameSetup = {
       ...setup,
@@ -94,9 +94,13 @@ describe('the turn, driven without a GM (TURN-03)', () => {
       parameters: { ...setup.parameters, hijack: { ...setup.parameters.hijack, seizeCost: 1 }, capture: { guard: 1 } },
     };
     const seize: PlayerPlan = { orders: [], purchases: [{ kind: 'seize', target: 'red-flagship', strength: 1 }] };
-    const { state, events } = play(near, 3, { plan: (player) => (player === 'blue' ? seize : noPlan) });
-    expect(events.find((e) => e.kind === 'captured')).toMatchObject({ turn: 1, captured: [{ flagship: 'red-flagship', by: 'blue', owner: 'red' }], winners: ['blue'] });
-    expect(state.ending).toEqual({ turn: 1, why: 'capture' });
+    const { state, events } = play(near, 5, { plan: (player) => (player === 'blue' ? seize : noPlan) });
+    expect(events.filter((e) => e.kind === 'shaken')).toEqual([{ kind: 'shaken', turn: 1, shaken: [{ flagship: 'red-flagship', by: 'blue', owner: 'red' }] }]);
+    const refused = (turn: number) => events.some((e) => e.kind === 'commands' && e.turn === turn && e.hijacks.every((q) => q.refused));
+    expect([1, 2, 3].map(refused)).toEqual([false, true, false]);
+    expect(state.engine.shakes).toEqual([{ turn: 1, flagship: 'red-flagship', by: 'blue', owner: 'red' }]);
+    expect(events.find((e) => e.kind === 'captured')).toMatchObject({ turn: 3, captured: [{ flagship: 'red-flagship', by: 'blue', owner: 'red' }], winners: ['blue'] });
+    expect(state.ending).toEqual({ turn: 3, why: 'capture' });
   });
 
   it('refuses an answer to a question it did not ask', () => {

@@ -1,6 +1,6 @@
 import { type Hex, hexEquals } from '@latency-wars/domain';
-import { Coverage, HexMap, Links, Losses, type MapUnit, Moves, ownerColours, sensorCoverage, Units } from '@latency-wars/map-view';
-import type { Frame, PlayerTurnView, PlaytestUnit, Replay, RunSummary } from '@latency-wars/playtest-replay';
+import { Command, type CommandMark, Coverage, HexMap, Links, Losses, type MapSeize, type MapUnit, Moves, ownerColours, Seizes, sensorCoverage, Units } from '@latency-wars/map-view';
+import type { CommandStatus, Frame, PlayerTurnView, PlaytestUnit, Replay, RunSummary, SeizeView } from '@latency-wars/playtest-replay';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,7 +12,7 @@ const written = (h: Hex) => `(${h.q}, ${h.r})`;
 const qbits = (n: number) => String(Math.round(n * 100) / 100);
 const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-type Layer = 'moves' | 'links' | 'coordinates' | `sensors:${string}`;
+type Layer = 'moves' | 'links' | 'seizes' | 'coordinates' | `sensors:${string}`;
 
 /** A run's log hasn't changed for this long, and the game isn't over: the run has probably stopped. */
 const STALLED_MS = 20 * 60_000;
@@ -30,6 +30,32 @@ function writeAddress(run: string, turn: number, watch: boolean): void {
 
 /** "Blue", "Blue and Red", "Blue, Red and Green". */
 const listed = (names: readonly string[]) => (names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
+type NameOf = (id: string) => string;
+
+/** One line on where a flagship's shaken command stands (QBIT-13). */
+function commandLine(c: CommandStatus, name: NameOf): string {
+  const whose = `${name(c.owner)}'s flagship`;
+  switch (c.stage) {
+    case 'shaken':
+      return `${name(c.by)} shook ${whose}. It can't be seized in turn ${c.shakenIn + 1}; ${name(c.by)} can capture it in turn ${c.shakenIn + 2}.`;
+    case 'capturable':
+      return `${name(c.by)} can capture ${whose} in turn ${c.shakenIn + 2}.`;
+    case 'captured':
+      return `${name(c.by)} captured ${whose}.`;
+    case 'lapsed':
+      return `${name(c.by)}'s hold on ${whose} lapsed: no capture landed in turn ${c.shakenIn + 2}.`;
+  }
+}
+
+const OUTCOME_TAG: Record<SeizeView['outcome'], string> = {
+  landed: 'landed',
+  partly: 'landed',
+  blocked: 'blocked',
+  missed: 'missed',
+  gone: 'target gone',
+  refused: 'refused',
+};
 
 /** Where a game in progress stands, and whether its run seems to have stopped. Nothing once the game is over and written up. */
 function LiveStatus({ replay }: { replay: Replay & { updatedAt?: number } }) {
@@ -120,9 +146,15 @@ function Timeline({ frames, index, onChoose }: { frames: Frame[]; index: number;
       </button>
       <ol>
         {frames.map((f, i) => {
+          const shaken = f.command.some((c) => c.stage === 'shaken');
+          const captured = f.command.some((c) => c.stage === 'captured');
+          const foiled = f.seizes.some((s) => s.flagship && (s.outcome === 'blocked' || s.outcome === 'missed'));
           const notes = [
             f.removed.length ? `${f.removed.length} lost` : '',
             f.corrections.length ? 'engine corrected the GM' : '',
+            shaken ? 'flagship shaken' : '',
+            captured ? 'flagship captured' : '',
+            foiled ? 'a seize on a flagship failed' : '',
             f.gameOver ? 'game over' : '',
           ].filter(Boolean);
           return (
@@ -138,6 +170,8 @@ function Timeline({ frames, index, onChoose }: { frames: Frame[]; index: number;
                 <span className="replay-turn-marks" aria-hidden="true">
                   {f.removed.length > 0 && <span className="replay-mark-loss">×</span>}
                   {f.corrections.length > 0 && <span className="replay-mark-fix">!</span>}
+                  {captured ? <span className="replay-mark-command">◉</span> : shaken ? <span className="replay-mark-command">◐</span> : null}
+                  {foiled && !captured && <span className="replay-mark-foiled">○</span>}
                 </span>
                 {f.turn}
               </button>
@@ -164,6 +198,8 @@ function UnitLine({ unit, note }: { unit: PlaytestUnit; note?: string }) {
 
 function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: string; colour: string }) {
   const bought = view.scans.filter((s) => s.bought);
+  // Seizes have a section of their own.
+  const spoofs = view.spoofs.filter((s) => s.kind === 'spoof');
   return (
     <section className="replay-player" style={{ '--owner': colour } as CSSProperties}>
       <h3>{name}</h3>
@@ -192,7 +228,7 @@ function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: str
         <p className="replay-quiet">No orders.</p>
       )}
       {(bought.length > 0 ||
-        view.spoofs.length > 0 ||
+        spoofs.length > 0 ||
         view.oversights.length > 0 ||
         (view.qbits?.refused.length ?? 0) > 0 ||
         (view.matter?.purchases.length ?? 0) > 0 ||
@@ -209,9 +245,9 @@ function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: str
               {o.refused ? `: refused. ${o.refused}` : ` (${qbits(o.cost ?? 0)})`}
             </li>
           ))}
-          {view.spoofs.map((s, i) => (
+          {spoofs.map((s, i) => (
             <li key={`spoof${i}`}>
-              {s.kind === 'seize' ? 'Seize' : 'Spoof'} <code>{s.target}</code> to {s.order}
+              Spoof <code>{s.target}</code> to {s.order}
               {s.refused ? `: refused. ${s.refused}` : ` (${qbits(s.cost ?? 0)})`}
               {s.reaches && s.reaches.length > 1 && `; reaches ${s.reaches.join(', ')}`}
               {s.blocked && s.blocked.length > 0 && `; blocked by oversight on ${s.blocked.map((b) => b.unit).join(', ')}`}
@@ -247,6 +283,134 @@ function PlayerSection({ view, name, colour }: { view: PlayerTurnView; name: str
           {md(view.report)}
         </details>
       )}
+    </section>
+  );
+}
+
+/** Strength bought against the oversight it had to beat, as two bars on one scale. */
+function Contest({ strength, against, colour }: { strength: number; against: number; colour: string }) {
+  const most = Math.max(strength, against, 1);
+  return (
+    <span className="replay-contest" title={`strength ${qbits(strength)} against ${qbits(against)}`}>
+      <span className="replay-contest-bar" style={{ width: `${(strength / most) * 100}%`, background: colour }} />
+      <span className="replay-contest-bar replay-contest-guard" style={{ width: `${(against / most) * 100}%` }} />
+    </span>
+  );
+}
+
+function SeizeSection({ frame, name, colours }: { frame: Frame; name: NameOf; colours: Record<string, string> }) {
+  return (
+    <section className="replay-seizes">
+      <h3>Seizes and captures</h3>
+      {frame.command.map((c) => (
+        <p key={`${c.flagship}:${c.shakenIn}`} className="replay-command" data-stage={c.stage} style={{ '--owner': colours[c.by] } as CSSProperties}>
+          {commandLine(c, name)}
+        </p>
+      ))}
+      {frame.seizes.length > 0 && (
+        <ul>
+          {frame.seizes.map((s, i) => {
+            const against = s.oversight ?? s.guard;
+            const what = s.flagship ? `${name(s.owner ?? '')}'s flagship` : <code>{s.target}</code>;
+            return (
+              <li key={i} style={{ '--owner': colours[s.by] } as CSSProperties}>
+                <span className="replay-tag" data-outcome={s.outcome}>
+                  {OUTCOME_TAG[s.outcome]}
+                </span>{' '}
+                {name(s.by)} seized {what}
+                {s.flagship ? (s.completes ? ' to capture it' : ' to shake it') : s.order ? `: ${s.order}` : ''}
+                {s.cost !== undefined && `, ${qbits(s.cost)} qBits`}
+                {s.outcome !== 'refused' && against !== undefined && (
+                  <span className="replay-contest-line">
+                    strength {qbits(s.strength)} against {s.oversight !== undefined ? 'oversight' : 'guard'} {qbits(against)}{' '}
+                    <Contest strength={s.strength} against={against} colour={colours[s.by] ?? 'currentColor'} />
+                  </span>
+                )}
+                {s.outcome === 'missed' && s.aimedAt && s.at && (
+                  <span className="replay-contest-line">
+                    Aimed at {written(s.aimedAt)}, where {name(s.by)}'s track showed it; it was at {written(s.at)}.
+                  </span>
+                )}
+                {(s.outcome === 'refused' || s.outcome === 'gone') && s.reason && <span className="replay-status">{s.reason}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * For each flagship, turn by turn: the least a seize would have to pay to beat its guard, against the enemy's qBits.
+ * Where the enemy's line is above, a capture attempt was affordable, distance aside.
+ */
+function CaptureThreatChart({ replay, turn, name, colours }: { replay: Replay; turn: number; name: NameOf; colours: Record<string, string> }) {
+  const width = 300;
+  const height = 70;
+  const pad = { left: 26, right: 6, top: 6, bottom: 14 };
+  const turns = replay.frames.map((f) => f.turn).filter((t) => t > 0);
+  const last = Math.max(1, ...turns);
+  const x = (t: number) => pad.left + ((t - 1) / Math.max(1, last - 1)) * (width - pad.left - pad.right);
+  const pairs = replay.scenario.players.flatMap((d) => replay.scenario.players.filter((a) => a.id !== d.id).map((a) => ({ defender: d.id, attacker: a.id })));
+
+  return (
+    <section className="replay-threat">
+      <h3>How close a capture was</h3>
+      <p className="replay-quiet">
+        The least a seize on each flagship had to pay to beat its guard, against the enemy's qBits when the turn was planned. Distance and any
+        oversight bought come on top.
+      </p>
+      {pairs.map(({ defender, attacker }) => {
+        const points = replay.frames.flatMap((f) => f.threat.filter((t) => t.defender === defender && t.attacker === attacker).map((t) => ({ turn: f.turn, ...t })));
+        if (points.length === 0) return null;
+        const top = Math.max(1, ...points.flatMap((p) => [p.needed, p.funds]));
+        const y = (v: number) => pad.top + (1 - v / top) * (height - pad.top - pad.bottom);
+        const line = (values: { turn: number; v: number }[]) => values.map((p, i) => `${i ? 'L' : 'M'} ${x(p.turn).toFixed(1)} ${y(p.v).toFixed(1)}`).join(' ');
+        const attempts = replay.frames.flatMap((f) =>
+          f.seizes.filter((s) => s.flagship && s.by === attacker && s.owner === defender && s.outcome !== 'refused').map((s) => ({ turn: f.turn, s })),
+        );
+        const here = points.find((p) => p.turn === turn);
+        return (
+          <figure key={`${defender}:${attacker}`}>
+            <figcaption>
+              {name(defender)}'s flagship
+              {here && (
+                <span className="replay-quiet">
+                  {' '}
+                  in turn {turn}: {name(attacker)} had {qbits(here.funds)}, a seize needed {qbits(here.needed)}
+                </span>
+              )}
+            </figcaption>
+            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${name(attacker)}'s qBits against the cost of a seize on ${name(defender)}'s flagship, by turn`}>
+              {turn > 0 && <line x1={x(turn)} x2={x(turn)} y1={pad.top} y2={height - pad.bottom} className="replay-threat-now" />}
+              <line x1={pad.left} x2={width - pad.right} y1={height - pad.bottom} y2={height - pad.bottom} className="replay-threat-axis" />
+              <text x={pad.left - 3} y={y(top) + 3} textAnchor="end" className="replay-threat-label">
+                {Math.round(top)}
+              </text>
+              <text x={pad.left - 3} y={height - pad.bottom} textAnchor="end" className="replay-threat-label">
+                0
+              </text>
+              <text x={x(1)} y={height - 3} textAnchor="middle" className="replay-threat-label">
+                1
+              </text>
+              <text x={x(last)} y={height - 3} textAnchor="middle" className="replay-threat-label">
+                {last}
+              </text>
+              <path d={line(points.map((p) => ({ turn: p.turn, v: p.needed })))} style={{ stroke: colours[defender], strokeDasharray: '3 2' }} className="replay-threat-line" />
+              <path d={line(points.map((p) => ({ turn: p.turn, v: p.funds })))} style={{ stroke: colours[attacker] }} className="replay-threat-line" />
+              {attempts.map(({ turn: t, s }, i) => (
+                <circle key={i} cx={x(t)} cy={y(s.cost ?? 0)} r={3} data-outcome={s.outcome} style={{ stroke: colours[attacker], fill: s.outcome === 'landed' ? colours[attacker] : 'none' }}>
+                  <title>{`Turn ${t}: ${OUTCOME_TAG[s.outcome]}, ${qbits(s.cost ?? 0)} qBits`}</title>
+                </circle>
+              ))}
+            </svg>
+          </figure>
+        );
+      })}
+      <p className="replay-key">
+        Dashed: what a seize had to pay. Solid: the enemy's qBits. A dot is a seize sent at the flagship, at what it cost: filled if it landed.
+      </p>
     </section>
   );
 }
@@ -301,6 +465,10 @@ function TurnPanel({ replay, frame, selected }: { replay: Replay; frame: Frame; 
           </ul>
         </section>
       )}
+
+      {(frame.seizes.length > 0 || frame.command.length > 0) && <SeizeSection frame={frame} name={name} colours={colours} />}
+
+      {replay.frames.some((f) => f.threat.length > 0) && <CaptureThreatChart replay={replay} turn={frame.turn} name={name} colours={colours} />}
 
       {frame.production.length > 0 && (
         <section>
@@ -359,7 +527,8 @@ function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?:
   const startAt = initialTurn !== undefined ? Math.max(0, frames.findIndex((f) => f.turn === initialTurn)) : watch || !replay.finished ? frames.length - 1 : 0;
   const [index, setIndex] = useState(Math.max(0, startAt));
   const [selected, setSelected] = useState<Hex>();
-  const [layers, setLayers] = useState<ReadonlySet<Layer>>(new Set<Layer>(['moves', 'links']));
+  const [layers, setLayers] = useState<ReadonlySet<Layer>>(new Set<Layer>(['moves', 'links', 'seizes']));
+  const nameOf = useCallback((id: string) => scenario.players.find((p) => p.id === id)?.name ?? id, [scenario]);
   const latest = frames.length - 1;
 
   // Follow the game: a viewer on the latest turn moves on to each new one as it is settled. One who has stepped back stays
@@ -408,7 +577,23 @@ function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?:
       strength: u.strength,
       joined: frame.joined.includes(u.id),
       sightedBy: frame.sightings.filter((s) => s.unit === u.id).map((s) => s.observer),
+      heldBy: frame.seized.find((s) => s.unit === u.id)?.by ?? frame.command.find((c) => c.flagship === u.id && c.stage === 'captured')?.by,
     }));
+    const seizes: MapSeize[] = frame.seizes.flatMap((s) => {
+      if (s.outcome === 'refused' || s.outcome === 'gone') return [];
+      const to = s.aimedAt ?? s.at;
+      if (!to) return [];
+      const against = s.oversight ?? s.guard;
+      // A seize that landed on a flagship needs no label: the ring round the flagship says what it did.
+      const label = s.outcome === 'blocked' && against !== undefined ? `${qbits(s.strength)} vs ${qbits(against)}` : s.outcome === 'missed' ? 'missed' : undefined;
+      return [{ by: s.by, from: s.from, to, at: s.outcome === 'missed' ? s.at : undefined, outcome: s.outcome, label }];
+    });
+    const flagshipAt = (id: string) => [...frame.units, ...frame.removed].find((u) => u.id === id)?.hex;
+    const marks: CommandMark[] = frame.command.flatMap((c) => {
+      const hex = flagshipAt(c.flagship);
+      const label = { shaken: `Shaken by ${nameOf(c.by)}`, capturable: `${nameOf(c.by)} can capture next turn`, captured: `Captured by ${nameOf(c.by)}`, lapsed: 'Hold lapsed' }[c.stage];
+      return hex ? [{ hex, by: c.by, stage: c.stage, label }] : [];
+    });
     const coverage = sensorCoverage(
       frame.units.map((u) => ({ owner: u.owner, hex: u.hex, range: u.sensorRange })),
       scenario.map.radius,
@@ -416,10 +601,12 @@ function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?:
     const heaviest = Math.max(1, ...frame.links.map((l) => l.output));
     return {
       units,
+      seizes,
+      marks,
       areas: players.filter((p) => layers.has(`sensors:${p}`)).map((owner) => ({ owner, hexes: coverage.get(owner) ?? [] })),
       links: frame.links.map((l) => ({ owner: l.owner, from: l.from, to: l.to, weight: l.output / heaviest })),
     };
-  }, [frame, layers, players, scenario.map.radius]);
+  }, [frame, layers, players, scenario.map.radius, nameOf]);
 
   if (!frame || !drawn) {
     return (
@@ -454,7 +641,9 @@ function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?:
       {layers.has('links') && <Links links={drawn.links} />}
       {layers.has('moves') && <Moves moves={frame.moves} />}
       <Losses losses={frame.removed} />
+      <Command marks={drawn.marks} />
       <Units units={drawn.units} />
+      {layers.has('seizes') && <Seizes seizes={drawn.seizes} />}
       {extra}
     </HexMap>
   );
@@ -469,6 +658,13 @@ function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?:
             {turnName(frame.turn)} <span>of {scenario.maxRounds}</span>
           </p>
           {frame.gameOver && <p className="replay-outcome">{frame.outcome || 'The game is over.'}</p>}
+          {frame.command
+            .filter((c) => c.stage !== 'captured')
+            .map((c) => (
+              <p key={`${c.flagship}:${c.shakenIn}`} className="replay-banner" data-stage={c.stage} style={{ '--owner': colours[c.by] } as CSSProperties}>
+                {commandLine(c, nameOf)}
+              </p>
+            ))}
           <LiveStatus replay={replay} />
           {newer}
         </div>
@@ -534,6 +730,7 @@ function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?:
             <legend>Show</legend>
             {toggle('moves', "This turn's moves")}
             {toggle('links', 'Web links')}
+            {toggle('seizes', 'Seizes')}
             {players.map((p) => toggle(`sensors:${p}`, `${name(p)}'s sensor range`))}
             {toggle('coordinates', 'Coordinates')}
           </fieldset>
@@ -541,6 +738,11 @@ function Viewer({ replay, initialTurn, watch }: { replay: Replay & { updatedAt?:
             Every position is the true one at the end of the turn. A diamond is a flagship, a circle a fleet, a triangle a probe, a square a node and a hexagon a
             mine; the number is strength, and a badge counts the units a marker stands for. A dashed ring means an enemy sensor has it in range. A cross is a unit
             lost this turn, and + a unit that joined. Arrows join where a unit began the turn to where it ended.
+          </p>
+          <p className="replay-key">
+            A dotted curve is a seize, from the seizer's flagship to where it was aimed: a ring where it landed, a bar where oversight blocked it, a dashed
+            empty ring where it missed. A unit in another player's colour, rimmed in its own, is under that player's command this turn. A broken ring round
+            a flagship means it was shaken; nearly closed, its capture can come next turn; double, it was captured.
           </p>
         </div>
         <TurnPanel replay={replay} frame={frame} selected={selected} />

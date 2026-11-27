@@ -11,6 +11,7 @@ Usage: pnpm playtest --scenario <name|dir> [options]
   --rounds         Maximum turns to play (default: the scenario's maxRounds)
   --persona        Players' personalities, from apps/playtest/personas: random (a different one each),
                    or pairs such as blue=spymaster,red=industrialist   (default: the scenario's own)
+  --no-hints       Don't give players the hints in apps/playtest/hints and the scenario's hints.md
   --backend        Where replies come from                                       (default: api)
                      api          Anthropic API; needs ANTHROPIC_API_KEY
                      claude-code  The claude CLI in headless mode, on your Claude Code login
@@ -35,6 +36,8 @@ export type CliArgs =
       scenario: string;
       rounds?: number;
       personas?: PersonaChoice;
+      /** Whether players get the hints sheet. */
+      hints: boolean;
       backend: (typeof BACKENDS)[number];
       claudeBin?: string;
       pasteLimit?: number;
@@ -54,6 +57,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       scenario: { type: 'string' },
       rounds: { type: 'string' },
       persona: { type: 'string' },
+      'no-hints': { type: 'boolean' },
       backend: { type: 'string', default: 'api' },
       'claude-bin': { type: 'string' },
       'paste-limit': { type: 'string' },
@@ -83,6 +87,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     scenario: values.scenario,
     rounds,
     personas: values.persona === undefined ? undefined : parsePersonaChoice(values.persona),
+    hints: !values['no-hints'],
     backend,
     claudeBin: values['claude-bin'],
     pasteLimit,

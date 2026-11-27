@@ -91,6 +91,8 @@ export type TurnEvent =
   | { readonly kind: 'movement'; readonly turn: number; readonly result: MovementResult }
   | { readonly kind: 'combat'; readonly turn: number; readonly phase: CombatPhase }
   | { readonly kind: 'production'; readonly turn: number; readonly notes: readonly string[] }
+  /** Flagships shaken this turn (QBIT-13): the first step of a capture. Every player learns of them next Planning. */
+  | { readonly kind: 'shaken'; readonly turn: number; readonly shaken: readonly Capture[] }
   /** Flagships captured this turn (QBIT-13), and who is left standing. */
   | { readonly kind: 'captured'; readonly turn: number; readonly captured: readonly Capture[]; readonly winners: readonly PlayerId[] }
   /** Cascades completed this turn (QBIT-12). */
@@ -289,21 +291,30 @@ function afterDecisions(state: GameState, fleets: readonly FleetPlan[]): Advance
 
 /**
  * The end of the turn: the outcome applied, then whether the game is over. A
- * captured flagship loses its owner the game, as does a destroyed one
- * (QBIT-13). Failing that, a completed Cascade wins if every flagship stands
+ * seize that landed on a flagship shakes it, or captures it if the same player
+ * shook it two turns before; a captured flagship loses its owner the game, as
+ * does a destroyed one (QBIT-13). Failing that, a completed Cascade wins if every flagship stands
  * (QBIT-12).
  */
 function afterResolution(state: GameState, outcome: TurnOutcome, declared: boolean): Advance {
   const { turn, setup } = state;
   const work = requireWork(state);
   const applied = applyOutcome(state.engine, outcome, players(state), turn, work.movement, work.combat, work.fleets);
-  const engine = applied.engine;
+  let engine = applied.engine;
   const events: TurnEvent[] = [{ kind: 'applied', turn, applied }];
   const notes = [...work.production, ...applied.notes];
   if (notes.length) events.push({ kind: 'production', turn, notes });
 
   const hasFlagship = (id: PlayerId) => engine.units.some((u) => u.owner === id && u.class === 'flagship');
-  const captured: Capture[] = [...(work.effects.captured ?? [])].map(([flagship, by]) => ({ flagship, by, owner: engine.roster.get(flagship)?.owner ?? '' }));
+  // A seize that landed on a flagship shakes it, or captures it if the same player shook it two turns before (QBIT-13).
+  const landed: Capture[] = [...(work.effects.captured ?? [])].map(([flagship, by]) => ({ flagship, by, owner: engine.roster.get(flagship)?.owner ?? '' }));
+  const completes = (c: Capture) => state.engine.shakes.some((s) => s.flagship === c.flagship && s.by === c.by && s.turn === turn - 2);
+  const captured = landed.filter(completes);
+  const shaken = landed.filter((c) => !completes(c));
+  if (shaken.length > 0) {
+    engine = { ...engine, shakes: [...engine.shakes, ...shaken.map((c) => ({ ...c, turn }))] };
+    events.push({ kind: 'shaken', turn, shaken });
+  }
   let ending: Ending | undefined = declared ? 'declared' : undefined;
   if (captured.length > 0) {
     const losers = new Set([...captured.map((c) => c.owner), ...players(state).filter((id) => !hasFlagship(id))]);

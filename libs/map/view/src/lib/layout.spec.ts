@@ -105,6 +105,21 @@ describe('stackTokens with mines', () => {
   });
 });
 
+describe('stackTokens with held units', () => {
+  it('gives units another owner holds a marker of their own, beside their owner\'s', () => {
+    const tokens = stackTokens(
+      [unit('raider', 'blue', 1, 1), unit('seized', 'blue', 1, 1, { heldBy: 'red' }), unit('red-line', 'red', 1, 1)],
+      ['blue', 'red'],
+    );
+    expect(tokens.map((t) => [t.owner, t.heldBy, t.units.map((u) => u.id)])).toEqual([
+      ['blue', undefined, ['raider']],
+      ['blue', 'red', ['seized']],
+      ['red', undefined, ['red-line']],
+    ]);
+    expect(new Set(tokens.map((t) => t.key)).size).toBe(3);
+  });
+});
+
 describe('mergeSegments', () => {
   it('counts units that made the same move, and keeps other moves apart', () => {
     const a = { q: 0, r: 0 };

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { Coverage, HexMap, Links, Losses, Moves, ownerColours, Units } from './hex-map';
+import { Command, Coverage, HexMap, Links, Losses, Moves, ownerColours, Seizes, Units } from './hex-map';
 
 const colours = ownerColours(['blue', 'red']);
 
@@ -76,6 +76,50 @@ describe('HexMap', () => {
     expect(container.querySelectorAll('[data-move]')).toHaveLength(2);
     const loss = container.querySelector('[data-loss="red"]');
     expect(loss?.textContent).toBe('2');
+  });
+
+  it('draws a held unit in its holder\'s colour, and says so', () => {
+    const { container } = render(
+      <HexMap radius={2} label="map" colours={colours} onSelect={() => undefined}>
+        <Units units={[{ id: 'blue-raider', name: 'Blue Raider', owner: 'blue', hex: { q: 1, r: 0 }, shape: 'fleet', strength: 2, heldBy: 'red' }]} />
+      </HexMap>,
+    );
+    const marker = screen.getByRole('button', { name: "blue: Blue Raider at (1, 0), under red's command" });
+    expect(marker.getAttribute('data-held-by')).toBe('red');
+    // Filled red, rimmed blue.
+    const style = container.querySelector('[data-held-by="red"] circle')?.getAttribute('style') ?? '';
+    expect(style).toMatch(/fill: (#ff6b5e|rgb\(255, 107, 94\))/);
+    expect(style).toMatch(/stroke: (#5aa9ff|rgb\(90, 169, 255\))/);
+  });
+
+  it('draws each seize by what became of it, and each shaken or captured flagship', () => {
+    const { container } = render(
+      <HexMap radius={3} label="map" colours={colours}>
+        <Seizes
+          seizes={[
+            { by: 'blue', from: { q: -2, r: 0 }, to: { q: 1, r: 0 }, outcome: 'landed' },
+            { by: 'red', from: { q: 2, r: 0 }, to: { q: -2, r: 0 }, outcome: 'blocked', label: '5 vs 6.5' },
+            { by: 'blue', from: { q: -2, r: 0 }, to: { q: 2, r: -1 }, at: { q: 2, r: 0 }, outcome: 'missed' },
+            { by: 'red', to: { q: 0, r: 2 }, outcome: 'landed' },
+          ]}
+        />
+        <Command
+          marks={[
+            { hex: { q: 2, r: 0 }, by: 'blue', stage: 'shaken', label: 'Shaken by blue' },
+            { hex: { q: -2, r: 0 }, by: 'red', stage: 'captured' },
+          ]}
+        />
+      </HexMap>,
+    );
+    const outcomes = [...container.querySelectorAll('[data-seize]')].map((g) => g.getAttribute('data-seize'));
+    expect(outcomes).toEqual(['landed', 'blocked', 'missed', 'landed']);
+    // A seize with no sender drawn is only its end.
+    expect(container.querySelectorAll('[data-seize] path')).toHaveLength(3);
+    expect(screen.getByText('5 vs 6.5')).toBeTruthy();
+    // The missed seize points on to where the flagship really was.
+    expect(container.querySelector('[data-seize="missed"] line')).toBeTruthy();
+    expect(container.querySelector('[data-command="shaken"]')?.textContent).toBe('Shaken by blue');
+    expect(container.querySelectorAll('[data-command="captured"] circle')).toHaveLength(2);
   });
 
   it('refuses a layer drawn outside a map', () => {

@@ -38,6 +38,16 @@ export interface CascadeCharge {
   readonly turn: number;
 }
 
+/** A flagship's command shaken by a seize that landed on it (QBIT-13): the first of a capture's two steps. */
+export interface Shake {
+  /** The turn the seize landed. Every player learns of it in the next Planning phase. */
+  readonly turn: number;
+  readonly flagship: string;
+  readonly owner: string;
+  /** The player whose seize landed: only they can complete the capture, in turn `turn + 2`. */
+  readonly by: string;
+}
+
 /** An order a player sent, tracked so the engine knows when it lands (ORD-04, ORD-06). */
 export interface SentOrder {
   readonly player: string;
@@ -71,6 +81,8 @@ export interface EngineState {
   readonly webNews: readonly WebNews[];
   /** Every Cascade charge paid for (QBIT-12). */
   readonly cascade: readonly CascadeCharge[];
+  /** Every flagship shaken by a seize (QBIT-13). */
+  readonly shakes: readonly Shake[];
 }
 
 export function startEngine(setup: GameSetup): EngineState {
@@ -97,6 +109,7 @@ export function startEngine(setup: GameSetup): EngineState {
     orders: [],
     webNews: [],
     cascade: [],
+    shakes: [],
   };
 }
 
@@ -123,6 +136,11 @@ export function knowledge(engine: EngineState, setup: GameSetup, player: string,
 /** The web news every player learns in the Planning phase of `turn` (ECON-05): the nodes that joined or left a web in the turn before. */
 export function webNewsFor(engine: EngineState, turn: number): readonly WebNews[] {
   return engine.webNews.filter((n) => n.turn === turn - 1);
+}
+
+/** The shakes every player learns of in the Planning phase of `turn` (QBIT-13): the flagships a seize landed on in the turn before. */
+export function shakeNewsFor(engine: EngineState, turn: number): readonly Shake[] {
+  return engine.shakes.filter((s) => s.turn === turn - 1);
 }
 
 /** A qBit amount for people to read. Balances are kept unrounded; this is display only. */

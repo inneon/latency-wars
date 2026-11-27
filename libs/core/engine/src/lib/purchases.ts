@@ -1,10 +1,12 @@
-import { type Hex, hexDistance } from '@latency-wars/domain';
-import { spend, statementFor } from '@latency-wars/economy';
+import { formatHex, type Hex, hexDistance } from '@latency-wars/domain';
+import { qbitIncome, spend } from '@latency-wars/economy';
 import { lightTravelTurns, type Observation, recordInstantArrival } from '@latency-wars/visibility';
 import { attackTargets, formatOrder, type PlanOrder } from './order';
 import { findOwnUnit } from './orders';
 import { type EngineState, formatQbits, knowledge } from './state';
 import type { GameSetup, GameUnit, HijackQuote, IntelPurchase, OversightQuote, Purchase, SubmittedOrder } from './types';
+
+const sameHex = (a: Hex, b: Hex) => a.q === b.q && a.r === b.r;
 
 /**
  * The price of a qBit action on a unit `player` believes is at `at` (QBIT-08):
@@ -175,7 +177,8 @@ export function settleCommandContest(
     [...hijacks].map(([player, list]) => [
       player,
       list.map((q): HijackQuote => {
-        if (q.refused || q.fails) return q;
+        if (q.refused) return { ...q, outcome: 'refused' };
+        if (q.fails) return { ...q, outcome: q.missed ? 'missed' : 'gone' };
         const strength = q.strength ?? 0;
         const reaches = q.reaches ?? [q.target];
         // Command presence: 1 free oversight in the fleet's own flagship's hex (QBIT-09); a flagship's own guard (QBIT-13).
@@ -184,10 +187,15 @@ export function settleCommandContest(
           const oversight = (guard.get(unit) ?? 0) + presence;
           return oversight > 0 && strength <= oversight ? [{ unit, oversight }] : [];
         });
-        if (blocked.length === 0) return q;
-        if (blocked.length < reaches.length) return { ...q, blocked };
+        if (blocked.length === 0) return { ...q, outcome: 'landed' };
+        if (blocked.length < reaches.length) return { ...q, blocked, outcome: 'partly' };
         const against = blocked.map((b) => `${b.unit} at ${b.oversight}`).join(', ');
-        return { ...q, blocked, fails: `blocked by oversight on every fleet it reached: ${q.kind} strength ${strength} against ${against} (QBIT-09).` };
+        return {
+          ...q,
+          blocked,
+          outcome: 'blocked',
+          fails: `blocked by oversight on every fleet it reached: ${q.kind} strength ${strength} against ${against} (QBIT-09).`,
+        };
       }),
     ]),
   );
@@ -238,6 +246,10 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   if (track.age > hijack.maxTrackAge) {
     return refuse(`Your track on ${target} is ${track.age} turns old; a ${kind} needs one no older than ${hijack.maxTrackAge} (QBIT-04).`);
   }
+  // A flagship shaken last turn can't be seized this turn: its owner gets a turn to answer (QBIT-13). Every player knows it was shaken.
+  if (capture && engine.shakes.some((s) => s.flagship === target && s.turn === turn - 1)) {
+    return refuse(`${target} was shaken last turn, so it can't be seized this turn; a seize that lands on it next turn captures it if it was yours (QBIT-13).`);
+  }
   // A seized fleet never attacks its own flagship (QBIT-10).
   const ownersFlagship = engine.units.find((u) => u.owner === track.unit.owner && u.class === 'flagship');
   if (kind === 'seize' && !capture && ownersFlagship && plan && attackTargets(plan).some((t) => sameUnit(t, ownersFlagship.id))) {
@@ -247,13 +259,32 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   const price = qbitPrice(engine, setup, player, base, track.unit.hex);
   const cost = price.cost + strength;
   const breakdown = `${price.breakdown} + strength ${strength}`;
+  const aimedAt = track.unit.hex;
   const truth = engine.units.find((u) => u.id === target);
-  if (!truth) return { kind, target, order, strength, cost, breakdown, fails: `${target} is no longer on the map.`, reaches: [], ...(capture ? { capture } : {}) };
+  if (!truth) {
+    return { kind, target, order, strength, cost, breakdown, fails: `${target} is no longer on the map.`, reaches: [], aimedAt, ...(capture ? { capture } : {}) };
+  }
   if (capture) {
-    // A flagship's own guard: its owner's last production, times CAPTURE_GUARD (QBIT-13). The buyer isn't told it.
-    const production = statementFor(engine.ledger, truth.owner, turn - 1)?.production ?? 0;
-    const guard = (setup.parameters.capture?.guard ?? 0) * production;
-    return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target], capture, guard };
+    // A flagship's own guard: its owner's web output as it stands, times CAPTURE_GUARD (QBIT-13). The buyer isn't told it.
+    const guard = (setup.parameters.capture?.guard ?? 0) * qbitIncome(engine.units, truth.owner, engine.economy);
+    const completes = engine.shakes.some((s) => s.flagship === target && s.by === player && s.turn === turn - 2);
+    // Aim: it lands only where the buyer's track shows the flagship (QBIT-13).
+    const missed = !sameHex(truth.hex, track.unit.hex);
+    return {
+      kind,
+      target,
+      order,
+      strength,
+      cost,
+      breakdown,
+      fails: missed ? `${target} wasn't at ${formatHex(track.unit.hex)}, where the track showed it, so the seize missed (QBIT-13).` : undefined,
+      reaches: [target],
+      capture,
+      guard,
+      aimedAt,
+      ...(missed ? { missed } : {}),
+      ...(completes ? { completes } : {}),
+    };
   }
   // A spoof reaches every fleet of the target's owner in its hex, the target first (QBIT-02); a seize only its target (QBIT-10).
   const others =
@@ -265,7 +296,7 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
           .sort();
   // Fleets in their own flagship's hex have command presence (QBIT-09) and keep it from moving if spoofed (FLAG-03).
   const atFlagship = engine.units.some((u) => u.owner === truth.owner && u.class === 'flagship' && hexDistance(u.hex, truth.hex) === 0);
-  return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target, ...others], atFlagship };
+  return { kind, target, order, strength, cost, breakdown, fails: undefined, reaches: [target, ...others], atFlagship, aimedAt };
 }
 
 /**

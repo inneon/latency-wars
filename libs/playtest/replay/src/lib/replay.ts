@@ -4,7 +4,7 @@
  * it, so a viewer can step through the game without knowing the log.
  */
 import { type Hex, hexEquals } from '@latency-wars/domain';
-import { formatOrder, type OrderBody } from '@latency-wars/engine';
+import { formatOrder, type HijackOutcome, type OrderBody } from '@latency-wars/engine';
 import type { EngineOverride, FleetMessage, LoggedPlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
 import { observe } from '@latency-wars/visibility';
 import type {
@@ -103,6 +103,64 @@ export interface GmView {
   messages: FleetMessage[];
 }
 
+/** A seize bought this turn (QBIT-10, QBIT-13), and what became of it. */
+export interface SeizeView {
+  /** The player who bought it. */
+  by: string;
+  target: string;
+  /** The target's owner, if the log knows the target. */
+  owner?: string;
+  /** Aimed at a flagship: a capture attempt (QBIT-13). */
+  flagship: boolean;
+  /** Would capture the flagship if it landed: it follows the same player's shake two turns before. */
+  completes: boolean;
+  outcome: HijackOutcome;
+  /** Command strength bought (QBIT-09). */
+  strength: number;
+  cost?: number;
+  /** The order the seized fleet was given. Empty for a seize on a flagship. */
+  order: string;
+  /** A flagship's free oversight (QBIT-13). */
+  guard?: number;
+  /** The oversight that blocked it, command presence and guard included (QBIT-09). */
+  oversight?: number;
+  /** The seizer's flagship at the start of the turn, where the seize was sent from. */
+  from?: Hex;
+  /** The target's true hex at the start of the turn. */
+  at?: Hex;
+  /** Where the seizer's track showed the target. Differs from `at` when a seize on a flagship missed. */
+  aimedAt?: Hex;
+  /** Why it was refused or failed, in the engine's words. */
+  reason?: string;
+}
+
+/**
+ * Where a flagship's shaken command stands at the end of a turn (QBIT-13): `shaken` this turn (it can't be seized next
+ * turn), `capturable` in the coming turn, `captured`, or `lapsed` because the capture didn't land in time.
+ */
+export interface CommandStatus {
+  flagship: string;
+  owner: string;
+  /** The player who shook it: the only one who can capture it. */
+  by: string;
+  /** The turn it was shaken. */
+  shakenIn: number;
+  stage: 'shaken' | 'capturable' | 'captured' | 'lapsed';
+}
+
+/**
+ * How close a capture is (QBIT-13): what a seize on `defender`'s flagship would have to pay to beat its guard, against the
+ * qBits `attacker` had to spend, both as they stood when this turn was planned. Light-delay distance and any oversight
+ * the defender buys come on top, so `needed` is a floor.
+ */
+export interface CaptureThreat {
+  defender: string;
+  attacker: string;
+  guard: number;
+  needed: number;
+  funds: number;
+}
+
 export interface Frame {
   /** 0 is the starting state; `t` is the end of turn `t`. */
   turn: number;
@@ -126,6 +184,14 @@ export interface Frame {
    */
   production: string[];
   overrides: EngineOverride[];
+  /** Seizes bought this turn, on fleets and flagships. */
+  seizes: SeizeView[];
+  /** Fleets that carried out a seizer's order this turn, and whose (QBIT-10). */
+  seized: { unit: string; by: string }[];
+  /** Every flagship whose shaken command matters at the end of this turn (QBIT-13). */
+  command: CommandStatus[];
+  /** In a scenario that allows captures: how close each flagship was to being captured this turn. */
+  threat: CaptureThreat[];
   gameOver: boolean;
   /** The GM's verdict when the game ended this turn; otherwise empty. */
   outcome: string;
@@ -174,6 +240,9 @@ interface TurnEvents {
   cascades: string[];
   /** Flagships captured by a seize this turn (QBIT-13). */
   captures: { flagship: string; owner: string; by: string }[];
+  /** Flagships shaken by a seize this turn (QBIT-13). */
+  shakes: { flagship: string; owner: string; by: string }[];
+  seized: { unit: string; by: string }[];
   reports: Map<string, string>;
   submissions: Map<string, LoggedPlayerTurn>;
   scans: Map<string, IntelPurchase[]>;
@@ -189,6 +258,8 @@ const emptyTurn = (): TurnEvents => ({
   overrides: [],
   cascades: [],
   captures: [],
+  shakes: [],
+  seized: [],
   reports: new Map(),
   submissions: new Map(),
   scans: new Map(),
@@ -262,6 +333,12 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
       case 'capture':
         at(e.turn).captures.push(...e.captured);
         break;
+      case 'shake':
+        at(e.turn).shakes.push(...e.shaken);
+        break;
+      case 'movement':
+        at(e.turn).seized.push(...e.phase.seized);
+        break;
       case 'warning':
         warnings.push(e.message);
         break;
@@ -280,6 +357,32 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
     const before = frames.at(-1)?.units ?? [];
     const { units, removed } = t.state;
     const everyone = [...units, ...removed];
+    const known = (id: string) => before.find((u) => u.id === id) ?? everyone.find((u) => u.id === id);
+    const seizes = [...t.spoofs].flatMap(([by, quotes]) =>
+      quotes
+        .filter((q) => q.kind === 'seize')
+        .map((q): SeizeView => {
+          const target = known(q.target);
+          const flagship = before.find((u) => u.owner === by && u.class === 'flagship');
+          return {
+            by,
+            target: q.target,
+            owner: target?.owner,
+            flagship: q.capture === true || target?.class === 'flagship',
+            completes: q.completes === true,
+            outcome: q.outcome ?? outcomeOf(q),
+            strength: q.strength ?? 0,
+            cost: q.cost,
+            order: q.order,
+            guard: q.guard,
+            oversight: q.blocked && q.blocked.length > 0 ? Math.max(...q.blocked.map((b) => b.oversight)) : undefined,
+            from: flagship?.hex,
+            at: before.find((u) => u.id === q.target)?.hex,
+            aimedAt: q.aimedAt,
+            reason: q.refused ?? q.fails,
+          };
+        }),
+    );
 
     frames.push({
       turn,
@@ -339,6 +442,10 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
       },
       corrections: t.corrections,
       production: t.production,
+      seizes,
+      seized: t.seized,
+      command: commandAt(turn, turns),
+      threat: [],
       overrides: t.overrides,
       // The engine, not the GM, ends a game with a Cascade, after the GM's resolution is logged (QBIT-12).
       gameOver: (t.resolution?.game_over ?? false) || t.cascades.length > 0 || t.captures.length > 0,
@@ -350,6 +457,8 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
             : (t.resolution?.outcome ?? ''),
     });
   }
+
+  addCaptureThreat(frames, scenario);
 
   const last = frames.at(-1);
   return {
@@ -378,6 +487,54 @@ function cascadeOutcome(completed: readonly string[], turn: number, scenario: Sc
   return names.length === 1
     ? `${names[0]} completed a Cascade (QBIT-12) at the end of turn ${turn} and wins.`
     : `${names.join(' and ')} completed Cascades (QBIT-12) in the same turn, ${turn}: the game is a draw.`;
+}
+
+/** What became of a spoof or seize logged before the engine recorded it, read from the reasons it gave. */
+function outcomeOf(q: HijackQuote): HijackOutcome {
+  if (q.refused) return 'refused';
+  if (q.fails) return q.fails.includes('missed') ? 'missed' : q.fails.includes('blocked') ? 'blocked' : 'gone';
+  return q.blocked && q.blocked.length > 0 ? 'partly' : 'landed';
+}
+
+/** Every shake that matters at the end of `turn`: the one made in it, the one whose capture comes next turn, and the one that just ended. */
+function commandAt(turn: number, turns: ReadonlyMap<number, TurnEvents>): CommandStatus[] {
+  const status: CommandStatus[] = [];
+  for (const back of [0, 1, 2]) {
+    for (const shake of turns.get(turn - back)?.shakes ?? []) {
+      const captured = (turns.get(turn)?.captures ?? []).some((c) => c.flagship === shake.flagship && c.by === shake.by);
+      const stage = back === 0 ? 'shaken' : back === 1 ? 'capturable' : captured ? 'captured' : 'lapsed';
+      status.push({ ...shake, shakenIn: turn - back, stage });
+    }
+  }
+  // A capture with no shake in the log: one logged before shakes were, or a rule that captures at once.
+  for (const c of turns.get(turn)?.captures ?? []) {
+    if (!status.some((s) => s.flagship === c.flagship && s.stage === 'captured')) status.push({ ...c, shakenIn: turn, stage: 'captured' });
+  }
+  return status;
+}
+
+/**
+ * Fills each frame's `threat` in a scenario that allows captures (QBIT-13): each flagship's guard as its owner's qBit
+ * income at the end of the turn before stood, times `CAPTURE_GUARD`, and each enemy's qBits then.
+ */
+function addCaptureThreat(frames: Frame[], scenario: ScenarioHeader): void {
+  const parameters = scenario.parameters as { capture?: { guard?: number }; hijack?: { seizeCost?: number } };
+  const multiple = parameters.capture?.guard;
+  const seizeCost = parameters.hijack?.seizeCost;
+  if (multiple === undefined || seizeCost === undefined) return;
+  for (const [i, frame] of frames.entries()) {
+    const previous = frames[i - 1];
+    if (!previous || frame.turn === 0) continue;
+    const ledger = new Map(previous.players.flatMap((p) => (p.qbits ? [[p.player, p.qbits] as const] : [])));
+    frame.threat = scenario.players.flatMap(({ id: defender }) => {
+      const income = ledger.get(defender)?.production;
+      if (income === undefined) return [];
+      const guard = multiple * income;
+      return scenario.players
+        .filter((p) => p.id !== defender && ledger.has(p.id))
+        .map(({ id: attacker }) => ({ defender, attacker, guard, needed: seizeCost + Math.floor(guard) + 1, funds: ledger.get(attacker)?.closing ?? 0 }));
+    });
+  }
 }
 
 function progressOf(events: readonly PlaytestEvent[], scenario: ScenarioHeader, last: Frame | undefined, ranked: boolean): Progress {

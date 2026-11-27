@@ -312,8 +312,9 @@ export function Losses({ losses }: LossesProps) {
   );
 }
 
-function tokenShape(token: Token, c: Point, fill: string) {
-  const edge = { fill, stroke: THEME.space, strokeWidth: 0.35 };
+function tokenShape(token: Token, c: Point, fill: string, rim?: string) {
+  // A held unit is drawn in its holder's colour, rimmed in its owner's.
+  const edge = rim ? { fill, stroke: rim, strokeWidth: 0.9 } : { fill, stroke: THEME.space, strokeWidth: 0.35 };
   switch (token.shape) {
     case 'flagship': {
       const d = SIZE * 0.5;
@@ -339,8 +340,136 @@ function tokenShape(token: Token, c: Point, fill: string) {
 
 const describe = (token: Token) => {
   const names = token.units.map((u) => u.name ?? u.id).join(', ');
-  return `${token.owner}: ${names} at ${written(token.hex)}`;
+  return `${token.owner}: ${names} at ${written(token.hex)}${token.heldBy ? `, under ${token.heldBy}'s command` : ''}`;
 };
+
+/** What became of a seize, as the map draws it. */
+export type SeizeOutcome = 'landed' | 'partly' | 'blocked' | 'missed';
+
+export interface MapSeize {
+  /** The owner who sent it, whose colour it is drawn in. */
+  readonly by: string;
+  /** Where it was sent from. Without it, only its end is drawn. */
+  readonly from?: Hex;
+  /** Where it was aimed. */
+  readonly to: Hex;
+  /** Where the target really was, when that isn't `to`: a seize that missed. */
+  readonly at?: Hex;
+  readonly outcome: SeizeOutcome;
+  /** A short note at its end, such as the strengths that decided it. */
+  readonly label?: string;
+}
+
+/**
+ * Seizes: a dotted curve from where each was sent to where it was aimed, in its sender's colour. It ends in a ring
+ * where it landed, a bar where oversight blocked it, and an empty dashed ring where it missed, with a faint line on to
+ * where the target really was.
+ */
+export function Seizes({ seizes }: { seizes: readonly MapSeize[] }) {
+  const { colour } = useMap();
+  return (
+    <g pointerEvents="none">
+      {seizes.map((s, i) => {
+        const tint = colour(s.by);
+        const end = at(s.to);
+        const start = s.from ? at(s.from) : undefined;
+        const length = start ? Math.hypot(end.x - start.x, end.y - start.y) : 0;
+        const ux = start && length ? (end.x - start.x) / length : 0;
+        const uy = start && length ? (end.y - start.y) / length : 0;
+        // A blocked seize stops short of its target, at a bar; the others run to the ring around it.
+        const stop = s.outcome === 'blocked' ? SIZE * 1.05 : SIZE * 0.72;
+        const tip = start && length > stop ? { x: end.x - ux * stop, y: end.y - uy * stop } : end;
+        const bow = Math.min(length * 0.18, SIZE * 1.2);
+        const control = start ? { x: (start.x + tip.x) / 2 + uy * bow, y: (start.y + tip.y) / 2 - ux * bow } : end;
+        const truth = s.at ? at(s.at) : undefined;
+        return (
+          <g key={i} data-seize={s.outcome} data-by={s.by}>
+            {start && length > stop && (
+              <path
+                d={`M ${start.x.toFixed(2)} ${start.y.toFixed(2)} Q ${control.x.toFixed(2)} ${control.y.toFixed(2)} ${tip.x.toFixed(2)} ${tip.y.toFixed(2)}`}
+                style={{ fill: 'none', stroke: tint, strokeWidth: 0.55, strokeDasharray: '0.1 1.1', strokeLinecap: 'round', opacity: s.outcome === 'missed' ? 0.7 : 1 }}
+              />
+            )}
+            {(s.outcome === 'landed' || s.outcome === 'partly') && (
+              <circle cx={end.x} cy={end.y} r={SIZE * 0.68} style={{ fill: 'none', stroke: tint, strokeWidth: 0.6 }} />
+            )}
+            {s.outcome === 'blocked' && (
+              <line
+                x1={tip.x - uy * SIZE * 0.32}
+                y1={tip.y + ux * SIZE * 0.32}
+                x2={tip.x + uy * SIZE * 0.32}
+                y2={tip.y - ux * SIZE * 0.32}
+                style={{ stroke: tint, strokeWidth: 0.9, strokeLinecap: 'round' }}
+              />
+            )}
+            {s.outcome === 'missed' && (
+              <>
+                <circle cx={end.x} cy={end.y} r={SIZE * 0.5} style={{ fill: 'none', stroke: tint, strokeWidth: 0.45, strokeDasharray: '0.8 0.8' }} />
+                {truth && <line x1={end.x} y1={end.y} x2={truth.x} y2={truth.y} style={{ stroke: tint, strokeWidth: 0.3, strokeDasharray: '0.4 0.8', opacity: 0.55 }} />}
+              </>
+            )}
+            {s.label && (
+              <text
+                x={(s.outcome === 'blocked' ? tip : end).x}
+                y={(s.outcome === 'blocked' ? tip : end).y - SIZE * 0.82}
+                textAnchor="middle"
+                style={{ fill: tint, fontSize: SIZE * 0.24, fontWeight: 600, stroke: THEME.space, strokeWidth: 0.5, paintOrder: 'stroke' }}
+              >
+                {s.label}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/**
+ * Where a flagship's command stands: `shaken` (half a ring), `capturable` next turn (most of a ring), `captured` (a
+ * double ring) or `lapsed` (a faint ring), in the colour of the owner who shook it.
+ */
+export interface CommandMark {
+  readonly hex: Hex;
+  readonly by: string;
+  readonly stage: 'shaken' | 'capturable' | 'captured' | 'lapsed';
+  readonly label?: string;
+}
+
+export function Command({ marks }: { marks: readonly CommandMark[] }) {
+  const { colour } = useMap();
+  const r = SIZE * 0.86;
+  const round = 2 * Math.PI * r;
+  return (
+    <g pointerEvents="none">
+      {marks.map((m, i) => {
+        const c = at(m.hex);
+        const tint = colour(m.by);
+        const ring = (dash: string | undefined, opacity = 1, radius = r, width = 0.8) => (
+          <circle cx={c.x} cy={c.y} r={radius} transform={`rotate(-90 ${c.x} ${c.y})`} style={{ fill: 'none', stroke: tint, strokeWidth: width, strokeDasharray: dash, opacity, strokeLinecap: 'round' }} />
+        );
+        return (
+          <g key={i} data-command={m.stage} data-by={m.by}>
+            {m.stage === 'shaken' && ring(`${(round / 2).toFixed(2)} ${(round / 2).toFixed(2)}`)}
+            {m.stage === 'capturable' && ring(`${((round * 7) / 8).toFixed(2)} ${(round / 8).toFixed(2)}`, 1, r, 1)}
+            {m.stage === 'lapsed' && ring('0.6 1.2', 0.45, r, 0.5)}
+            {m.stage === 'captured' && (
+              <>
+                {ring(undefined, 1, r, 0.8)}
+                {ring(undefined, 0.6, r + SIZE * 0.14, 0.4)}
+              </>
+            )}
+            {m.label && (
+              <text x={c.x} y={c.y + r + SIZE * 0.32} textAnchor="middle" style={{ fill: tint, fontSize: SIZE * 0.24, fontWeight: 600, stroke: THEME.space, strokeWidth: 0.5, paintOrder: 'stroke' }}>
+                {m.label}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
 
 export interface UnitsProps {
   units: readonly MapUnit[];
@@ -358,16 +487,17 @@ export function Units({ units }: UnitsProps) {
     <g>
       {tokens.map((token) => {
         const c = at(token.hex, token.offset);
-        const fill = colour(token.owner);
+        const fill = colour(token.heldBy ?? token.owner);
+        const rim = token.heldBy ? colour(token.owner) : undefined;
         const choose = select && (() => select(token.hex));
         const onKey = choose && ((e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), choose()));
         return (
-          <g key={token.key} data-token={token.key} role={choose ? 'button' : 'img'} tabIndex={choose ? 0 : undefined} aria-label={describe(token)} onClick={choose} onKeyDown={onKey}>
+          <g key={token.key} data-token={token.key} data-held-by={token.heldBy} role={choose ? 'button' : 'img'} tabIndex={choose ? 0 : undefined} aria-label={describe(token)} onClick={choose} onKeyDown={onKey}>
             <title>{describe(token)}</title>
             {token.sightedBy.map((observer, i) => (
               <circle key={observer} data-sighted-by={observer} cx={c.x} cy={c.y} r={SIZE * (0.6 + 0.09 * i)} style={{ fill: 'none', stroke: colour(observer), strokeWidth: 0.22, strokeOpacity: 0.85, strokeDasharray: '0.9 0.7' }} />
             ))}
-            {tokenShape(token, c, fill)}
+            {tokenShape(token, c, fill, rim)}
             {token.shape !== 'node' && token.shape !== 'mine' && token.strength > 0 && (
               <text x={c.x} y={c.y + SIZE * 0.13} textAnchor="middle" style={{ fill: THEME.space, fontSize: SIZE * 0.36, fontWeight: 700 }}>
                 {token.strength}

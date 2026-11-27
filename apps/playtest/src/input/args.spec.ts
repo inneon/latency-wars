@@ -6,6 +6,7 @@ describe('parseCliArgs', () => {
       help: false,
       scenario: 'the-hunt',
       rounds: undefined,
+      hints: true,
       backend: 'api',
       claudeBin: undefined,
       pasteLimit: undefined,
@@ -31,6 +32,10 @@ describe('parseCliArgs', () => {
       remote: ['blue', 'gm'],
       port: 5000,
     });
+  });
+
+  it('turns the hints off with --no-hints', () => {
+    expect(parseCliArgs(['--scenario', 'x', '--no-hints'])).toMatchObject({ hints: false });
   });
 
   it('short-circuits on --help', () => {

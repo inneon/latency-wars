@@ -56,6 +56,8 @@ export const ScenarioHeader = z.object({
   parameters: z.looseObject({ c: z.number(), trackDecay: z.number().optional() }),
   /** Each player, with the personality it played (apps/playtest/personas), in runs that record one. */
   players: z.array(z.object({ id: z.string(), name: z.string(), persona: z.string().optional(), personaName: z.string().optional() })),
+  /** Whether the players were given the hints sheet. Absent in logs from before hints. */
+  hints: z.boolean().optional(),
   /** The true state at the end of turn 0. */
   units: z.array(PlaytestUnit),
 });
@@ -95,6 +97,17 @@ export const HijackQuote: z.ZodType<Engine.HijackQuote> = z.object({
   atFlagship: z.boolean().optional(),
   /** The fleets it reaches whose oversight blocked it (QBIT-09), with that oversight's strength, command presence included. For the GM. */
   blocked: z.array(z.object({ unit: z.string(), oversight: z.number() })).readonly().optional(),
+  /** A seize on a flagship (QBIT-13): it shakes the flagship if it lands, or captures it if it `completes` a shake. */
+  capture: z.literal(true).optional(),
+  completes: z.literal(true).optional(),
+  /** The flagship's free oversight on the true state (QBIT-13). For the GM. */
+  guard: z.number().optional(),
+  /** Where the buyer's track showed the target: where a seize on a flagship was aimed (QBIT-13). */
+  aimedAt: Hex.optional(),
+  /** A seize on a flagship that wasn't where the track showed it (QBIT-13). */
+  missed: z.literal(true).optional(),
+  /** What happened once oversight was settled. Only on a spoof or seize as bought, not as quoted. */
+  outcome: z.enum(['landed', 'partly', 'blocked', 'missed', 'gone', 'refused']).optional(),
 });
 export type HijackQuote = Engine.HijackQuote;
 
@@ -356,6 +369,12 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
     turns: z.number().optional(),
     refused: z.string().optional(),
     completed: z.array(z.string()).optional(),
+  }),
+  /** Flagships shaken by a seize this turn (QBIT-13): the first step of a capture. Every player was told next Planning. */
+  z.object({
+    type: z.literal('shake'),
+    turn,
+    shaken: z.array(z.object({ flagship: z.string(), owner: player, by: player })),
   }),
   /** Flagships captured by a seize this turn (QBIT-13). Their owners lost, and the engine ended the game. */
   z.object({

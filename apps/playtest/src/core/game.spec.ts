@@ -5,6 +5,7 @@ import type { Scenario } from '../types/scenario';
 import type { Feedback, FleetDecision, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
 import { formatOrder, holdOrder, moveToOrder, produceOrder } from './engine.spec-helper';
 import { runPlaytest } from './game';
+import * as prompts from './prompts';
 
 class ScriptedAgent implements Agent {
   readonly prompts: { label: string; prompt: string }[] = [];
@@ -464,6 +465,19 @@ describe('runPlaytest with matter (Ycnetal)', () => {
       await expect(loadScenario(findWorkspaceRoot(__dirname), name)).resolves.toMatchObject({ units: expect.any(Array) });
     }
     expect(ycnetal.units.some((u) => u.class === 'mine')).toBe(true);
+  });
+
+  it('gives players the general hints, then the scenario\'s own, unless the run turns them off', async () => {
+    expect(ycnetal.hints).toContain('# Hints: what the rules imply');
+    expect(ycnetal.hints).toContain('# Hints for Ycnetal');
+    expect(ycnetal.hints?.indexOf('# Hints for Ycnetal')).toBeGreaterThan(ycnetal.hints?.indexOf('# Hints: what the rules imply') ?? Infinity);
+    const player = ycnetal.players[0];
+    if (!player) throw new Error('Ycnetal has players');
+    expect(prompts.playerSystem(ycnetal, player).documents.map((d) => d.name)).toContain('hints.md');
+    const plain = await loadScenario(findWorkspaceRoot(__dirname), 'ycnetal', undefined, false);
+    expect(plain.hints).toBeUndefined();
+    expect(prompts.playerSystem(plain, player).documents.map((d) => d.name)).not.toContain('hints.md');
+    expect(prompts.synthesisSystem(plain).instructions).toContain('no hints sheet');
   });
 
   it('judges Produce itself, builds the unit, and tells players only their balance and output', async () => {

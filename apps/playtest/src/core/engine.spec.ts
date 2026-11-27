@@ -39,7 +39,7 @@ import {
   type OrderBody,
   type PlanOrder,
 } from './engine.spec-helper';
-import { balanceOf, statementFor } from '@latency-wars/economy';
+import { balanceOf, qbitIncome, statementFor } from '@latency-wars/economy';
 import type { PlayerTurn } from '@latency-wars/playtest-contracts';
 
 let scenario: Scenario;
@@ -358,7 +358,7 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     const engine = scanned(contact(), 2);
     // Blue's track has Red Line 4 from Blue's flagship: L = 2.
     const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: moveToOrder(0, 3) });
-    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: formatOrder(moveToOrder(0, 3)), strength: 0, cost: 5, breakdown: 'base 3 + distance 2 + strength 0', fails: undefined, reaches: ['red-line'], atFlagship: false });
+    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: formatOrder(moveToOrder(0, 3)), strength: 0, cost: 5, breakdown: 'base 3 + distance 2 + strength 0', fails: undefined, reaches: ['red-line'], atFlagship: false, aimedAt: { q: 1, r: -1 } });
   });
 
   it('adds the strength bought to the price (QBIT-09)', () => {
@@ -441,10 +441,11 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     // Blue Line dashes next to Red's flagship, so Blue has a fresh track on it.
     const near = () => scanned(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
 
-    it('prices a seize on a flagship with no order, guarded by its owner\'s last production, which the buyer never sees', () => {
+    it('prices a seize on a flagship with no order, guarded by its owner\'s live web, which the buyer never sees', () => {
       const engine = near();
       const q = quoteHijack(engine, withCapture(), 'blue', 2, { kind: 'seize', target: 'red-flagship', strength: 3 });
-      const production = statementFor(engine.ledger, 'red', 1)?.production ?? NaN;
+      const production = qbitIncome(engine.units, 'red', engine.economy);
+      expect(production).toBeGreaterThan(0);
       expect(q).toMatchObject({ kind: 'seize', capture: true, reaches: ['red-flagship'] });
       expect(q.refused).toBeUndefined();
       expect(q.guard).toBeCloseTo(2 * production);
@@ -460,11 +461,37 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
         settleCommandContest(new Map([['blue', [attempt(strength)]]]), new Map(oversight ? [['red', [{ target: 'red-flagship', strength: oversight }]]] : []))
           .get('blue')?.[0];
       expect(settle(Math.floor(guard))?.fails).toContain('blocked');
+      expect(settle(Math.floor(guard))?.outcome).toBe('blocked');
       expect(settle(Math.floor(guard) + 1)?.fails).toBeUndefined();
+      expect(settle(Math.floor(guard) + 1)?.outcome).toBe('landed');
       expect(settle(Math.floor(guard) + 1, 2)?.fails).toContain('blocked');
       const landed = settle(Math.floor(guard) + 1);
       expect(commandEffects(new Map([['blue', landed ? [landed] : []]]))).toMatchObject({ seized: new Map(), captured: new Map([['red-flagship', 'blue']]) });
-      expect(renderHijacksForGm(landed ? [landed] : [])).toContain('captures that flagship (QBIT-13)');
+      expect(renderHijacksForGm(landed ? [landed] : [])).toContain("shakes that flagship's command (QBIT-13)");
+    });
+
+    it('misses a flagship that is no longer where the track shows it, and charges anyway (QBIT-13)', () => {
+      const engine = near();
+      const moved = { ...engine, units: engine.units.map((u) => (u.id === 'red-flagship' ? { ...u, hex: { q: u.hex.q, r: u.hex.r + 1 } } : u)) };
+      const q = quoteHijack(moved, withCapture(), 'blue', 2, { kind: 'seize', target: 'red-flagship', strength: 3 });
+      expect(q.refused).toBeUndefined();
+      expect(q.cost).toBeGreaterThan(0);
+      expect(q.fails).toContain('the seize missed');
+      // The log keeps where it was aimed, and that it missed, for whoever replays the game.
+      const red = engine.units.find((u) => u.id === 'red-flagship');
+      expect(q).toMatchObject({ missed: true, aimedAt: red?.hex });
+      expect(settleCommandContest(new Map([['blue', [q]]]), new Map()).get('blue')?.[0]?.outcome).toBe('missed');
+    });
+
+    it('refuses a seize the turn after a shake, and completes a capture the turn after that (QBIT-13)', () => {
+      const engine = near();
+      const shake = { flagship: 'red-flagship', owner: 'red', by: 'blue' };
+      const seize = (turn: number) => quoteHijack({ ...engine, shakes: [{ ...shake, turn }] }, withCapture(), 'blue', 2, { kind: 'seize', target: 'red-flagship', strength: 3 });
+      expect(seize(1).refused).toContain('shaken last turn');
+      const second = seize(0);
+      expect(second).toMatchObject({ capture: true, completes: true });
+      expect(renderHijacksForGm([second])).toContain('captures that flagship (QBIT-13)');
+      expect(seize(-1).completes).toBeUndefined();
     });
 
     it('lets a player oversee their own flagship only where captures are allowed', () => {
@@ -528,6 +555,15 @@ describe('oversight and the command contest (QBIT-09)', () => {
     expect(line?.fails).toBeUndefined();
     expect(raider?.fails).toContain('spoof strength 2 against red-raider at 2');
     expect(scout?.fails).toBeUndefined();
+    expect([line?.outcome, raider?.outcome, scout?.outcome]).toEqual(['landed', 'blocked', 'landed']);
+  });
+
+  it('says what became of a spoof that was refused, or whose target had gone', () => {
+    const settled = settleCommandContest(
+      new Map([['blue', [{ ...spoof('red-line', 1), refused: 'too poor' }, { ...spoof('red-raider', 1), fails: 'red-raider is no longer on the map.' }]]]),
+      new Map(),
+    );
+    expect(settled.get('blue')?.map((q) => q.outcome)).toEqual(['refused', 'gone']);
   });
 
   it('settles a spoof on each fleet it reaches separately', () => {
@@ -535,6 +571,7 @@ describe('oversight and the command contest (QBIT-09)', () => {
     const partly = settleCommandContest(new Map([['blue', [stack]]]), new Map([['red', [guard('red-line', 3)]]]));
     expect(partly.get('blue')?.[0]?.fails).toBeUndefined();
     expect(partly.get('blue')?.[0]?.blocked).toEqual([{ unit: 'red-line', oversight: 3 }]);
+    expect(partly.get('blue')?.[0]?.outcome).toBe('partly');
 
     const all = settleCommandContest(
       new Map([['blue', [stack]]]),

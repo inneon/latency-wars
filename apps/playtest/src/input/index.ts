@@ -19,7 +19,7 @@ export async function readRunConfig(argv: string[], now = new Date()): Promise<R
   if (args.help) return null;
 
   const workspaceRoot = findWorkspaceRoot();
-  const scenario = await loadScenario(workspaceRoot, args.scenario, args.personas);
+  const scenario = await loadScenario(workspaceRoot, args.scenario, args.personas, args.hints);
   const backend: Backend =
     args.backend === 'claude-code'
       ? { kind: 'claude-code', bin: findClaudeBin(args.claudeBin) }

@@ -132,6 +132,8 @@ export const ScenarioFile = z.object({
   common: z.string(),
   /** GM only: the true starting state and anything players must not know. */
   gm: z.string(),
+  /** Players only, optional: this scenario's hints, added to the general ones in apps/playtest/hints. */
+  hints: z.string().optional(),
   players: z
     .array(
       z.object({
@@ -191,6 +193,8 @@ export interface Scenario {
   units: PlaytestUnit[];
   rules: { path: string; content: string }[];
   common: string;
+  /** What every player is given as hints.md: consequences of the rules that past players found non-obvious. Absent when a run turns hints off. */
+  hints?: string;
   gmBriefing: string;
   players: ScenarioPlayer[];
 }

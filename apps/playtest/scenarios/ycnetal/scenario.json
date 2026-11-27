@@ -409,6 +409,7 @@
   ],
   "common": "common.md",
   "gm": "gm.md",
+  "hints": "hints.md",
   "players": [
     {
       "id": "blue",

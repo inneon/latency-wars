@@ -87,6 +87,8 @@ export interface MapUnit {
   readonly joined?: boolean;
   /** The owners with a sensor on it. */
   readonly sightedBy?: readonly string[];
+  /** Another owner commanding it for now (a seized fleet, a captured flagship). */
+  readonly heldBy?: string;
 }
 
 /** One drawn marker: all of one owner's fleets in a hex, or all of their structures there. */
@@ -102,6 +104,8 @@ export interface Token {
   readonly offset: Point;
   readonly joined: boolean;
   readonly sightedBy: readonly string[];
+  /** The owner commanding every unit in it, when that isn't `owner`. */
+  readonly heldBy?: string;
 }
 
 const RANK: Record<UnitShape, number> = { flagship: 0, fleet: 1, scout: 2, mine: 3, node: 4 };
@@ -127,8 +131,9 @@ export function stackTokens(units: readonly MapUnit[], owners: readonly string[]
       const sorted = [...members].sort((a, b) => RANK[a.shape] - RANK[b.shape] || (b.strength ?? 0) - (a.strength ?? 0));
       const lead = sorted[0] as MapUnit;
       return {
-        key: `${key(hex)}:${lead.owner}:${kind}`,
+        key: `${key(hex)}:${lead.owner}:${kind}${lead.heldBy ? `:${lead.heldBy}` : ''}`,
         owner: lead.owner,
+        ...(lead.heldBy ? { heldBy: lead.heldBy } : {}),
         hex,
         shape: lead.shape,
         units: sorted,
@@ -138,7 +143,13 @@ export function stackTokens(units: readonly MapUnit[], owners: readonly string[]
         sightedBy: [...new Set(sorted.flatMap((u) => u.sightedBy ?? []))],
       };
     };
-    const ownersOf = (members: MapUnit[]) => [...new Set(members.map((u) => u.owner))].sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+    // Units held by another owner are a marker of their own, beside their owner's.
+    const sideOf = (u: MapUnit) => (u.heldBy ? `${u.owner}>${u.heldBy}` : u.owner);
+    const rank = (side: string) => {
+      const [owner = '', heldBy] = side.split('>');
+      return order(owner) * 2 + (heldBy ? 1 : 0);
+    };
+    const ownersOf = (members: MapUnit[]) => [...new Set(members.map(sideOf))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
     const spread = (index: number, count: number, y: number): Point => ({ x: count === 1 ? 0 : (index - (count - 1) / 2) * (count === 2 ? 0.8 : 0.56), y });
 
     const isStructure = (u: MapUnit) => u.shape === 'node' || u.shape === 'mine';
@@ -147,10 +158,10 @@ export function stackTokens(units: readonly MapUnit[], owners: readonly string[]
     const mobileOwners = ownersOf(mobile);
     const nodeOwners = ownersOf(nodes);
     for (const [i, owner] of nodeOwners.entries()) {
-      tokens.push(group(nodes.filter((u) => u.owner === owner), 'node', spread(i, nodeOwners.length, mobile.length ? 0.46 : 0)));
+      tokens.push(group(nodes.filter((u) => sideOf(u) === owner), 'node', spread(i, nodeOwners.length, mobile.length ? 0.46 : 0)));
     }
     for (const [i, owner] of mobileOwners.entries()) {
-      tokens.push(group(mobile.filter((u) => u.owner === owner), 'fleet', spread(i, mobileOwners.length, nodes.length ? -0.2 : 0)));
+      tokens.push(group(mobile.filter((u) => sideOf(u) === owner), 'fleet', spread(i, mobileOwners.length, nodes.length ? -0.2 : 0)));
     }
   }
   return tokens;
