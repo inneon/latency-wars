@@ -1,4 +1,4 @@
-# Latency Wars - Game Mechanics (v0.17)
+# Latency Wars - Game Mechanics (v0.18)
 
 ## 0. About This Document
 
@@ -35,9 +35,10 @@ Over time, the **Agreed** rules here will be extracted into a **rulebook**: the 
 | **Contact / Track** | A player's record of an enemy object built from observations: identity, class, last observed position and observation turn. Orders target tracks, not hexes. |
 | **Age** | How many turns older an observation is than the freshest possible (local) information. |
 | **Possibility cloud** | The set of hexes a contact could now occupy, given its age and top speed. |
-| **Order** | A message from a player to one of their fleets, expressing intent. |
+| **Order** | A message from a player to one of their fleets, expressing intent. A shipyard takes `Produce` orders instead (`PROD-03`). |
 | **Light order** | An order sent at light speed. It is delayed by distance. |
 | **Instant order** | An order sent by spending qBits. It is delivered immediately. |
+| **Stage** | One objective of an order, with its own commitment and leash. An order has one to `STAGES_MAX` of them, and its fleet carries them out in sequence (`ORD-11`). |
 | **Entangled channel** | Everything a player learns instantly rather than at light speed (`LIGHT-18`). |
 | **Status report** | A message every unit sends home each turn, at light speed. |
 | **Acknowledgement (ack)** | A fleet's reply on receiving an order: accepted, rejected or stale. |
@@ -82,6 +83,7 @@ All values are placeholders, to be tuned by playtesting.
 | `TRACK_DECAY` | Age at which a track is marked Lost | 8 turns | |
 | `LEASH_RANGE` | Default pursuit range | 3 hexes | Distance from the target's last known position. |
 | `LEASH_TURNS` | Default pursuit duration | 3 turns | |
+| `STAGES_MAX` | Most stages in one order | 4 | `ORD-11` |
 | `ENGAGE_RANGE` | Distance at which hostile units engage during Movement | 1 hex | `MOVE-03` |
 | `QBIT_DIVISOR` | Divides link output into qBits | 16 | `ECON-01`. With a length-8 link, 64 ÷ 16 = 4 qBits/turn. |
 | `QBIT_DECAY` | Fraction of unspent qBits lost each turn | 1/3 | `ECON-04`. A player who never spends levels off at income ÷ `QBIT_DECAY`: 12 at 4 qBits/turn. |
@@ -233,26 +235,35 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
 ## 6. Orders — **Proposed**
 
 ### 6.1 Structure
-- **ORD-01** An order expresses **intent**, not exact instructions. Every order has five parts. All but the objective have defaults, so a one-click order is always valid.
+- **ORD-01** An order expresses **intent**, not exact instructions. Every order has five parts, and all but the objective have defaults, so a one-click order is always valid. The objective, commitment and leash are set for each **stage** of the order (`ORD-11`). The fallback and the doctrine change are set once, for the whole order.
 
 | Part | Values | Default |
 |---|---|---|
-| **Objective** | `MoveTo(hex)`, `Attack(track)`, `Defend(hex or node)`, `Patrol(route)`, `Escort(fleet)`, `Build(zone or planet)`, `Hold` | — |
+| **Objective** | `MoveTo(hex)`, `Attack(track)`, `Defend(hex or node)`, `Escort(fleet)`, `Build(zone or planet)`, `ReturnHome`, `Hold` | — |
 | **Commitment** | `Discretion`: an `Attack` goes ahead only if the fight looks fair when the target is sensed (`RES-04`), and evasion may interrupt the order (`AUTO-03`). `AtAllCosts`: execute regardless. | `Discretion` |
-| **Leash** | Max pursuit range and duration | `LEASH_RANGE`, `LEASH_TURNS` |
-| **Fallback** | `Doctrine`, `HoldAndReport`, `ReturnHome`, `ResumePrevious`, `MoveTo(hex)`, `Defend(hex or node)`, `Escort(fleet)` | `Doctrine` |
+| **Leash** | Max pursuit range and duration. It applies to `Attack` stages (`RES-05`). | `LEASH_RANGE`, `LEASH_TURNS` |
+| **Fallback** | `Doctrine`, `HoldAndReport`, `ReturnHome`, `MoveTo(hex)`, `Defend(hex or node)`, `Escort(fleet)` | `Doctrine` |
 | **Doctrine change** | A new stance or home (`AUTO-01`) | None |
 
-  - A doctrine change takes effect when the order is accepted (`RES-01`). An order MAY be a doctrine change alone; it still counts as that fleet's order for the turn (`ORD-08`).
-  - A fleet carries out its fallback when its order completes, fails, is declined or loses its target (`RES-04`, `RES-05`, `RES-06`, `RES-09`):
+  - A doctrine change takes effect when the order is accepted (`RES-01`). An order MAY be a doctrine change alone, with no stages. It doesn't replace the active order, and it still counts as that fleet's order for the turn (`ORD-08`). Its send turn is checked against doctrine alone (`ORD-07`).
+  - `ReturnHome` is a `MoveTo` to the fleet's home, looked up from its doctrine when the order is carried out (`AUTO-01`). It completes on arrival (`RES-10`).
+  - This is the structure of an order to a fleet. An order to a shipyard is a `Produce` order, with none of these parts (`PROD-03`).
+  - A fleet carries out its fallback when its order ends: when its last stage completes, or when any stage fails, is declined or loses its target (`RES-04`, `RES-05`, `RES-06`, `RES-09`, `ORD-11`):
     - `Doctrine` leaves the fleet with no order, so its stance decides what it does (`AUTO-03` priorities 2, 4 and 5).
-    - `ResumePrevious` makes the previous order active again.
     - Any other fallback becomes the fleet's active order once it has taken effect, until it gets a new order. It ranks as an order at `AUTO-03` priority 3, never as `AtAllCosts`, and counts for willingness (`MOVE-04`). Until it has taken effect it gives the fleet no reason to be willing.
     - When a fallback that became the active order completes, fails or loses its target in turn, the fleet has no order.
   - *Why:* a fallback is the player's plan, sent in advance, so it outranks the fleet's stance. `Doctrine`, the default, hands the fleet to its stance: an Aggressive fleet keeps hunting, and the others hold where they are.
 
+- **ORD-11** An order has one to `STAGES_MAX` **stages**, and its fleet carries them out in sequence. Only the first stage is checked on delivery (`RES-01`). Each later stage is checked when it begins, and fails then if it no longer makes sense (`RES-09`).
+  - A stage that completes hands over to the next. When the last stage completes, the fleet carries out the order's fallback (`ORD-01`).
+  - A stage that fails, is declined or loses its target (`RES-04`, `RES-05`, `RES-09`) ends the whole order: the remaining stages are dropped and the fleet carries out the fallback.
+  - `Hold`, `Defend` and `Escort` never complete (`RES-10`). An order with one of them in any stage but the last is **Rejected** on delivery, with a reason (`RES-01` step 2).
+  - A stage's commitment and leash apply to that stage alone. The fallback and the doctrine change belong to the order as a whole.
+  - *Why:* a player can say "kill the node, then build there", or route round a danger in several legs, in one order, without paying a second light round trip or more qBits for each. The stages are conditional on success, so a declined attack doesn't go on to a build. Only a whole order replaces another (`ORD-07`), so "the newest send turn is in charge" still holds, and the player doesn't need to know which stage the fleet is on.
+
 - **ORD-02** `Attack` targets a **track**, which MAY be a node's track. The order carries the track's last known position as the sender knew it.
-- **ORD-03** Every order carries a **send turn** and an **order ID**.
+- **ORD-03** Every order carries a **send turn**. An order is identified by its recipient and its send turn, and acks, outbox entries and reports name it that way (`FB-02`, `FB-03`, `FB-07`).
+  - *Why:* `ORD-08` allows one order per recipient per turn, so the pair is unique and nothing needs a separate ID. If `ORD-08` is ever relaxed, an ID will have to come back.
 - **ORD-08** A player MAY send at most **one order per fleet per turn**, light or instant. To change their mind, a player sends a new order in a later turn.
   - *Why:* it removes any question of which of two same-turn orders wins (raised in the first play-test), without needing tie-break rules.
 - **ORD-10** A player MAY only order fleets they have had a status report from (`LIGHT-11`). A report seen through a scan (`FB-11`) or by the flagship's own sensors (`LIGHT-11`) counts.
@@ -266,9 +277,14 @@ Simultaneous turns are part of the theme, not just a convenience: nobody gets to
   where `U(T_d)` is the recipient's position at the start of `T_d`. The wavefront is centred where it was emitted, so moving the flagship afterwards never changes when an order already sent arrives. Only the recipient's movement can. For a stationary recipient this is turn `T_s + L(d)` (`LIGHT-15`).
 - **ORD-05** Orders to local fleets (in the flagship's own hex) are delivered in the same turn they are sent. A fleet even one hex away isn't local: its orders take `L(1)` = 1 turn. The flagship's own orders (movement, doctrine changes) are orders like any other: always local, so delivered immediately. They count towards `ORD-08` and never cost qBits.
 - **ORD-06** Instant orders (qBits) are delivered in the Emission phase of the turn they are sent, whatever the distance. The recipient resolves them in that turn's Decision phase (section 7), so they take effect in that same turn's Movement and Combat.
-- **ORD-07** A fleet has at most one **active order**. A delivered order replaces the active order only if its send turn is later than the active order's. Otherwise it is discarded and acknowledged as **Stale**. (`ORD-08` means two orders to one fleet never share a send turn.)
+- **ORD-07** A fleet has at most one **active order**, whose stages it carries out in sequence (`ORD-11`). A delivered order replaces the active order, stages and all, only if its send turn is later than the active order's. Otherwise it is discarded and acknowledged as **Stale**. (`ORD-08` means two orders to one fleet never share a send turn.)
   - Orders delivered in the same Delivery phase are checked in send-turn order, oldest first, so only the newest becomes active and the others are acknowledged as Stale.
+  - A fallback that has become the active order keeps the send turn of the order that carried it.
+  - An order whose first stage has the same objective and target as the fleet's active stage **continues** that stage (for `Build`, the same site and structure). The stage keeps its progress, its leash clock and the result of its Discretion check, and the rest of the order replaces what came after. The new commitment, leash and fallback take effect. Any other replacement ends the active stage, and its progress is lost (`ECON-03`).
+  - A doctrine change applies only if its send turn is later than that of the last doctrine change applied to the fleet. An order that is only a doctrine change is checked against that alone: it never replaces the active order, never makes an older order in flight Stale, and is acknowledged as Stale only if a later doctrine change has already been applied. An order with stages is checked against the active order first, as above, and a Stale order is discarded whole, its doctrine change included.
   - *Why:* if the flagship moves, an order sent later from closer can arrive before an earlier one. Instant orders overtake light orders too. Ordering by send time keeps the player's latest intent in charge. The outbox warns when an order in flight has been overtaken (`FB-07`).
+  - *Why (continuing):* a player who isn't sure an order arrived, or who adds a stage to the end of one, can send it again without losing a build in progress or restarting a leash.
+  - *Why (doctrine):* a stance change is a different kind of intent from an objective, so it shouldn't cancel one in flight. It still needs its own send-turn check, or an older stance could arrive later and win.
 - **ORD-09** An instant order's receipt comes back over the entangled channel (`LIGHT-18`) and is visible in the next turn's Planning phase, whatever the distance. It says only **Delivered**, or **No answer** if the recipient doesn't respond (`FB-09`). The fleet's ack (`FB-02`), its status reports and its execution reports travel at light speed as usual, so the map doesn't update until those arrive.
   - *Why:* part of what the qBits buy is knowing the order landed, and nothing more.
 
@@ -291,12 +307,27 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 | Step | Check | If it fails |
 |---|---|---|
 | 1 | Does the fleet exist? | The order is lost. No ack is ever sent. |
-| 2 | Is the order physically possible (capability, reachable hex, an objective that still exists as far as the fleet can tell)? | **Rejected**, with a reason. The previous active order continues. |
+| 2 | Is the order physically possible (capability, reachable hex, an objective that still exists as far as the fleet can tell)? Only its first stage is judged on the facts: later stages are checked when they begin (`ORD-11`). Its stages MUST also obey `ORD-11`. | **Rejected**, with a reason. The previous active order continues. |
 | 3 | Is the order newer than the active order? (`ORD-07`) | **Stale**. Discarded. |
 | — | All checks pass | **Accepted** (or **Accepted with note** if the fleet is damaged, etc.). The order becomes active. |
 
-- **RES-02** `AtAllCosts` orders skip the Discretion condition (`RES-04`) and aren't interrupted by evasion (`AUTO-03`).
-- **RES-09** A fleet keeps checking that its active order still makes sense. When its own sensors show that the objective no longer exists (the target or defended node is destroyed, or another structure already stands where it was to build), the order **Fails**. The fleet reports `Failed(reason)` and carries out its fallback.
+- **RES-02** `AtAllCosts` orders skip the Discretion condition (`RES-04`) and aren't interrupted by evasion (`AUTO-03`). They are still bound by the leash (`RES-05`).
+  - *Why:* a player who wants a longer pursuit sets a longer leash.
+- **RES-09** A fleet keeps checking that its active order still makes sense. When its own sensors show that the objective no longer exists (the target, the escorted unit or the defended node is destroyed, or another structure already stands where it was to build), the order **Fails**. The fleet reports `Failed(reason)` and carries out its fallback.
+
+- **RES-10** Each objective ends in its own way, and what follows takes effect at a set time.
+
+| Objective | How it ends |
+|---|---|
+| `MoveTo`, `ReturnHome` | **Completed** at the end of the Movement phase in which the fleet arrives, even if it is engaged there afterwards (`RES-07`). |
+| `Build` | **Completed** in the Economy phase in which its structure is built (`ECON-03`). |
+| `Attack` | **Completed** when the fleet observes its target destroyed (`RES-06`). **Declined**, **Target lost** or **Failed** as `RES-04`, `RES-05` and `RES-09` say. |
+| `Defend`, `Escort`, `Hold` | Never **Completed**. They end only when replaced (`ORD-07`) or when they **Fail** (`RES-09`). |
+
+  - What follows an ending is the next stage, or the fallback when the order is over (`ORD-11`). It takes effect from the first Decision phase after the ending. An ending found in a Decision phase takes effect in that phase: a stage that is **Declined** (`RES-04`), or a later stage that fails or is declined as it begins (`ORD-11`).
+  - **Failed** is found by the fleet's sensors, which record in the Observation phase (`TURN-03`). The fleet reports `Failed(reason)` then, and what follows takes effect from the next Decision phase.
+  - An order delivered before then is checked first, against the send turn of the order that has ended (`ORD-07`). If it is accepted, it replaces the ended order and the next stage or fallback never takes effect. The ending is still reported.
+  - *Why:* by the time anything but a decline is known, the fleet has already moved this turn, so the next Decision phase is the earliest it can act on it. A fleet that has just declined is deciding now, so making it wait would idle it for a turn. `Defend`, `Escort` and `Hold` only mean something while they are active (`MOVE-04`, `RES-08`), so a fleet that completed one on arrival would stop defending the moment it got there.
 
 ### 7.2 Attacking a track
 - **RES-04** On accepting `Attack(track)`, the fleet uses its own current sensor picture:
@@ -306,12 +337,12 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
   - *Why:* a question sent home would be answered after the fight was over. The player answers in advance by choosing the commitment and the fallback; the fleet judges the fight with fresh local information.
 - **RES-05** The fleet pursues within the leash (range from the last known position, and duration). If the target isn't reacquired by the time it reaches the last known position, or the leash runs out, the fleet carries out the fallback and reports **Target lost**.
   - The duration counts from first sensor contact with the target. The approach to the last known position is unlimited. A target that hasn't moved, such as a node, never triggers the range limit.
-- **RES-06** If the fleet observes its target destroyed (by itself or anyone else), the order is **Completed** and the fleet carries out the fallback.
+- **RES-06** If the fleet observes its target destroyed (by itself or anyone else), the `Attack` stage is **Completed** (`RES-10`).
 
 ### 7.3 Location objectives
-- **RES-07** An objective tied to a hex (`MoveTo`, `Defend`, `Patrol`, `Build`) has the fleet move there at full speed by the shortest path until it is in place. Multi-turn work (such as a build countdown) starts with the first Economy phase the fleet spends in place (`ECON-03`).
+- **RES-07** An objective tied to a hex (`MoveTo`, `Defend`, `Build`, `ReturnHome`) has the fleet move there at full speed by the shortest path until it is in place. Multi-turn work (such as a build countdown) starts with the first Economy phase the fleet spends in place (`ECON-03`).
   - A destination is never "too far". A unit, flagship included, moves up to its speed each turn until it arrives.
-  - A `MoveTo` completes at the end of the Movement phase in which the fleet arrives. Its fallback takes effect from the next Decision phase.
+  - A `MoveTo` completes at the end of the Movement phase in which the fleet arrives (`RES-10`).
 
 ### 7.4 Escorting
 - **RES-08** On accepting `Escort(fleet)`, the escort follows the escorted unit, its **charge**. In each step in which the escort moves (`MOVE-01`):
@@ -340,8 +371,8 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 
 ### 8.1 Messages from fleets
 - **FB-01** Every unit emits a **status report** every turn (`LIGHT-02`).
-- **FB-02** On delivery, a fleet emits an **ack** of one of these types: `Accepted`, `AcceptedWithNote`, `Rejected(reason)`, `Stale`.
-- **FB-03** During and after execution, a fleet emits **execution reports**: `Engaged(result)`, `Diverted(reason)`, `Declined(reason)`, `TargetLost`, `Completed`, `Failed(reason)`.
+- **FB-02** On delivery, a fleet emits an **ack** of one of these types: `Accepted`, `AcceptedWithNote`, `Rejected(reason)`, `Stale`. It names the order by its recipient and send turn (`ORD-03`) and covers the order as a whole.
+- **FB-03** During and after execution, a fleet emits **execution reports**: `Engaged(result)`, `Diverted(reason)`, `Declined(reason)`, `TargetLost`, `Completed`, `Failed(reason)`. Each names its order (`ORD-03`) and the stage it concerns.
 - **FB-04** All fleet messages travel at light speed and become visible under `LIGHT-03`. The only exceptions are on the entangled channel (`LIGHT-18`).
   - Like a status report, a message MUST NOT carry what the fleet's sensors observe of other objects (`LIGHT-02`). An execution report MAY name the units its fleet fought and what became of them (`FB-03`): they were within `ENGAGE_RANGE`, so the report is about where the fleet itself was, give or take a hex.
 
@@ -352,7 +383,7 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 - *Guarantee:* if a fleet is destroyed before an order reaches it, its status reports stop *before* the ack would have been due. Players are never left waiting on an ack that can't come. *(This follows from `LIGHT-03` and `ORD-04` while the flagship holds position. It needs checking for a moving flagship.)*
 
 ### 8.3 Order lifecycle (player's outbox)
-- **FB-07** Each order the player sends shows one of these states, worked out from their knowledge. An order stays in the outbox until it is acknowledged or its recipient is Silent.
+- **FB-07** Each order the player sends, however many stages it has, shows one of these states, worked out from their knowledge. An order stays in the outbox until it is acknowledged or its recipient is Silent.
 
 | State | Meaning |
 |---|---|
@@ -378,17 +409,17 @@ The guiding principle: **the player decides what to do; the fleet decides how, u
 ## 9. Autonomy and Doctrine — **Proposed**
 
 ### 9.1 Doctrine
-- **AUTO-01** Every fleet has a **doctrine**, set when the fleet is formed or detached. The player MAY change it by order (`ORD-01`).
+- **AUTO-01** Every fleet has a **doctrine**, set when the fleet is formed. The player MAY change it by order (`ORD-01`).
 
 | Field | Values | Default |
 |---|---|---|
 | **Stance** | `Aggressive`, `Balanced`, `Evasive` | `Balanced` |
-| **Home** | Hex or structure | Where the fleet was formed |
+| **Home** | Hex, or structure (a node or a mine) | Where the fleet was formed |
 
   - **Aggressive:** willing to fight any enemy fleet, flagship or structure within `ENGAGE_RANGE` (`MOVE-04`). With no order, it attacks the enemy fleets, flagships and structures it senses (`AUTO-03` priority 4).
   - **Balanced:** fights only what its order names (`MOVE-04`).
   - **Evasive:** falls back towards home from enemies that could hurt it (`AUTO-03` priority 2).
-  - If a fleet's home node is destroyed, its home becomes its owner's surviving node nearest to the fleet. With no nodes left, its home is the hex it is in.
+  - If a fleet's home structure is destroyed, its home becomes its owner's surviving node nearest to the fleet. With no nodes left, its home is the hex it is in.
 
 - **AUTO-02** A fleet judges enemy strength from its own sensors. How accurate that is MAY depend on commander quality (`AUTO-06`).
 
@@ -468,7 +499,7 @@ How much damage a unit deals, and its strength, are still set per scenario (desi
   - The Economy phase of the turn the builder arrives counts.
   - An Economy phase in which the builder fought doesn't count, but its progress isn't lost. Nor does one in which it was spoofed but stayed in place.
   - While builders of more than one player are at the same site, none of them makes progress, but none loses it either. Enemy fleets without a `Build` order for the site don't stop progress unless they fight the builder.
-  - Progress resets if the builder leaves the site for any reason (a spoof included) or its `Build` order is replaced. The builder being destroyed ends it.
+  - Progress resets if the builder leaves the site for any reason (a spoof included) or its `Build` is replaced (`ORD-07`), unless the new order continues it. The builder being destroyed ends it.
   - A zone or planet whose structure was destroyed is empty from that turn's Combat phase on, so anyone may build there.
   - A `Build` order for a site that already holds a structure is rejected on delivery if the fleet can see it (`RES-01`), and fails if one appears later (`RES-09`).
   - A structure built in an Economy phase exists from then on. A node first produces qBits, and a mine first produces matter, in the next Economy phase (`TURN-03`).
@@ -488,7 +519,7 @@ There are two resources. qBits are information: the web in orbital zones produce
   - Each player holds one pool of matter, whichever mine produced it (`OPEN-16`).
   - *Why:* matter grows with the number of planets held, one mine at a time, while qBits grow with the shape of the web. A lead in one doesn't bring a lead in the other, and each makes a different target.
 - **MAT-02** A planet holds at most one mine. A fleet builds one with `Build(planet)` (`ECON-03`). A scenario MAY start players with mines.
-- **PROD-03** Every mine is a **shipyard**. A shipyard accepts one kind of order, `Produce(class)` or `Produce(class, seed n)` (`QBIT-11`), naming a unit class from the scenario's unit list. Orders reach it like any other, by light or instantly (`ORD-04`, `ORD-06`), at most one per turn (`ORD-08`). It has no commitment, leash, fallback or doctrine.
+- **PROD-03** Every mine is a **shipyard**. A shipyard accepts one kind of order, `Produce(class)` or `Produce(class, seed n)` (`QBIT-11`), naming a unit class from the scenario's unit list. Orders reach it like any other, by light or instantly (`ORD-04`, `ORD-06`), at most one per turn (`ORD-08`). It isn't a fleet, so an order to it has no stages, commitment, leash, fallback or doctrine (`ORD-01`).
   - *Why:* production is ordered from the flagship like everything else, so a distant yard builds what it was told some turns ago. A planet is worth fighting over twice: it pays for ships and it builds them.
 - **PROD-04** On delivery, the shipyard checks the order (`RES-01`). It is **Rejected** if the class isn't on the scenario's list, if the slot the class needs is already producing (`PROD-05`), or if its owner's matter can't cover the class's `UNIT_COST`, or their qBits the seed (`QBIT-11`). Otherwise it is **Accepted**, the cost and any seed are paid at once, and production starts.
   - Production takes the class's `PRODUCE_TURNS` Economy phases, counting the delivery turn's. An Economy phase in which the yard fought doesn't count.
@@ -574,11 +605,12 @@ There are two resources. qBits are information: the web in orbital zones produce
 | `OPEN-07` | Flagship movement: any limits beyond speed (fuel, cooldown, signature when moving)? | Design doc open question 5. |
 | `OPEN-08` | Does hex distance distort link-length production enough to matter? | See `SPACE-03`. |
 | `OPEN-09` | Is there a maximum link length, or an upkeep per link (for example, in matter)? | With `ECON-02` every node links to every other, so production grows fast as the web grows. That's intended (design doc 2.6), but this is the brake if it's too fast. |
-| `OPEN-11` | Should orders be queueable ("do this after your current order")? | Asked for because a newer order discards an older one in flight (`ORD-07`). The outbox's Overtaken state (`FB-07`) may be enough. |
+| `OPEN-11` | Should an order be appendable ("after your current stages, also do this")? Should a shipyard queue `Produce` orders? | Asked for because a newer order discards an older one in flight (`ORD-07`). Stages settle the case where a player plans ahead in one order (`ORD-11`). What is left is adding to an order already in flight, without knowing which stage the fleet is on: it needs a rule for placing appends that arrive out of order, and for what a late append does once a newer order has landed. For yards, `PROD-04` rejects a `Produce` order whose slot is busy, so a player has to time orders to arrive as the slot frees. |
 | `OPEN-13` | **Overload.** Should a player be able to overload their nodes for a short burst of extra production, at the cost of damaging or burning them out? | A catch-up mechanic proposed by a play-test player. It helps whoever is behind regardless of how they played, which cuts against design doc 2.6 (catch-up should punish over-extension, not prop up the loser). |
 | `OPEN-14` | **Node-loss penalty.** Should losing a node cost its owner more than that node's production, for example two turns of its output taken from the bank? | Two things need settling first. (1) If the bank can't cover it, does the balance go negative (a debt future production pays off first), or stop at zero? (2) If two linked nodes are destroyed in the same turn, each one's output includes the link between them, so the penalty could count that link twice or feed back on itself. One option is to work out every lost node's penalty from the web as it stood before that turn's combat, so the total is fixed and nothing cascades. |
 | `OPEN-16` | Should matter be held per planet, not in one pool per player (`MAT-01`)? | A shipyard would build only from its own planet's stock, which its owner would learn of through status reports, delayed by light. That is more physical and gives each planet its own value, but building a node somewhere else would need matter carried there. Start with one pool. |
 | `OPEN-17` | **Flagship concealment.** Should qBits buy ways to make the flagship harder to find or to hit: masking its sightings, decoy tracks, or jamming the enemy's picture near it? | Raised after the first Ycnetal game, where both flagships sat at home for 16 turns. A flagship that can hide could afford to move. Links to `OPEN-02` (decoys), `OPEN-03` (does transmitting reveal you) and `OPEN-04` (jamming). |
+| `OPEN-18` | **Split and merge.** Can a fleet detach part of itself, or can fleets in one hex merge? | `AUTO-01` assumes a fleet is formed whole, at a yard. No rule defines splitting or merging, and every fleet in the playtests was produced whole. If fleets can split, the new fleet needs a home, a doctrine and an order slot, and a merged fleet needs the doctrine of one of its parts. |
 
 ---
 
@@ -607,3 +639,12 @@ Rules taken out of the mechanics. Their IDs stay reserved here so they aren't re
 ## Changelog
 **v0.1**
 - First version. Agreed: simultaneous turns. Proposed: phase order, hex space, light-delay visibility rule, track model, order structure and delivery, resolution against reality, feedback and lifecycle, doctrine and autonomy.
+
+**v0.18**
+- Orders gain stages (`ORD-11`, new). An order has one to `STAGES_MAX` objectives, carried out in sequence and sent as one order. A new order replaces the whole of the old one (`ORD-07`). A stage that fails, is declined or loses its target drops the rest and runs the fallback, which belongs to the whole order. `Hold`, `Defend` and `Escort` never complete, so they MUST be the last stage. `OPEN-11` is narrowed to appends and yard queues.
+- How an order ends (`RES-10`, new): each objective's ending, and when the next stage or the fallback takes effect (the first Decision phase after the ending, or the same one for a decline). A Failed report goes out in the Observation phase that shows the failure. An order delivered before a hand-over is checked first. `RES-07` and `RES-06` follow it. `RES-09` also fails an escort whose charge is destroyed.
+- `ORD-07`: an order that repeats the active stage's objective and target continues that stage; a fallback keeps the send turn of the order that carried it; a doctrine change has its own send-turn check, and a doctrine-only order never replaces the active order or makes another Stale. `ECON-03` follows.
+- `ORD-03`: an order is identified by its recipient and send turn. The separate order ID is gone. `FB-02`, `FB-03` and `FB-07` name orders that way, and reports name the stage.
+- `ORD-01`: `ReturnHome` is an objective. `Patrol` and the `ResumePrevious` fallback are removed. The leash belongs to `Attack` stages, and `AtAllCosts` doesn't lift it (`RES-02`). A shipyard's `Produce` order is a separate kind of order (`PROD-03`).
+- `AUTO-01`: a home may be a hex or a structure (a node or a mine), and "or detached" is gone. Splitting and merging fleets are parked as `OPEN-18`.
+- New parameter `STAGES_MAX`. No rule IDs retired.

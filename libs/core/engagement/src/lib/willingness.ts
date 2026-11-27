@@ -5,7 +5,7 @@ export type Stance = 'aggressive' | 'balanced' | 'evasive';
 
 /**
  * A unit's active order, as far as willingness cares (MOVE-04). Every other
- * objective (`MoveTo`, `Patrol`, `Build`, `Hold`, `ReturnHome`) is `other`.
+ * objective (`MoveTo`, `Build`, `Hold`, `ReturnHome`) is `other`.
  * A `Defend` on a node gives that node's hex.
  */
 export type ActiveOrder =

@@ -51,7 +51,10 @@ export const PlayerTurn = z.object({
         unit: z.string().describe('The unit receiving the order. Your flagship\'s own moves and doctrine changes go here too (ORD-05).'),
         order: z
           .string()
-          .describe('The order: objective, plus commitment, leash and fallback if not the defaults.'),
+          .describe(
+            'The order: its stages, each an objective plus commitment (and a leash, for an Attack), then the fallback and any doctrine change if not the defaults (ORD-01, ORD-11). ' +
+              'A shipyard takes only a Produce order (PROD-03).',
+          ),
         delivery: z.enum(['light', 'instant']).describe('Light-speed (free, delayed) or instant (costs qBits).'),
       }),
     )
@@ -170,7 +173,7 @@ export const FleetDecision = z.object({
   order: z
     .enum(['none', 'attack', 'defend', 'escort', 'build', 'other'])
     .describe(
-      'Its active order after Delivery and Decision, as MOVE-04 reads it: a fallback counts only once it has taken effect (ORD-01). ' +
+      'Its active order after Delivery and Decision, as MOVE-04 reads it: a fallback counts only once it has taken effect (ORD-01, RES-10). ' +
         'build: a Build order, with the site in order_hex; the engine works out its construction (ECON-03). ' +
         'other: any objective but Attack, Defend, Escort and Build. none: no order, so its stance decides.',
     ),

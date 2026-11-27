@@ -154,8 +154,7 @@ const key = (h: Hex) => `${h.q},${h.r}`;
  * same phase the lower ID builds it.
  *
  * A new `Build` order for the site and structure a builder already works on
- * continues the build, though ORD-07 counts it as a replacement. Any other
- * replacement resets it.
+ * continues the build (ORD-07). Any other replacement resets it.
  */
 export function resolveConstruction(input: ConstructionInput): ConstructionResult {
   const { sites, params } = input;
