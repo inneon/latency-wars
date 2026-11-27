@@ -2,8 +2,8 @@ import type { Builder } from '@latency-wars/construction';
 import { balanceOf, matterStatementFor, openLedger } from '@latency-wars/economy';
 import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { PlaytestUnit, Scenario } from '../types/scenario';
-import type { SentOrder } from './engine.spec-helper';
-import { judgeProduceOrders, type MatterState, parseProduce, renderMatter, settleMatterEconomy, startMatter } from './engine.spec-helper';
+import type { OrderBody, SentOrder } from './engine.spec-helper';
+import { holdOrder, judgeProduceOrders, produceOrder, type MatterState, produceOf, renderMatter, settleMatterEconomy, startMatter } from './engine.spec-helper';
 
 let scenario: Scenario;
 let start: MatterState;
@@ -13,15 +13,16 @@ beforeAll(async () => {
 });
 
 const LANGIS = { q: -3, r: 3 };
-const order = (text: string, recipient = 'blue-mine-thgil', sentTurn = 1): SentOrder => ({
+const order = (body: OrderBody, recipient = 'blue-mine-thgil', sentTurn = 1): SentOrder => ({
   player: recipient.startsWith('red') ? 'red' : 'blue',
   unit: recipient,
   recipient,
-  order: text,
+  order: body,
   sentTurn,
   from: { q: 6, r: 0 },
   instant: false,
 });
+const buildOrder: OrderBody = { kind: 'plan', stages: [{ objective: { kind: 'build', site: { planet: 'langis' } } }] };
 const delivered = (...orders: SentOrder[]) => orders.map((o) => ({ order: o, lost: false }));
 const unit = (id: string, owner: string, hex: { q: number; r: number }, cls: PlaytestUnit['class'] = 'fleet', strength = 2): PlaytestUnit => ({
   id,
@@ -61,27 +62,27 @@ const qbits = () => openLedger<PlaytestUnit>(1, { blue: 8, red: 8 });
 const judge = (matter: MatterState, deliveries: Parameters<typeof judgeProduceOrders>[1], units: readonly PlaytestUnit[], turn: number, ledger = qbits()) =>
   judgeProduceOrders(matter, deliveries, units, turn, ledger);
 
-describe('parseProduce', () => {
-  it('reads the class a Produce order names, whatever its case or spacing', () => {
-    expect(parseProduce('Produce(raider)')).toEqual({ isProduce: true, unitClass: 'raider' });
-    expect(parseProduce('  produce( Raider ) now')).toEqual({ isProduce: true, unitClass: 'raider' });
+describe('produceOf', () => {
+  it('reads the class a Produce order names, whatever its case', () => {
+    expect(produceOf(produceOrder('raider'))).toEqual({ isProduce: true, unitClass: 'raider' });
+    expect(produceOf(produceOrder(' Raider '))).toEqual({ isProduce: true, unitClass: 'raider' });
   });
   it('knows a Produce order that names no class, and an order that is not one', () => {
-    expect(parseProduce('Produce')).toEqual({ isProduce: true, unitClass: undefined });
-    expect(parseProduce('Hold')).toEqual({ isProduce: false });
-    expect(parseProduce('Build(planet)')).toEqual({ isProduce: false });
+    expect(produceOf(produceOrder())).toEqual({ isProduce: true, unitClass: undefined });
+    expect(produceOf(holdOrder)).toEqual({ isProduce: false });
+    expect(produceOf(buildOrder)).toEqual({ isProduce: false });
   });
-  it('reads a seed (QBIT-11), and marks one that is not a whole number of at least 1', () => {
-    expect(parseProduce('Produce(probe, seed 3)')).toEqual({ isProduce: true, unitClass: 'probe', seed: 3 });
-    expect(parseProduce('Produce(Probe, seed=12)')).toEqual({ isProduce: true, unitClass: 'probe', seed: 12 });
-    expect(parseProduce('Produce(probe, seed 0)').seed).toBeNaN();
-    expect(parseProduce('Produce(probe, seed lots)').seed).toBeNaN();
+  it('reads a seed, and flags one that is not a whole number of qBits of at least 1', () => {
+    expect(produceOf(produceOrder('probe', 3))).toEqual({ isProduce: true, unitClass: 'probe', seed: 3 });
+    expect(produceOf(produceOrder('Probe', 12))).toEqual({ isProduce: true, unitClass: 'probe', seed: 12 });
+    expect(produceOf(produceOrder('probe', 0)).seed).toBeNaN();
+    expect(produceOf(produceOrder('probe', 1.5)).seed).toBeNaN();
   });
 });
 
 describe('judging Produce orders (PROD-04)', () => {
   it('accepts an order the owner can afford, takes the matter at once and holds the yard\'s ack', () => {
-    const { matter, notes } = judge(start, delivered(order('Produce(raider)')), scenario.units, 1);
+    const { matter, notes } = judge(start, delivered(order(produceOrder('raider'))), scenario.units, 1);
     expect(blue(matter)).toBe(8 - 4);
     expect(balanceOf(matter.ledger, 'red')).toBe(8);
     expect(matter.producing.get('blue-mine-thgil')).toEqual({ unitClass: 'raider', turnsLeft: 2 });
@@ -90,8 +91,8 @@ describe('judging Produce orders (PROD-04)', () => {
   });
 
   it('rejects a second order while the yard is producing, without charging for it', () => {
-    const first = judge(start, delivered(order('Produce(raider)')), scenario.units, 1).matter;
-    const { matter, notes } = judge(first, delivered(order('Produce(line)')), scenario.units, 1);
+    const first = judge(start, delivered(order(produceOrder('raider'))), scenario.units, 1).matter;
+    const { matter, notes } = judge(first, delivered(order(produceOrder('line'))), scenario.units, 1);
     expect(blue(matter)).toBe(4);
     expect(matter.producing.get('blue-mine-thgil')?.unitClass).toBe('raider');
     expect(matter.outbox.at(-1)?.text).toBe('Rejected: Produce(line): the yard is already producing.');
@@ -99,33 +100,33 @@ describe('judging Produce orders (PROD-04)', () => {
   });
 
   it('builds a side-slot class alongside the main production, one at a time in each slot (PROD-05)', () => {
-    const first = judge(start, delivered(order('Produce(raider)')), scenario.units, 1).matter;
-    const both = judge(first, delivered(order('Produce(probe)', 'blue-mine-thgil', 2)), scenario.units, 1).matter;
+    const first = judge(start, delivered(order(produceOrder('raider'))), scenario.units, 1).matter;
+    const both = judge(first, delivered(order(produceOrder('probe'), 'blue-mine-thgil', 2)), scenario.units, 1).matter;
     expect(both.producing.get('blue-mine-thgil')?.unitClass).toBe('raider');
     expect(both.producing.get('blue-mine-thgil#side')?.unitClass).toBe('probe');
-    const third = judge(both, delivered(order('Produce(probe)', 'blue-mine-thgil', 3)), scenario.units, 1);
+    const third = judge(both, delivered(order(produceOrder('probe'), 'blue-mine-thgil', 3)), scenario.units, 1);
     expect(third.matter.outbox.at(-1)?.text).toBe('Rejected: Produce(probe): its side slot is already producing.');
   });
 
   it('seeds a unit with qBits, paid with the matter, and refuses a seed it can\'t take or pay for (QBIT-11)', () => {
-    const seeded = judge(start, delivered(order('Produce(probe, seed 5)')), scenario.units, 1);
+    const seeded = judge(start, delivered(order(produceOrder('probe', 5))), scenario.units, 1);
     expect(blue(seeded.matter)).toBe(8 - 1);
     expect(balanceOf(seeded.qbits, 'blue')).toBe(8 - 5);
     expect(seeded.matter.producing.get('blue-mine-thgil#side')).toEqual({ unitClass: 'probe', turnsLeft: 1, seed: 5 });
     expect(seeded.matter.outbox.at(-1)?.text).toBe('Accepted: Produce(probe, seed 5).');
 
-    const notSeedable = judge(start, delivered(order('Produce(raider, seed 2)')), scenario.units, 1);
+    const notSeedable = judge(start, delivered(order(produceOrder('raider', 2))), scenario.units, 1);
     expect(notSeedable.matter.outbox.at(-1)?.text).toBe("Rejected: Produce(raider): a raider can't carry seeded qBits (QBIT-11).");
     expect(blue(notSeedable.matter)).toBe(8);
 
-    const tooMuch = judge(start, delivered(order('Produce(probe, seed 9)')), scenario.units, 1);
+    const tooMuch = judge(start, delivered(order(produceOrder('probe', 9))), scenario.units, 1);
     expect(tooMuch.matter.outbox.at(-1)?.text).toBe('Rejected: Produce(probe): not enough qBits for the seed.');
     expect(blue(tooMuch.matter)).toBe(8);
     expect(balanceOf(tooMuch.qbits, 'blue')).toBe(8);
   });
 
   it('rejects a class that is not on the scenario\'s list, and an order naming none', () => {
-    const { matter } = judge(start, delivered(order('Produce(dreadnought)'), order('Produce')), scenario.units, 1);
+    const { matter } = judge(start, delivered(order(produceOrder('dreadnought')), order(produceOrder())), scenario.units, 1);
     expect(blue(matter)).toBe(8);
     expect(matter.producing.size).toBe(0);
     expect(matter.outbox.map((m) => m.text)).toEqual([
@@ -137,7 +138,7 @@ describe('judging Produce orders (PROD-04)', () => {
   it('refuses what the matter cannot cover and records the refusal, paying the earlier-sent order first', () => {
     const second = unit('blue-mine-langis', 'blue', LANGIS, 'mine', 3);
     const units = [...scenario.units, second];
-    const orders = delivered(order('Produce(line)', 'blue-mine-thgil', 1), order('Produce(raider)', 'blue-mine-langis', 1));
+    const orders = delivered(order(produceOrder('line'), 'blue-mine-thgil', 1), order(produceOrder('raider'), 'blue-mine-langis', 1));
     const { matter } = judge(start, orders, units, 1);
     expect(blue(matter)).toBe(8 - 6);
     expect(matter.producing.has('blue-mine-langis')).toBe(false);
@@ -147,8 +148,8 @@ describe('judging Produce orders (PROD-04)', () => {
 
   it('leaves everything that is not a Produce order to a mine to the GM', () => {
     const orders = [
-      ...delivered(order('Hold'), order('Produce(raider)', 'blue-line')),
-      { order: order('Produce(raider)'), lost: true },
+      ...delivered(order(holdOrder), order(produceOrder('raider'), 'blue-line')),
+      { order: order(produceOrder('raider')), lost: true },
     ];
     const { matter, notes } = judge(start, orders, scenario.units, 1);
     expect(notes).toEqual([]);
@@ -157,7 +158,7 @@ describe('judging Produce orders (PROD-04)', () => {
   });
 
   it('never judges an order twice', () => {
-    const o = order('Produce(raider)');
+    const o = order(produceOrder('raider'));
     const once = judge(start, delivered(o), scenario.units, 1);
     const twice = judge(once.matter, delivered(o), scenario.units, 1);
     expect(twice.notes).toEqual([]);
@@ -263,7 +264,7 @@ describe('the Economy phase (MAT-01, ECON-03, PROD-04)', () => {
   });
 
   describe('production', () => {
-    const ordered = (cls: string) => judge(start, delivered(order(`Produce(${cls})`)), scenario.units, 1).matter;
+    const ordered = (cls: string) => judge(start, delivered(order(produceOrder(cls))), scenario.units, 1).matter;
 
     it('counts a phase per turn, shows its progress in the yard\'s status, then adds the unit', () => {
       const first = settle(ordered('raider'));
@@ -289,7 +290,7 @@ describe('the Economy phase (MAT-01, ECON-03, PROD-04)', () => {
     });
 
     it('hands a finished unit its seed (QBIT-11)', () => {
-      const { matter, units } = settle(judge(start, delivered(order('Produce(probe, seed 4)')), scenario.units, 1).matter);
+      const { matter, units } = settle(judge(start, delivered(order(produceOrder('probe', 4))), scenario.units, 1).matter);
       expect(units.some((u) => u.id === 'blue-probe-2')).toBe(true);
       expect(matter.seeded.get('blue-probe-2')).toBe(4);
     });
@@ -339,7 +340,7 @@ describe('the Economy phase (MAT-01, ECON-03, PROD-04)', () => {
 
 describe('what a player is told (LIGHT-18)', () => {
   it('shows only the balance and the total output, never a mine, a yard or a build', () => {
-    const settled = settle(judge(start, delivered(order('Produce(raider)')), scenario.units, 1).matter);
+    const settled = settle(judge(start, delivered(order(produceOrder('raider'))), scenario.units, 1).matter);
     const text = renderMatter(settled.matter, 'blue', 2);
     expect(text).toBe('## Matter\n\nBalance: 7 matter.\nOutput: 3 matter a turn, as of last turn\'s Economy phase.');
     expect(text).not.toMatch(/mine|yard|Shipyard|raider|spent|produce/i);

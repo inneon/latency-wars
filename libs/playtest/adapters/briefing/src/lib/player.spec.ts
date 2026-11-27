@@ -3,7 +3,7 @@ import { renderMessages, renderOutbox } from './player';
 
 describe('renderOutbox (FB-07)', () => {
   const entry: OutboxEntry = {
-    order: { player: 'blue', unit: 'blue-line', recipient: 'blue-line', order: 'Hold', sentTurn: 1, from: { q: -3, r: 0 }, instant: false },
+    order: { player: 'blue', unit: 'blue-line', recipient: 'blue-line', order: { kind: 'plan', stages: [{ objective: { kind: 'hold' } }] }, sentTurn: 1, from: { q: -3, r: 0 }, instant: false },
     expected: 4,
     ackDue: 8,
   };

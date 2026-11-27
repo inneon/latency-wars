@@ -30,6 +30,14 @@ import {
   webNewsFor,
   startEngine,
   unaccountedUnits,
+  holdOrder,
+  moveToOrder,
+  attackOrder,
+  defendOrder,
+  escortOrder,
+  formatOrder,
+  type OrderBody,
+  type PlanOrder,
 } from './engine.spec-helper';
 import { balanceOf, statementFor } from '@latency-wars/economy';
 import type { PlayerTurn } from '@latency-wars/playtest-contracts';
@@ -349,35 +357,43 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
   it("prices from what the player knows: base plus light delay from their flagship to the track", () => {
     const engine = scanned(contact(), 2);
     // Blue's track has Red Line 4 from Blue's flagship: L = 2.
-    const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))' });
-    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: 'MoveTo((0, 3))', strength: 0, cost: 5, breakdown: 'base 3 + distance 2 + strength 0', fails: undefined, reaches: ['red-line'], atFlagship: false });
+    const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: moveToOrder(0, 3) });
+    expect(spoof).toEqual({ kind: 'spoof', target: 'red-line', order: formatOrder(moveToOrder(0, 3)), strength: 0, cost: 5, breakdown: 'base 3 + distance 2 + strength 0', fails: undefined, reaches: ['red-line'], atFlagship: false });
   });
 
   it('adds the strength bought to the price (QBIT-09)', () => {
     const engine = scanned(contact(), 2);
-    const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Hold', strength: 3 });
+    const spoof = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: holdOrder, strength: 3 });
     expect(spoof).toMatchObject({ strength: 3, cost: 8, breakdown: 'base 3 + distance 2 + strength 3' });
   });
 
   it('refuses what the player can see for themselves, without a price', () => {
     const engine = scanned(contact(), 2);
-    expect(quote(engine, 2, { kind: 'spoof', target: 'blue-line', order: 'Hold' }).refused).toContain('your own unit');
-    expect(quote(engine, 2, { kind: 'spoof', target: 'red-raider', order: 'Hold' }).refused).toContain('no track');
+    expect(quote(engine, 2, { kind: 'spoof', target: 'blue-line', order: holdOrder }).refused).toContain('your own unit');
+    expect(quote(engine, 2, { kind: 'spoof', target: 'red-raider', order: holdOrder }).refused).toContain('no track');
     expect(quote(engine, 2, { kind: 'spoof', target: 'red-line' }).refused).toContain('No order');
-    expect(quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Attack(blue-line)' }).refused).toContain('QBIT-02');
+    expect(quote(engine, 2, { kind: 'spoof', target: 'red-line', order: attackOrder('blue-line') }).refused).toContain('QBIT-02');
+  });
+
+  it('refuses a spoof with a combat stage anywhere in it, however late (QBIT-02)', () => {
+    const engine = scanned(contact(), 2);
+    const later: PlanOrder = { kind: 'plan', stages: [{ objective: { kind: 'move-to', hex: { q: 0, r: 3 } } }, { objective: { kind: 'attack', target: 'blue-line' } }] };
+    expect(quote(engine, 2, { kind: 'spoof', target: 'red-line', order: later }).refused).toContain('QBIT-02');
+    const doctrineOnly: PlanOrder = { kind: 'plan', stages: [{ objective: { kind: 'return-home' } }], doctrine: { stance: 'evasive' } };
+    expect(quote(engine, 2, { kind: 'spoof', target: 'red-line', order: doctrineOnly }).refused).toBeUndefined();
   });
 
   it('refuses a stale track (QBIT-04)', () => {
     // Without a scan, Blue's sighting from the end of turn 1 arrives by light in turn 4, aged 2.
     const hold = states({ 'blue-line': [-1, 1], 'red-line': [1, -1] });
     const engine = play(resolution(hold), resolution(hold), resolution(hold)).engine;
-    expect(quote(engine, 4, { kind: 'spoof', target: 'red-line', order: 'Hold' }).refused).toContain('2 turns old');
+    expect(quote(engine, 4, { kind: 'spoof', target: 'red-line', order: holdOrder }).refused).toContain('2 turns old');
   });
 
   it('refuses a flagship (QBIT-04)', () => {
     // Blue Line dashes to (1, −1), within 2 of Red's flagship at (3, −2); a scan makes the sighting fresh.
     const engine = scanned(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
-    expect(quote(engine, 2, { kind: 'spoof', target: 'red-flagship', order: 'Hold' }).refused).toContain('flagship');
+    expect(quote(engine, 2, { kind: 'spoof', target: 'red-flagship', order: holdOrder }).refused).toContain('flagship');
   });
 
   it("prices a target in its own flagship's hex like any other: no hex is safe (QBIT-04)", () => {
@@ -386,7 +402,7 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
       play(resolution(states({ 'blue-line': [1, -1], 'red-line': [3, -2] }), { overrides: [dash('blue-line')] })).engine,
       2,
     );
-    const q = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Hold' });
+    const q = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: holdOrder });
     expect(q.refused).toBeUndefined();
     expect(q.cost).toBe(3 + 2);
     expect(q.fails).toBeUndefined();
@@ -398,7 +414,7 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
   it("reaches every fleet of the target's owner in its hex, at one price (QBIT-02)", () => {
     // Red Line and Red Raider share (1, −1); Blue has a track on Red Line only.
     const engine = scanned(play(resolution(states({ 'blue-line': [-1, 1], 'red-line': [1, -1], 'red-raider': [1, -1] }))).engine, 2);
-    const q = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: 'Hold' });
+    const q = quote(engine, 2, { kind: 'spoof', target: 'red-line', order: holdOrder });
     expect(q.reaches).toEqual(['red-line', 'red-raider']);
     expect(q.cost).toBe(5);
   });
@@ -408,16 +424,16 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
   it('prices a seize from its own base cost, takes any order, and reaches only its target (QBIT-10)', () => {
     // Red Line and Red Raider share (1, −1): a spoof would reach both, a seize only its target.
     const engine = scanned(play(resolution(states({ 'blue-line': [-1, 1], 'red-line': [1, -1], 'red-raider': [1, -1] }))).engine, 2);
-    const q = quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-line', order: 'Attack(red-raider)', strength: 1 });
+    const q = quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-line', order: attackOrder('red-raider'), strength: 1 });
     expect(q).toMatchObject({ kind: 'seize', cost: 12 + 2 + 1, breakdown: 'base 12 + distance 2 + strength 1', reaches: ['red-line'] });
     expect(q.refused).toBeUndefined();
     expect(renderQuotes([q])).toContain('## Spoof, seize and oversight quotes');
   });
 
   it("refuses a seize in a scenario that doesn't use them, and a seize of a flagship (QBIT-10, QBIT-04)", () => {
-    expect(quote(scanned(contact(), 2), 2, { kind: 'seize', target: 'red-line', order: 'Hold' }).refused).toContain("doesn't use seizes");
+    expect(quote(scanned(contact(), 2), 2, { kind: 'seize', target: 'red-line', order: holdOrder }).refused).toContain("doesn't use seizes");
     const engine = scanned(play(resolution(states({ 'blue-line': [1, -1] }), { overrides: [dash('blue-line')] })).engine, 2);
-    expect(quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-flagship', order: 'Hold' }).refused).toContain("can't be seized");
+    expect(quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-flagship', order: holdOrder }).refused).toContain("can't be seized");
   });
 
   describe('capturing a flagship (QBIT-13)', () => {
@@ -433,7 +449,7 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
       expect(q.refused).toBeUndefined();
       expect(q.guard).toBeCloseTo(2 * production);
       expect(renderQuotes([q])).not.toContain('guard');
-      expect(quoteHijack(engine, withCapture(), 'blue', 2, { kind: 'spoof', target: 'red-flagship', order: 'Hold' }).refused).toContain("can't be spoofed");
+      expect(quoteHijack(engine, withCapture(), 'blue', 2, { kind: 'spoof', target: 'red-flagship', order: holdOrder }).refused).toContain("can't be spoofed");
     });
 
     it('lands only when stronger than the guard plus any oversight bought for the flagship', () => {
@@ -458,16 +474,17 @@ describe('quoteHijack (QBIT-08, QBIT-04, QBIT-09)', () => {
     });
   });
 
-  it('refuses a seize that would attack its own flagship, fallback included, at no cost (QBIT-10)', () => {
+  it('refuses a seize that would attack its own flagship in any stage, at no cost (QBIT-10)', () => {
     const engine = scanned(play(resolution(states({ 'blue-line': [-1, 1], 'red-line': [1, -1], 'red-raider': [1, -1] }))).engine, 2);
-    const seize = (order: string) => quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-line', order });
-    for (const order of ['Attack(red-flagship)', 'attack( red-flagship ); commitment AtAllCosts', 'MoveTo((1,-2)); fallback Attack(red-flagship)']) {
+    const seize = (order: PlanOrder) => quoteHijack(engine, withSeize(), 'blue', 2, { kind: 'seize', target: 'red-line', order });
+    const later: PlanOrder = { kind: 'plan', stages: [{ objective: { kind: 'move-to', hex: { q: 1, r: -2 } } }, { objective: { kind: 'attack', target: 'red-flagship' } }] };
+    for (const order of [attackOrder('red-flagship'), attackOrder('red-flagship', 'at-all-costs'), later]) {
       const q = seize(order);
       expect(q.refused).toContain("can't attack its own flagship");
       expect(q.cost).toBeUndefined();
     }
-    expect(seize('Attack(red-raider)').refused).toBeUndefined();
-    expect(seize('Attack(red-flagship-escort)').refused).toBeUndefined();
+    expect(seize(attackOrder('red-raider')).refused).toBeUndefined();
+    expect(seize(attackOrder('red-flagship-escort')).refused).toBeUndefined();
   });
 
   it('renders quotes for the player without what the true state shows', () => {
@@ -637,9 +654,9 @@ describe('the qBit ledger', () => {
       situation_assessment: '',
       qbit_purchases: [],
       orders: [
-        { unit: 'Blue Flagship', order: 'Hold', delivery: 'instant' },
-        { unit: 'blue-line', order: 'Hold', delivery: 'instant' },
-        { unit: 'blue-raider', order: 'Hold', delivery: 'light' },
+        { unit: 'Blue Flagship', order: holdOrder, delivery: 'instant' },
+        { unit: 'blue-line', order: holdOrder, delivery: 'instant' },
+        { unit: 'blue-raider', order: holdOrder, delivery: 'light' },
       ],
       questions_for_gm: [],
       rules_confusions: [],
@@ -669,20 +686,20 @@ describe('the qBit ledger', () => {
 });
 
 describe('orders: when they land, and when the player hears back', () => {
-  const order = (unit: string, text = 'Hold', delivery: 'light' | 'instant' = 'light'): PlayerTurn['orders'][number] => ({ unit, order: text, delivery });
+  const order = (unit: string, body: OrderBody = holdOrder, delivery: 'light' | 'instant' = 'light'): PlayerTurn['orders'][number] => ({ unit, order: body, delivery });
   const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text, instant_ack: false });
 
   it('delivers a light order when its wavefront reaches the recipient (ORD-04), and a local one at once (ORD-05)', () => {
     let engine = startEngine(scenario);
     // Blue Line is 1 hex from Blue's flagship, Blue Node West 4: with C = 3, one turn and two turns.
-    engine = recordOrders(engine, 'blue', 1, [order('blue-line'), order('Blue Node West'), order('blue-flagship', 'MoveTo(-3, 3)')]);
+    engine = recordOrders(engine, 'blue', 1, [order('blue-line'), order('Blue Node West'), order('blue-flagship', moveToOrder(-3, 3))]);
     const landing = (turn: number) => deliveries(engine, scenario, turn).map((d) => d.order.recipient);
     expect(landing(1)).toEqual(['blue-flagship']);
     engine = applyResolution(engine, resolution(states()), players, 1).engine;
     expect(landing(2)).toEqual(['blue-line']);
     engine = applyResolution(engine, resolution(states()), players, 2).engine;
     expect(landing(3)).toEqual(['blue-node-west']);
-    expect(renderOrdersForGm(engine, scenario, 3)).toContain('blue → `blue-node-west` (sent turn 1, light): Hold');
+    expect(renderOrdersForGm(engine, scenario, 3)).toContain('blue → `blue-node-west` (sent turn 1, light): ' + formatOrder(holdOrder));
   });
 
   it('loses an order whose recipient is gone when it arrives (RES-01)', () => {
@@ -700,7 +717,7 @@ describe('orders: when they land, and when the player hears back', () => {
     // Sent turn 1. Delivered turn 2 (1 ≤ 3 × (2 − 1)). Acked in turn 2's Observation phase,
     // so visible when 1 ≤ 3 × (T − 1 − 2): turn 4. Its turn-2 status report arrives with it.
     let engine = startEngine(scenario);
-    engine = recordOrders(engine, 'blue', 1, [order('blue-line', 'Defend(blue-flagship)')]);
+    engine = recordOrders(engine, 'blue', 1, [order('blue-line', defendOrder('blue-flagship'))]);
     engine = applyResolution(engine, resolution(states()), players, 1).engine;
     expect(deliveries(engine, scenario, 2).map((d) => d.order.recipient)).toEqual(['blue-line']);
     expect(renderOutbox(engine, scenario, 'blue', 2)).toContain('in transit: expected to arrive in turn 2, ack due by turn 4');
@@ -720,7 +737,7 @@ describe('orders: when they land, and when the player hears back', () => {
     // Blue Line joins the flagship's hex in turn 1, gets an order there in turn 2, and both move a hex west in turn 2.
     // Judged from where the fleet was at emission, it was local: delivered in turn 2, ack due in turn 3.
     let engine = applyResolution(startEngine(scenario), resolution(states({ 'blue-line': [-3, 2] })), players, 1).engine;
-    engine = recordOrders(engine, 'blue', 2, [order('blue-line', 'Escort(blue-flagship)')]);
+    engine = recordOrders(engine, 'blue', 2, [order('blue-line', escortOrder('blue-flagship'))]);
     expect(deliveries(engine, scenario, 2).map((d) => d.order.recipient)).toEqual(['blue-line']);
     engine = applyResolution(engine, resolution(states({ 'blue-line': [-4, 2], 'blue-flagship': [-4, 2] })), players, 2).engine;
     const outbox = renderOutbox(engine, scenario, 'blue', 3);
@@ -741,7 +758,7 @@ describe('orders: when they land, and when the player hears back', () => {
 });
 
 describe('instant orders and acks (ORD-06, ORD-09)', () => {
-  const instant = (unit: string): PlayerTurn['orders'][number] => ({ unit, order: 'Hold', delivery: 'instant' });
+  const instant = (unit: string): PlayerTurn['orders'][number] => ({ unit, order: holdOrder, delivery: 'instant' });
   const ack = (from: string, text: string): FleetMessage => ({ from_unit: from, text, instant_ack: true });
 
   it('delivers an instant order in the turn it is sent', () => {

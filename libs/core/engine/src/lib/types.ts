@@ -2,6 +2,7 @@ import type { BuildOutcome, Site, Structure } from '@latency-wars/construction';
 import type { Hex, PlayerId, Unit, UnitId } from '@latency-wars/domain';
 import type { ActiveOrder, Bystander, Engagement, Membership, Stance } from '@latency-wars/engagement';
 import type { GameMap, MoveIntent, UnitMoved } from '@latency-wars/movement';
+import type { OrderBody, PlanOrder } from './order';
 
 /*
  * What the engine holds and what it takes in. Every input is engine-shaped:
@@ -137,7 +138,7 @@ export interface GameSetup {
 export interface SubmittedOrder {
   /** The recipient as the player named it: its id or its name. */
   readonly unit: string;
-  readonly order: string;
+  readonly order: OrderBody;
   readonly delivery: 'light' | 'instant';
 }
 
@@ -146,7 +147,7 @@ export interface Purchase {
   readonly kind: 'scan' | 'spoof' | 'seize' | 'oversee' | 'cascade';
   readonly target?: string;
   /** Spoof or seize only. */
-  readonly order?: string;
+  readonly order?: PlanOrder;
   /** Command strength (QBIT-09). */
   readonly strength?: number;
 }
@@ -246,6 +247,7 @@ export interface ConstructionPhase {
 export interface HijackQuote {
   readonly kind: 'spoof' | 'seize';
   readonly target: string;
+  /** The order the fleet is to carry out, in the rules' notation (`formatOrder`). Empty for a seize on a flagship (QBIT-13). */
   readonly order: string;
   /** Command strength: qBits paid on top of the QBIT-08 price (QBIT-09). */
   readonly strength?: number;

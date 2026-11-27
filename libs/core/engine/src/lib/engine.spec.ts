@@ -12,7 +12,7 @@ describe('a light order, from the engine alone', () => {
   // blue-line is 3 hexes from Blue's flagship, and light covers 1 hex a turn.
   /** The game after `turns` turns of everyone holding, with the order sent in turn 1. */
   const sent = (turns = 1) => {
-    let engine = recordOrders(startEngine(setup), 'blue', 1, [{ unit: 'blue-line', order: 'Hold', delivery: 'light' }]);
+    let engine = recordOrders(startEngine(setup), 'blue', 1, [{ unit: 'blue-line', order: { kind: 'plan', stages: [{ objective: { kind: 'hold' } }] }, delivery: 'light' }]);
     for (let turn = 1; turn <= turns; turn++) engine = applyOutcome(engine, holdOutcome(engine.units), players, turn).engine;
     return engine;
   };

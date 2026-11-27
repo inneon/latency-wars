@@ -1,7 +1,8 @@
 import { renderCombatPhase, renderConstructionPhase, renderMatterStatement, renderMovementPhase, renderStatement } from '@latency-wars/playtest-briefing';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
-import type { Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
+import type { Feedback, GmDecisions, GmFeedback, GmResolution, LoggedPlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
+import { orderText } from '@latency-wars/playtest-replay';
 import type { AgentUsage } from '../types/usage';
 
 // Pure formatters: events in, Markdown out. Writing the files is run-writer's job.
@@ -20,17 +21,17 @@ function rulingsTable(rulings: Ruling[]): string {
   ].join('\n');
 }
 
-function playerTurn(name: string, step: string, s: PlayerTurn): string {
+function playerTurn(name: string, step: string, s: LoggedPlayerTurn): string {
   const list = (items: string[]) => items.map((i) => `- ${i}`).join('\n');
   const parts = [`#### ${name}${step === 'final' ? ' (final)' : ''}`, s.situation_assessment];
   if (s.qbit_purchases.length) {
     parts.push(
       `**qBit purchases**\n${s.qbit_purchases
-        .map((q) => `- ${q.kind}${q.target ? ` \`${q.target}\`` : ''}${q.order ? ` → ${q.order}` : ''}`)
+        .map((q) => `- ${q.kind}${q.target ? ` \`${q.target}\`` : ''}${q.order ? ` → ${orderText(q.order)}` : ''}`)
         .join('\n')}`,
     );
   }
-  if (s.orders.length) parts.push(`**Orders**\n${s.orders.map((o) => `- \`${o.unit}\` (${o.delivery}): ${o.order}`).join('\n')}`);
+  if (s.orders.length) parts.push(`**Orders**\n${s.orders.map((o) => `- \`${o.unit}\` (${o.delivery}): ${orderText(o.order)}`).join('\n')}`);
   if (s.questions_for_gm.length) parts.push(`**Questions for the GM**\n${list(s.questions_for_gm)}`);
   if (s.rules_confusions.length) parts.push(`**Rules confusions**\n${list(s.rules_confusions)}`);
   return parts.join('\n\n');

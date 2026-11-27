@@ -2,6 +2,7 @@ export * from './lib/cascade';
 export * from './lib/combat-phase';
 export * from './lib/matter';
 export * from './lib/movement-phase';
+export * from './lib/order';
 export * from './lib/orders';
 export * from './lib/outcome';
 export * from './lib/purchases';

@@ -1,6 +1,7 @@
 import { type Hex, hexDistance } from '@latency-wars/domain';
 import { spend, statementFor } from '@latency-wars/economy';
 import { lightTravelTurns, type Observation, recordInstantArrival } from '@latency-wars/visibility';
+import { attackTargets, formatOrder, type PlanOrder } from './order';
 import { findOwnUnit } from './orders';
 import { type EngineState, formatQbits, knowledge } from './state';
 import type { GameSetup, GameUnit, HijackQuote, IntelPurchase, OversightQuote, Purchase, SubmittedOrder } from './types';
@@ -192,13 +193,11 @@ export function settleCommandContest(
   );
 }
 
-const SPOOF_ORDERS = /^\s*(MoveTo|Hold|ReturnHome)\b/i;
+/** A spoof's order is non-combat (QBIT-02): every stage a `MoveTo`, `Hold` or `ReturnHome`. */
+const NON_COMBAT: ReadonlySet<string> = new Set(['move-to', 'hold', 'return-home']);
+const nonCombat = (order: PlanOrder): boolean => order.stages.every((s) => NON_COMBAT.has(s.objective.kind));
 
-/** Whether an order's text, its fallback included, has an `Attack` on `unitId`. */
-function attacks(order: string, unitId: string): boolean {
-  const id = unitId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\bAttack\\s*\\(\\s*${id}\\s*[,)]`, 'i').test(order);
-}
+const sameUnit = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
  * Prices a spoof or a seize for `player` in the Planning phase of `turn` from
@@ -212,7 +211,8 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   const kind = purchase.kind === 'seize' ? 'seize' : 'spoof';
   const done = kind === 'seize' ? 'seized' : 'spoofed';
   const target = purchase.target ?? '';
-  const order = purchase.order ?? '';
+  const plan = purchase.order;
+  const order = plan ? formatOrder(plan) : '';
   const refuse = (refused: string): HijackQuote => ({ kind, target, order, refused });
   if (purchase.kind !== 'spoof' && purchase.kind !== 'seize') return refuse(`${purchase.kind} isn't a spoof or a seize.`);
   const { hijack } = setup.parameters;
@@ -222,7 +222,7 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   // A seize on a flagship needs no order (QBIT-13), so a seize's order is checked once its target is known.
   if (!order && kind === 'spoof') return refuse(`No order given for the ${done} fleet.`);
   // A seized fleet takes any order (QBIT-10); a spoofed one only a non-combat order (QBIT-02).
-  if (kind === 'spoof' && !SPOOF_ORDERS.test(order)) return refuse('A spoof can only order MoveTo, Hold or ReturnHome (QBIT-02).');
+  if (kind === 'spoof' && plan && !nonCombat(plan)) return refuse('A spoof can only order MoveTo, Hold or ReturnHome (QBIT-02).');
 
   const known = knowledge(engine, setup, player, turn);
   if (known.own.some((e) => e.unit.id === target)) return refuse(`${target} is your own unit.`);
@@ -240,7 +240,7 @@ export function quoteHijack(engine: EngineState, setup: GameSetup, player: strin
   }
   // A seized fleet never attacks its own flagship (QBIT-10).
   const ownersFlagship = engine.units.find((u) => u.owner === track.unit.owner && u.class === 'flagship');
-  if (kind === 'seize' && !capture && ownersFlagship && attacks(order, ownersFlagship.id)) {
+  if (kind === 'seize' && !capture && ownersFlagship && plan && attackTargets(plan).some((t) => sameUnit(t, ownersFlagship.id))) {
     return refuse(`A seized fleet can't attack its own flagship, ${ownersFlagship.id} (QBIT-10).`);
   }
   const strength = Math.max(0, Math.floor(purchase.strength ?? 0));

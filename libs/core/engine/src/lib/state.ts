@@ -3,6 +3,7 @@ import { openLedger, type QbitLedger, type QbitParams } from '@latency-wars/econ
 import type { GameMap } from '@latency-wars/movement';
 import { emptyLog, type KnowledgeState, knowledgeState, recordHeldTurns, type VisibilityLog } from '@latency-wars/visibility';
 import { type MatterState, startMatter } from './matter';
+import type { OrderBody } from './order';
 import type { GameSetup, GameUnit } from './types';
 
 /** A message on its way home. */
@@ -44,7 +45,7 @@ export interface SentOrder {
   readonly unit: string;
   /** The unit it names, if the engine could match it. */
   readonly recipient?: string;
-  readonly order: string;
+  readonly order: OrderBody;
   readonly sentTurn: number;
   /** The flagship's hex when it was sent: the wavefront's centre (ORD-04). */
   readonly from: Hex;

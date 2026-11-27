@@ -3,6 +3,99 @@ import { z } from 'zod';
 // Everything an agent returns is structured, so the runner can route it and the
 // report can aggregate it. Free-text fields carry the actual play.
 
+const HexRef = z.object({ q: z.number().int(), r: z.number().int() });
+
+// An order is JSON, not prose. The shapes mirror the engine's `OrderBody`; every part but the
+// objective is optional, because the rules give each a default (ORD-01).
+
+const DefendSite = z
+  .union([z.object({ hex: HexRef }), z.object({ node: z.string().describe('The node\'s unit id. The fleet holds that node\'s hex.') })])
+  .describe('Where to hold: a hex, or a node.');
+
+const BuildSite = z
+  .union([
+    z.object({ zone: HexRef }).describe('An orbital zone, by its hex.'),
+    z.object({ planet: z.string().describe('The planet\'s id.') }).describe('A planet, to build a mine on.'),
+  ])
+  .describe('Where to build (ECON-03).');
+
+const Objective = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('move-to'), hex: HexRef }),
+    z.object({ kind: z.literal('return-home'), }).describe('Go to the fleet\'s home (AUTO-01).'),
+    z.object({ kind: z.literal('attack'), target: z.string().describe('The unit id of the track to attack, as you know it (ORD-02).') }),
+    z.object({ kind: z.literal('defend'), at: DefendSite }),
+    z.object({ kind: z.literal('escort'), charge: z.string().describe('The unit id of the fleet to escort.') }),
+    z.object({ kind: z.literal('build'), site: BuildSite }),
+    z.object({ kind: z.literal('hold') }),
+  ])
+  .describe('What the stage is for (ORD-01).');
+
+const Stage = z
+  .object({
+    objective: Objective,
+    commitment: z
+      .enum(['discretion', 'at-all-costs'])
+      .optional()
+      .describe('How firmly it is carried out (ORD-01). Default: discretion.'),
+    leash: z
+      .object({ range: z.number().int().min(1), turns: z.number().int().min(1) })
+      .optional()
+      .describe('Attack only (ORD-01, RES-05): the furthest it pursues, in hexes, and for how many turns. Default: the scenario\'s.'),
+  })
+  .describe('One objective with its commitment and, for an attack, its leash (ORD-11).');
+
+const Fallback = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('doctrine') }),
+    z.object({ kind: z.literal('hold-and-report') }),
+    z.object({ kind: z.literal('return-home') }),
+    z.object({ kind: z.literal('move-to'), hex: HexRef }),
+    z.object({ kind: z.literal('defend'), at: DefendSite }),
+    z.object({ kind: z.literal('escort'), charge: z.string() }),
+  ])
+  .describe('What the fleet does when its order ends (ORD-01). Default: doctrine.');
+
+const DoctrineChange = z
+  .object({
+    stance: z.enum(['aggressive', 'balanced', 'evasive']).optional(),
+    home: z
+      .union([z.object({ hex: HexRef }), z.object({ structure: z.string().describe('The unit id of a node or a mine.') })])
+      .optional(),
+  })
+  .describe('A new stance or home (AUTO-01). Leave out what stays as it is.');
+
+/** An order with stages, to a fleet or flagship (ORD-01, ORD-11). */
+export const PlanOrder = z
+  .object({
+    kind: z.literal('plan'),
+    stages: z.array(Stage).min(1).describe('One or more, carried out in sequence (ORD-11).'),
+    fallback: Fallback.optional(),
+    doctrine: DoctrineChange.optional(),
+    note: z
+      .string()
+      .optional()
+      .describe('Anything the fields above cannot say, in your words. The GM reads it; use it when the order vocabulary falls short.'),
+  })
+  .describe('An order with stages.');
+export type PlanOrder = z.infer<typeof PlanOrder>;
+
+/** Any order a player can send: to a fleet or flagship (a plan, or a doctrine change alone) or to a shipyard (PROD-03). */
+export const OrderBody = z
+  .discriminatedUnion('kind', [
+    PlanOrder,
+    z.object({ kind: z.literal('doctrine'), doctrine: DoctrineChange }).describe('Only a doctrine change: no stages, and it never replaces the active order (ORD-01).'),
+    z
+      .object({
+        kind: z.literal('produce'),
+        class: z.string().describe('The unit class, as the scenario lists it.'),
+        seed: z.number().optional().describe('qBits to seed the new unit with (QBIT-11). Only for a class the scenario allows to be seeded.'),
+      })
+      .describe('The only order a shipyard takes (PROD-03).'),
+  ])
+  .describe('The order itself.');
+export type OrderBody = z.infer<typeof OrderBody>;
+
 /** Something a player spends qBits on in Planning (QBIT-01), other than an instant order. */
 export const QbitPurchase = z.object({
   kind: z
@@ -17,10 +110,9 @@ export const QbitPurchase = z.object({
     .string()
     .optional()
     .describe('The unit id: one of yours (fleet, node or flagship) for a scan, the enemy fleet for a spoof or seize (or the enemy flagship, for a seize where the scenario allows a capture, QBIT-13), one of your fleets (or your flagship, where captures are allowed) for oversight.'),
-  order: z
-    .string()
-    .optional()
-    .describe('Spoof or seize only: the order the fleet carries out this turn. A spoof: MoveTo, Hold or ReturnHome (QBIT-02). A seize: any order except an Attack on its own flagship (QBIT-10); none for a seize on a flagship (QBIT-13).'),
+  order: PlanOrder.optional().describe(
+    'Spoof or seize only: the order the fleet carries out this turn, a plan like any other. A spoof: every stage a move-to, hold or return-home (QBIT-02). A seize: any order except an attack on its own flagship (QBIT-10); none for a seize on a flagship (QBIT-13).',
+  ),
   strength: z
     .number()
     .int()
@@ -49,12 +141,10 @@ export const PlayerTurn = z.object({
     .array(
       z.object({
         unit: z.string().describe('The unit receiving the order. Your flagship\'s own moves and doctrine changes go here too (ORD-05).'),
-        order: z
-          .string()
-          .describe(
-            'The order: its stages, each an objective plus commitment (and a leash, for an Attack), then the fallback and any doctrine change if not the defaults (ORD-01, ORD-11). ' +
-              'A shipyard takes only a Produce order (PROD-03).',
-          ),
+        order: OrderBody.describe(
+          'A fleet or flagship takes a plan (its stages, each an objective with its commitment and, for an attack, its leash, then the fallback and any doctrine change; ORD-01, ORD-11) or a doctrine change alone. ' +
+            'A shipyard takes only a produce order (PROD-03).',
+        ),
         delivery: z.enum(['light', 'instant']).describe('Light-speed (free, delayed) or instant (costs qBits).'),
       }),
     )
@@ -67,6 +157,16 @@ export const PlayerTurn = z.object({
     .describe('Anything in the rules you found unclear, missing or contradictory this turn. Cite rule IDs where possible.'),
 }).meta({ title: 'PlayerTurn' });
 export type PlayerTurn = z.infer<typeof PlayerTurn>;
+
+/**
+ * A `PlayerTurn` as a log may hold it. Logs written before orders were
+ * structured hold each order as the text the player wrote; they still read.
+ */
+export const LoggedPlayerTurn = PlayerTurn.extend({
+  qbit_purchases: z.array(QbitPurchase.extend({ order: z.union([PlanOrder, z.string()]).optional() })),
+  orders: z.array(z.object({ unit: z.string(), order: z.union([OrderBody, z.string()]), delivery: z.enum(['light', 'instant']) })),
+});
+export type LoggedPlayerTurn = z.infer<typeof LoggedPlayerTurn>;
 
 export const Ruling = z.object({
   situation: z.string().describe('What needed a ruling.'),
@@ -156,8 +256,6 @@ export const BuildReport = z.object({
     ),
 });
 export type BuildReport = z.infer<typeof BuildReport>;
-
-const HexRef = z.object({ q: z.number().int(), r: z.number().int() });
 
 /** What one fleet or flagship settled on in the Decision phase (AUTO-03). The engine moves it and works out its fights from this. */
 export const FleetDecision = z.object({

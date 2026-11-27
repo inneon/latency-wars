@@ -3,6 +3,7 @@ import type { Agent, JsonSchema, PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
 import type { Feedback, FleetDecision, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import { formatOrder, holdOrder, moveToOrder, produceOrder } from './engine.spec-helper';
 import { runPlaytest } from './game';
 
 class ScriptedAgent implements Agent {
@@ -64,7 +65,7 @@ const decisions = (prompt: string, given: readonly FleetDecision[] = []): GmDeci
   rulings: [],
 });
 
-const turn = (purchases: PlayerTurn['qbit_purchases'] = [], orders: PlayerTurn['orders'] = [{ unit: 'Line', order: 'Hold', delivery: 'light' }]): PlayerTurn => ({
+const turn = (purchases: PlayerTurn['qbit_purchases'] = [], orders: PlayerTurn['orders'] = [{ unit: 'Line', order: holdOrder, delivery: 'light' }]): PlayerTurn => ({
   situation_assessment: '',
   qbit_purchases: purchases,
   orders,
@@ -182,10 +183,10 @@ describe('runPlaytest', () => {
     const { gm, blue, agents } = setup(scenario, 99, {
       orders: {
         'blue:turn 1': [
-          { unit: 'blue-line', order: 'Hold', delivery: 'instant' },
-          { unit: 'blue-flagship', order: 'MoveTo((-3, 3))', delivery: 'instant' },
-          { unit: 'blue-raider', order: 'MoveTo((0, 2))', delivery: 'instant' },
-          { unit: 'blue-node-west', order: 'Hold', delivery: 'instant' },
+          { unit: 'blue-line', order: holdOrder, delivery: 'instant' },
+          { unit: 'blue-flagship', order: moveToOrder(-3, 3), delivery: 'instant' },
+          { unit: 'blue-raider', order: moveToOrder(0, 2), delivery: 'instant' },
+          { unit: 'blue-node-west', order: holdOrder, delivery: 'instant' },
         ],
       },
     });
@@ -206,8 +207,8 @@ describe('runPlaytest', () => {
     // so both are refused; the flow is what's under test here, pricing is covered in the engine's tests.
     const { gm, blue, red, agents } = setup(scenario, 99, {
       purchases: {
-        'red:turn 1': [{ kind: 'spoof', target: 'blue-line', order: 'Hold' }],
-        'blue:turn 2': [{ kind: 'spoof', target: 'red-line', order: 'Hold' }],
+        'red:turn 1': [{ kind: 'spoof', target: 'blue-line', order: holdOrder }],
+        'blue:turn 2': [{ kind: 'spoof', target: 'red-line', order: holdOrder }],
       },
     });
     const events: PlaytestEvent[] = [];
@@ -216,7 +217,7 @@ describe('runPlaytest', () => {
     // A quote needs no GM call.
     expect(gm.prompts.map((p) => p.label)).toEqual(['setup', 'turn 1 decide', 'turn 1 resolve', 'turn 2 decide', 'turn 2 resolve']);
     expect(red.prompts.map((p) => p.label)).toEqual(['turn 1', 'turn 1 final', 'turn 2', 'debrief']);
-    expect(red.prompts[1]?.prompt).toContain('spoof `blue-line` → Hold: refused. You have no track on blue-line.');
+    expect(red.prompts[1]?.prompt).toContain(`spoof \`blue-line\` → ${formatOrder(holdOrder)}: refused. You have no track on blue-line.`);
     expect(blue.prompts.find((p) => p.label === 'turn 2 final')?.prompt).toContain('spoof `red-line`');
     expect(events.filter((e) => e.type === 'quotes').map((e) => e.type === 'quotes' && [e.turn, e.player, e.intel.length === 0])).toEqual([
       [1, 'red', true],
@@ -468,7 +469,7 @@ describe('runPlaytest with matter (Ycnetal)', () => {
   it('judges Produce itself, builds the unit, and tells players only their balance and output', async () => {
     const { blue, red, gm, agents } = setup(ycnetal, 99, {
       // Blue's flagship starts 2 hexes from its yard, so the order goes instantly to land in turn 1 (ORD-06).
-      orders: { 'blue:turn 1': [{ unit: 'Blue Mine Thgil', order: 'Produce(probe)', delivery: 'instant' }] },
+      orders: { 'blue:turn 1': [{ unit: 'Blue Mine Thgil', order: produceOrder('probe'), delivery: 'instant' }] },
     });
     const events: PlaytestEvent[] = [];
     await runPlaytest({ scenario: ycnetal, agents, maxRounds: 2, emit: (e) => events.push(e) });

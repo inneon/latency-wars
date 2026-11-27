@@ -5,7 +5,7 @@
  */
 import type { MatterStatement as LedgerMatterStatement, QbitStatement as LedgerStatement } from '@latency-wars/economy';
 import type * as Engine from '@latency-wars/engine';
-import { EngineOverride, Feedback, GmDecisions, GmFeedback, GmResolution, PlayerTurn } from '@latency-wars/playtest-contracts';
+import { EngineOverride, Feedback, GmDecisions, GmFeedback, GmResolution, LoggedPlayerTurn } from '@latency-wars/playtest-contracts';
 import { z } from 'zod';
 
 /**
@@ -286,7 +286,7 @@ export const PlaytestEvent = z.discriminatedUnion('type', [
   /** Always first: which game this is, and the format the rest of the log is written in. */
   z.object({ type: z.literal('scenario'), logVersion: z.number().int(), scenario: ScenarioHeader }),
   z.object({ type: z.literal('setup'), resolution: GmResolution }),
-  z.object({ type: z.literal('player_turn'), turn, player, step: z.enum(['initial', 'final']), submission: PlayerTurn }),
+  z.object({ type: z.literal('player_turn'), turn, player, step: z.enum(['initial', 'final']), submission: LoggedPlayerTurn }),
   /** A player asked for quotes: the scans the engine charged for, its spoof quotes, and what they were told. */
   z.object({
     type: z.literal('quotes'),

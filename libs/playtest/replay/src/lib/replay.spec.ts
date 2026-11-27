@@ -1,6 +1,6 @@
 import { LOG_VERSION, type PlaytestEvent } from './event-log';
 import { blueFlagship, header, redFlagship, resolved, scenarioHeader, state, unit } from './fixtures.spec-helper';
-import { buildReplay } from './replay';
+import { buildReplay, orderText } from './replay';
 
 const blueRaider = unit('blue-raider', 'blue', -2, 0, { speed: 2 });
 const redRaider = unit('red-raider', 'red', 2, 0, { speed: 2 });
@@ -250,5 +250,22 @@ describe('buildReplay', () => {
       const maxed: PlaytestEvent = { type: 'scenario', logVersion: LOG_VERSION, scenario: { ...scenarioHeader(start), maxRounds: 1 } };
       expect(progress([maxed, state(0, start), resolved(1), state(1, start)])).toEqual({ stage: 'debrief', submitted: [] });
     });
+  });
+});
+
+describe('orderText', () => {
+  it("shows a structured order in the rules' notation", () => {
+    expect(orderText({ kind: 'plan', stages: [{ objective: { kind: 'move-to', hex: { q: 0, r: -1 } } }] })).toBe('MoveTo(0, -1), Discretion; fallback Doctrine');
+    expect(orderText({ kind: 'produce', class: 'probe', seed: 3 })).toBe('Produce(probe, seed 3)');
+  });
+
+  it('passes through the text an older log recorded', () => {
+    expect(orderText('MoveTo(0, -1)')).toBe('MoveTo(0, -1)');
+  });
+
+  it('builds a frame from a log that holds a structured order', () => {
+    const submission = { situation_assessment: '', qbit_purchases: [], orders: [{ unit: 'blue-raider', order: { kind: 'plan' as const, stages: [{ objective: { kind: 'hold' as const } }] }, delivery: 'light' as const }], questions_for_gm: [], rules_confusions: [] };
+    const events: PlaytestEvent[] = [header(start), state(0, start), { type: 'player_turn', turn: 1, player: 'blue', step: 'final', submission }, resolved(1), state(1, start)];
+    expect(buildReplay('run', events).frames[1]?.players[0]?.orders).toEqual([{ unit: 'blue-raider', order: 'Hold, Discretion; fallback Doctrine', delivery: 'light' }]);
   });
 });

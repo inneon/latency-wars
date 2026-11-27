@@ -7,6 +7,7 @@ import { findWorkspaceRoot, loadScenario } from '../input/scenario-loader';
 import type { Agent, JsonSchema, PlaytestAgents } from '../types/agent';
 import type { PlaytestEvent } from '../types/events';
 import type { Scenario } from '../types/scenario';
+import { formatOrder, holdOrder, produceOrder } from './engine.spec-helper';
 import { runPlaytest } from './game';
 
 /*
@@ -132,9 +133,9 @@ async function playScriptedGame(scenario: Scenario): Promise<PlaytestEvent[]> {
       if (label === 'debrief') return feedback;
       if (id === 'red' && label.startsWith('turn 1')) return submission([{ kind: 'scan', target: 'red-flagship' }], []);
       if (id === 'blue' && label.startsWith('turn 2')) {
-        return submission([{ kind: 'oversee', target: 'blue-line', strength: 1 }], [{ unit: 'blue-raider', order: 'Hold', delivery: 'instant' }]);
+        return submission([{ kind: 'oversee', target: 'blue-line', strength: 1 }], [{ unit: 'blue-raider', order: holdOrder, delivery: 'instant' }]);
       }
-      return submission([], [{ unit: `${id}-line`, order: 'Hold', delivery: 'light' }]);
+      return submission([], [{ unit: `${id}-line`, order: holdOrder, delivery: 'light' }]);
     });
   const agents: PlaytestAgents = {
     gm,
@@ -166,7 +167,7 @@ async function playMatterGame(scenario: Scenario): Promise<PlaytestEvent[]> {
     const last = label.startsWith('turn 3');
     return resolution(standing(), { game_over: last, outcome: last ? 'A draw' : '' });
   });
-  const produce = (yard: string, unitClass: string, delivery: 'light' | 'instant') => submission([], [{ unit: yard, order: `Produce(${unitClass})`, delivery }]);
+  const produce = (yard: string, unitClass: string, delivery: 'light' | 'instant') => submission([], [{ unit: yard, order: produceOrder(unitClass), delivery }]);
   const player = (id: string) =>
     agent(id, (label) => {
       if (label === 'debrief') return feedback;
@@ -236,7 +237,7 @@ describe('the event log', () => {
     expect(second?.removed.map((u) => u.id)).toEqual(['red-raider']);
     const blue = second?.players.find((p) => p.player === 'blue');
     expect(blue?.oversights).toEqual([expect.objectContaining({ target: 'blue-line' })]);
-    expect(blue?.orders).toEqual([{ unit: 'blue-raider', order: 'Hold', delivery: 'instant' }]);
+    expect(blue?.orders).toEqual([{ unit: 'blue-raider', order: formatOrder(holdOrder), delivery: 'instant' }]);
     expect(blue?.qbits?.purchases.map((p) => p.label)).toEqual(expect.arrayContaining([expect.stringContaining('instant order')]));
     expect(second).toMatchObject({ gameOver: true, outcome: 'Blue wins' });
   });

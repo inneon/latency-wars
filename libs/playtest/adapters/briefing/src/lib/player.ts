@@ -5,6 +5,7 @@ import {
   type CascadeQuote,
   type EngineState,
   formatMatter,
+  formatOrder,
   formatQbits,
   type GameUnit,
   type HijackQuote,
@@ -124,7 +125,7 @@ export function renderOutbox(entries: readonly OutboxEntry[], turn: number): str
       turn <= expected ? `in transit: expected to arrive in turn ${expected}, ack due by turn ${ackDue}`
       : turn <= ackDue ? `expected to have arrived in turn ${expected}; awaiting ack, due by turn ${ackDue}`
       : `ack overdue: it was due by turn ${ackDue}`;
-    return `- To \`${o.recipient}\` (sent turn ${o.sentTurn}): ${o.order}. ${state}.`;
+    return `- To \`${o.recipient}\` (sent turn ${o.sentTurn}): ${formatOrder(o.order)}. ${state}.`;
   });
   return `## Orders sent (FB-07)\n\nExpected times use where each fleet's status reports put it, and assume it holds the position in its latest one.\n\n${lines.join('\n') || '- None outstanding.'}`;
 }

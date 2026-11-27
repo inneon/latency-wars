@@ -8,6 +8,7 @@ import {
   deliveries,
   type EngineState,
   formatMatter,
+  formatOrder,
   formatQbits,
   type GameSetup,
   type GameUnit,
@@ -26,7 +27,7 @@ import { spendLine } from './player';
  * What the GM is told, as text. True state: never for a player.
  */
 
-const orderLine = (o: SentOrder) => `${o.player} → \`${o.recipient ?? o.unit}\` (sent turn ${o.sentTurn}, ${o.instant ? 'instant' : 'light'}): ${o.order}`;
+const orderLine = (o: SentOrder) => `${o.player} → \`${o.recipient ?? o.unit}\` (sent turn ${o.sentTurn}, ${o.instant ? 'instant' : 'light'}): ${formatOrder(o.order)}`;
 
 /** The GM's view of orders for `turn`: what lands this turn, what's still on its way, and what the engine couldn't place. */
 export function renderOrdersForGm(engine: EngineState, setup: GameSetup, turn: number): string {
@@ -34,7 +35,7 @@ export function renderOrdersForGm(engine: EngineState, setup: GameSetup, turn: n
   const delivered = landing.filter((d) => !d.lost).map((d) => `- ${orderLine(d.order)}`);
   const lost = landing.filter((d) => d.lost).map((d) => `- ${orderLine(d.order)}: its recipient is no longer on the map, so the order is lost and no ack is sent (RES-01).`);
   const travelling = inTransit(engine, setup, turn).map((o) => `- ${orderLine(o)}`);
-  const unmatched = engine.orders.filter((o) => o.sentTurn === turn && !o.recipient).map((o) => `- ${o.player} → "${o.unit}": ${o.order}`);
+  const unmatched = engine.orders.filter((o) => o.sentTurn === turn && !o.recipient).map((o) => `- ${o.player} → "${o.unit}": ${formatOrder(o.order)}`);
   const parts = [
     `## Orders delivered in turn ${turn} (engine, authoritative: ORD-04, ORD-05, ORD-06)\n\nOnly these orders reach their fleets this turn. Resolve each in the Decision phase (RES-01 onwards).\n\n${[...delivered, ...lost].join('\n') || '- None.'}`,
     `## Orders still in transit\n\nSent but not yet delivered. They don't affect anything this turn.\n\n${travelling.join('\n') || '- None.'}`,

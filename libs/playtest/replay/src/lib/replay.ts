@@ -4,7 +4,8 @@
  * it, so a viewer can step through the game without knowing the log.
  */
 import { type Hex, hexEquals } from '@latency-wars/domain';
-import type { EngineOverride, FleetMessage, PlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
+import { formatOrder, type OrderBody } from '@latency-wars/engine';
+import type { EngineOverride, FleetMessage, LoggedPlayerTurn, Ruling } from '@latency-wars/playtest-contracts';
 import { observe } from '@latency-wars/visibility';
 import type {
   HijackQuote,
@@ -15,6 +16,14 @@ import type {
   RankingRow,
   ScenarioHeader,
 } from './event-log';
+
+/**
+ * An order as text: the rules' notation for a structured one, and the text
+ * itself in a log written before orders were structured.
+ */
+export function orderText(order: OrderBody | string): string {
+  return typeof order === 'string' ? order : formatOrder(order);
+}
 
 /** A unit that ended the turn somewhere other than where it began. Only the two ends are known, not the route. */
 export interface Move {
@@ -76,7 +85,8 @@ export interface PlayerTurnView {
   report?: string;
   /** Their own reading of the situation, from their last submission. */
   assessment?: string;
-  orders: PlayerTurn['orders'];
+  /** Each order as text: the rules' notation (`orderText`). */
+  orders: { unit: string; order: string; delivery: 'light' | 'instant' }[];
   scans: IntelPurchase[];
   spoofs: HijackQuote[];
   oversights: OversightQuote[];
@@ -165,7 +175,7 @@ interface TurnEvents {
   /** Flagships captured by a seize this turn (QBIT-13). */
   captures: { flagship: string; owner: string; by: string }[];
   reports: Map<string, string>;
-  submissions: Map<string, PlayerTurn>;
+  submissions: Map<string, LoggedPlayerTurn>;
   scans: Map<string, IntelPurchase[]>;
   spoofs: Map<string, HijackQuote[]>;
   oversights: Map<string, OversightQuote[]>;
@@ -297,7 +307,7 @@ export function buildReplay(id: string, events: readonly PlaytestEvent[]): Repla
                 player,
                 report: t.reports.get(player),
                 assessment: submission?.situation_assessment,
-                orders: submission?.orders ?? [],
+                orders: (submission?.orders ?? []).map((o) => ({ ...o, order: orderText(o.order) })),
                 scans: t.scans.get(player) ?? [],
                 spoofs: t.spoofs.get(player) ?? [],
                 oversights: t.oversights.get(player) ?? [],

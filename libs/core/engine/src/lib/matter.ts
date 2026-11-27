@@ -24,6 +24,7 @@ import {
   spendMatter,
 } from '@latency-wars/economy';
 import type { MovementResult } from './movement-phase';
+import type { OrderBody } from './order';
 import type { EngineState, QueuedMessage, SentOrder } from './state';
 import type {
   BuildProgress,
@@ -137,22 +138,18 @@ const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const normalise = (s: string) => s.trim().toLowerCase().replace(/[`'"]/g, '').replace(/\s+/g, '-');
 
 /**
- * `Produce(raider)` or `Produce(probe, seed 3)`: the class a `Produce` order
- * names, as written, and the qBits it seeds the unit with (QBIT-11).
+ * What a `Produce` order asks for (PROD-03): the class it names, normalised so
+ * `Raider` matches `raider`, and the qBits it seeds the unit with (QBIT-11).
  * `unitClass` is `undefined` if it names none; `seed` is `NaN` if a seed is
- * given but isn't a whole number of at least 1.
+ * given but isn't a whole number of at least 1. A yard rejects such an order
+ * when it arrives, so neither is refused when the player sends it (PROD-04).
  */
-const PRODUCE_ORDER = /^\s*Produce\b(?:\s*\(\s*([^)]*?)\s*\))?/i;
-const SEED = /^seed\s*[=:]?\s*(\S+)$/i;
-export function parseProduce(order: string): { isProduce: boolean; unitClass?: string; seed?: number } {
-  const match = PRODUCE_ORDER.exec(order);
-  if (!match) return { isProduce: false };
-  const [named = '', ...rest] = (match[1] ?? '').split(',').map((s) => s.trim());
-  const unitClass = normalise(named) || undefined;
-  const seedPart = rest.find((s) => SEED.test(s));
-  if (!seedPart) return { isProduce: true, unitClass };
-  const n = Number(SEED.exec(seedPart)?.[1]);
-  return { isProduce: true, unitClass, seed: Number.isInteger(n) && n >= 1 ? n : Number.NaN };
+export function produceOf(order: OrderBody): { isProduce: boolean; unitClass?: string; seed?: number } {
+  if (order.kind !== 'produce') return { isProduce: false };
+  // The wire schema requires a class, but a yard still rejects an empty one on arrival (PROD-04), so don't trust the type.
+  const unitClass = normalise(order.class ?? '') || undefined;
+  if (order.seed === undefined) return { isProduce: true, unitClass };
+  return { isProduce: true, unitClass, seed: Number.isInteger(order.seed) && order.seed >= 1 ? order.seed : Number.NaN };
 }
 
 /** A `Produce` order, as it reaches a yard (PROD-04). */
@@ -198,7 +195,7 @@ export function judgeProduceOrders(
   for (const { order, lost } of deliveries) {
     if (judged.has(order) || lost || !order.recipient) continue;
     const yard = units.find((u) => u.id === order.recipient);
-    const parsed = parseProduce(order.order);
+    const parsed = produceOf(order.order);
     // Only `Produce` orders to mines are the engine's. Anything else sent to a yard, or a `Produce` sent elsewhere, is the GM's to rule on (RES-01).
     if (!yard || yard.class !== 'mine' || !parsed.isProduce) continue;
     judged.add(order);
